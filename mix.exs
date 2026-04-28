@@ -48,7 +48,9 @@ defmodule Teya.MixProject do
   defp package do
     [
       licenses: ["BSD-2-Clause"],
-      links: %{}
+      links: %{
+        "GitHub" => "https://github.com/sgerrand/ex_teya"
+      }
     ]
   end
 end

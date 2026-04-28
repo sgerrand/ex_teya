@@ -25,7 +25,7 @@ defmodule Teya do
           "token/delete"
         ]
 
-  OAuth tokens are fetched automatically via `Teya.Auth` and refreshed before
+  OAuth tokens are fetched automatically and refreshed before
   expiry. Only request the scopes your application needs.
 
   ## API modules

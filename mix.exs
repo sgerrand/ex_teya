@@ -9,6 +9,12 @@ defmodule Teya.MixProject do
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
       deps: deps(),
+
+      # Hex
+      description: "An Elixir client for the Teya API",
+      package: package(),
+
+      # Docs
       docs: docs()
     ]
   end
@@ -36,6 +42,13 @@ defmodule Teya.MixProject do
     [
       main: "Teya",
       extras: ["README.md"]
+    ]
+  end
+
+  defp package do
+    [
+      licenses: ["BSD-2-Clause"],
+      links: %{}
     ]
   end
 end

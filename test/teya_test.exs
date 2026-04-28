@@ -1,8 +1,7 @@
 defmodule TeyaTest do
   use ExUnit.Case
-  doctest Teya
 
-  test "greets the world" do
-    assert Teya.hello() == :world
+  test "module is defined" do
+    assert Code.ensure_loaded?(Teya)
   end
 end

@@ -1,5 +1,10 @@
 # Teya
 
+[![Test Status](https://github.com/sgerrand/ex_teya/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/sgerrand/ex_teya/actions/workflows/ci.yml)
+[![Coverage Status](https://coveralls.io/repos/github/sgerrand/ex_teya/badge.svg?branch=main)](https://coveralls.io/github/sgerrand/ex_teya?branch=main)
+[![Hex Version](https://img.shields.io/hexpm/v/teya.svg)](https://hex.pm/packages/teya)
+[![Hex Docs](https://img.shields.io/badge/docs-hexpm-blue.svg)](https://hexdocs.pm/teya/)
+
 Elixir client for the [Teya API](https://docs.teya.com/apis/overview).
 
 ## Installation

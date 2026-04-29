@@ -52,5 +52,57 @@ defmodule Teya.AuthTest do
 
       assert {:error, _} = Teya.Auth.token()
     end
+
+    test "returns error on token endpoint transport failure", %{auth_pid: auth_pid} do
+      stub_auth(auth_pid, fn conn ->
+        Req.Test.transport_error(conn, :timeout)
+      end)
+
+      assert {:error, %Req.TransportError{reason: :timeout}} = Teya.Auth.token()
+    end
+
+    test "re-fetches when cached token is near expiry", %{auth_pid: auth_pid} do
+      stub_auth(auth_pid, fn conn ->
+        Req.Test.json(conn, %{"access_token" => "fresh_token", "expires_in" => 3600})
+      end)
+
+      :sys.replace_state(auth_pid, fn state ->
+        %{state | token: "old_token", expires_at: System.monotonic_time(:second) - 1}
+      end)
+
+      assert {:ok, "fresh_token"} = Teya.Auth.token()
+    end
+  end
+
+  describe "proactive refresh" do
+    test "updates cached token on successful refresh", %{auth_pid: auth_pid} do
+      stub_auth(auth_pid, fn conn ->
+        Req.Test.json(conn, %{"access_token" => "initial_token", "expires_in" => 3600})
+      end)
+
+      assert {:ok, "initial_token"} = Teya.Auth.token()
+
+      stub_auth(auth_pid, fn conn ->
+        Req.Test.json(conn, %{"access_token" => "refreshed_token", "expires_in" => 3600})
+      end)
+
+      send(auth_pid, :refresh)
+      :sys.get_state(auth_pid)
+
+      assert {:ok, "refreshed_token"} = Teya.Auth.token()
+    end
+
+    test "schedules a retry when refresh fails", %{auth_pid: auth_pid} do
+      stub_auth(auth_pid, fn conn ->
+        conn
+        |> Plug.Conn.put_status(503)
+        |> Req.Test.json(%{"error" => "service_unavailable"})
+      end)
+
+      send(auth_pid, :refresh)
+      state = :sys.get_state(auth_pid)
+
+      assert is_reference(state.refresh_timer_ref)
+    end
   end
 end

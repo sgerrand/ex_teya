@@ -9,6 +9,9 @@ defmodule Teya.MixProject do
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
       deps: deps(),
+      test_coverage: [
+        tool: ExCoveralls
+      ],
 
       # Hex
       description: "An Elixir client for the Teya API",
@@ -29,11 +32,22 @@ defmodule Teya.MixProject do
     ]
   end
 
+  def cli do
+    [
+      preferred_envs: [
+        coveralls: :test,
+        "coveralls.html": :test,
+        "coveralls.lcov": :test
+      ]
+    ]
+  end
+
   defp deps do
     [
       {:req, "~> 0.5"},
       {:jason, "~> 1.4"},
       {:plug, "~> 1.16", only: :test},
+      {:excoveralls, "~> 0.18", only: :test},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
       {:ex_doc, "~> 0.34", only: :dev, runtime: false}
     ]

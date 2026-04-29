@@ -27,7 +27,7 @@ No linter configured (no Credo, no Dialyzer). Only quality tooling in place is `
 
 The library is an OTP application (`Teya.Application`) that starts a supervised `Teya.Auth` GenServer. Auth fetches and caches OAuth 2.0 tokens (client credentials grant) and refreshes them proactively before expiry.
 
-```
+```text
 lib/teya/
   application.ex   — starts Teya.Auth; only if :client_id is configured
   config.ex        — %Teya.Config{} struct + Config.from_env/0

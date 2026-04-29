@@ -1,9 +1,12 @@
 pre-commit:
   commands:
-    format:
+    mix-format:
       run: mix format --check-formatted
-    compile:
+    mix-compile:
       run: mix compile --warnings-as-errors
+    markdownlint:
+      glob: "*.md"
+      run: markdownlint-cli2 {staged_files}
 
 pre-push:
   commands:

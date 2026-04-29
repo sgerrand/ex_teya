@@ -151,7 +151,29 @@ end
 
 ## Development
 
-**Requirements:** Elixir ~> 1.17, Erlang/OTP 25+
+### Requirements
+
+- Elixir 1.17+, Erlang/OTP 25+ (see `.tool-versions` for exact versions used locally)
+- [Homebrew](https://brew.sh) (macOS/Linux) for dev tooling
+
+### Setup
+
+Install dependencies and git hooks:
+
+```bash
+./bin/setup
+mix setup
+```
+
+`./bin/setup` installs [actionlint](https://github.com/rhysd/actionlint),
+[check-jsonschema](https://github.com/python-jsonschema/check-jsonschema), and
+[Lefthook](https://github.com/evilmartians/lefthook) via Homebrew, then
+activates the pre-commit hooks.
+
+This installs pre-commit hooks (`mix format`, `mix compile`) and pre-push hooks
+(`mix credo`, `mix test`).
+
+### Common commands
 
 ```sh
 mix deps.get    # install dependencies

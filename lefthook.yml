@@ -1,0 +1,15 @@
+pre-commit:
+  commands:
+    format:
+      run: mix format --check-formatted
+    compile:
+      run: mix compile --warnings-as-errors
+
+pre-push:
+  commands:
+    unused-deps:
+      run: mix deps.unlock --check-unused
+    credo:
+      run: mix credo --strict
+    test:
+      run: mix test --warnings-as-errors

@@ -151,7 +151,7 @@ end
 
 ## Development
 
-**Requirements:** Elixir ~> 1.19, Erlang/OTP 26+
+**Requirements:** Elixir ~> 1.17, Erlang/OTP 25+
 
 ```sh
 mix deps.get    # install dependencies

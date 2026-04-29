@@ -8,5 +8,5 @@ config :teya,
   scopes: ["checkout/sessions/create", "checkout/sessions/id/get"],
   # Auth uses a separate stub name so the token endpoint can be stubbed
   # independently of the API endpoints.
-  auth_req_options: [plug: {Req.Test, Teya.Auth}],
-  req_options: [plug: {Req.Test, Teya.Client}]
+  auth_req_options: [plug: {Req.Test, Teya.Auth}, retry: false],
+  req_options: [plug: {Req.Test, Teya.Client}, retry: false]

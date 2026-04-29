@@ -12,11 +12,19 @@ defmodule Teya.APICase do
   # stub must come before allow — allow copies the current stub into a location
   # accessible from Auth's GenServer process.
   setup do
+    auth_pid = Process.whereis(Teya.Auth)
+
+    if auth_pid do
+      :sys.replace_state(auth_pid, fn state ->
+        if state.refresh_timer_ref, do: Process.cancel_timer(state.refresh_timer_ref)
+        %{state | token: nil, expires_at: nil, refresh_timer_ref: nil}
+      end)
+    end
+
     Req.Test.stub(Teya.Auth, fn conn ->
       Req.Test.json(conn, %{"access_token" => "test_access_token", "expires_in" => 3600})
     end)
 
-    auth_pid = Process.whereis(Teya.Auth)
     if auth_pid, do: Req.Test.allow(Teya.Auth, self(), auth_pid)
 
     :ok

@@ -16,6 +16,10 @@ defmodule Teya.Receipt do
   ## Options
 
   - `idempotency_key` — override the auto-generated idempotency key
+
+  ## Examples
+
+      {:ok, _} = Teya.Receipt.create(transaction_id, %{"email" => "customer@example.com"})
   """
   @spec create(String.t(), map(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def create(transaction_id, params \\ %{}, opts \\ []) do

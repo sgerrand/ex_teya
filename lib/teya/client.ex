@@ -3,6 +3,20 @@ defmodule Teya.Client do
 
   alias Teya.{Auth, Error}
 
+  @doc """
+  Makes an authenticated HTTP request to the Teya API.
+
+  Fetches a bearer token from `Teya.Auth`, builds the request, and returns
+  `{:ok, body}` for 2xx responses or `{:error, reason}` otherwise.
+
+  ## Options
+
+  - `:body` — request body, serialised as JSON
+  - `:params` — query parameters map or keyword list
+  - `:idempotency_key` — custom idempotency key for POST/PATCH (auto-generated if omitted)
+
+  All other options are merged into the underlying `Req` request.
+  """
   def request(method, path, opts \\ []) do
     with {:ok, token} <- Auth.token() do
       base_url = Application.get_env(:teya, :base_url, "https://api.teya.com")

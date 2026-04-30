@@ -33,6 +33,17 @@ defmodule Teya.Checkout do
   ## Options
 
   - `idempotency_key` — override the auto-generated idempotency key
+
+  ## Examples
+
+      params = %{
+        "amount" => %{"currency" => "GBP", "value" => 1000},
+        "type" => "SALE",
+        "success_url" => "https://example.com/success",
+        "failure_url" => "https://example.com/failure"
+      }
+
+      {:ok, %{"session_url" => url}} = Teya.Checkout.create_session(params)
   """
   @spec create_session(map(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def create_session(params, opts \\ []) do
@@ -44,6 +55,11 @@ defmodule Teya.Checkout do
 
   The response includes `session_status` (`"ACTIVE"`, `"PROCESSING"`, `"COMPLETED"`,
   `"EXPIRED"`) and `payment_status` (`"NONE"`, `"SUCCESS"`, `"FAILED"`).
+
+  ## Examples
+
+      {:ok, session} = Teya.Checkout.get_session(session_id)
+      session["payment_status"]  # "SUCCESS"
   """
   @spec get_session(String.t(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def get_session(session_id, opts \\ []) do

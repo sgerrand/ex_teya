@@ -16,6 +16,10 @@ defmodule Teya.Token do
 
   `store_id` is required — tokens are scoped to a store and only the owning store
   may delete them. Returns `:ok` on success (HTTP 204).
+
+  ## Examples
+
+      :ok = Teya.Token.delete(token_id, store_id)
   """
   @spec delete(String.t(), String.t(), keyword()) :: :ok | {:error, Teya.Error.t()}
   def delete(token_id, store_id, opts \\ []) do

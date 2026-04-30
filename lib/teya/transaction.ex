@@ -51,6 +51,27 @@ defmodule Teya.Transaction do
   ## Options
 
   - `idempotency_key` — override the auto-generated idempotency key
+
+  ## Examples
+
+      params = %{
+        "amount" => %{"currency" => "GBP", "value" => 1000},
+        "type" => "SALE",
+        "initiator" => "CUSTOMER",
+        "store_id" => store_id,
+        "payment_method" => %{
+          "type" => "CARD",
+          "card" => %{"number" => "4111111111111111", "expiry_month" => "12",
+                      "expiry_year" => "2028", "cvc" => "123"}
+        }
+      }
+
+      case Teya.Transaction.create(params) do
+        {:ok, %{"type" => "ONLINE_TRANSACTION", "online_transaction" => txn}} ->
+          txn["status"]  # "SUCCESS" | "FAILURE" | "PENDING"
+        {:ok, %{"type" => "REDIRECT_TRANSACTION_RESPONSE"} = resp} ->
+          resp["redirect_transaction_response"]["redirect_url"]
+      end
   """
   @spec create(map(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def create(params, opts \\ []) do
@@ -61,6 +82,11 @@ defmodule Teya.Transaction do
   Retrieves an online transaction by its authentication ID.
 
   `authentication_id` is returned in the `create/2` response.
+
+  ## Examples
+
+      {:ok, txn} = Teya.Transaction.get(authentication_id)
+      txn["status"]  # "SUCCESS" | "FAILURE" | "PENDING"
   """
   @spec get(String.t(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def get(authentication_id, opts \\ []) do

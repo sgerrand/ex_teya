@@ -19,6 +19,10 @@ defmodule Teya.POSLink.Store do
   ## Options
 
   - `:params` — query parameters for filtering (implementation-defined by the API)
+
+  ## Examples
+
+      {:ok, %{"stores" => stores}} = Teya.POSLink.Store.list()
   """
   @spec list(keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def list(opts \\ []) do
@@ -34,6 +38,10 @@ defmodule Teya.POSLink.Store do
   ## Parameters
 
   - `store_id` — UUID of the store
+
+  ## Examples
+
+      {:ok, %{"terminals" => terminals}} = Teya.POSLink.Store.list_terminals(store_id)
   """
   @spec list_terminals(String.t(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def list_terminals(store_id, opts \\ []) do

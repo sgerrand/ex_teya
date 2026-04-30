@@ -23,6 +23,10 @@ defmodule Teya.Capture do
   ## Options
 
   - `idempotency_key` — override the auto-generated idempotency key
+
+  ## Examples
+
+      {:ok, _} = Teya.Capture.create(transaction_id)
   """
   @spec create(String.t(), map(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def create(transaction_id, params \\ %{}, opts \\ []) do

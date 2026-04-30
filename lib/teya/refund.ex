@@ -18,6 +18,10 @@ defmodule Teya.Refund do
   ## Options
 
   - `idempotency_key` — override the auto-generated idempotency key
+
+  ## Examples
+
+      {:ok, _} = Teya.Refund.create(%{"transaction_id" => transaction_id})
   """
   @spec create(map(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def create(params, opts \\ []) do

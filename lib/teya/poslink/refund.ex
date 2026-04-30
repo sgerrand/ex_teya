@@ -32,6 +32,13 @@ defmodule Teya.POSLink.Refund do
   ## Options
 
   - `:idempotency_key` — override the auto-generated idempotency key
+
+  ## Examples
+
+      {:ok, _} = Teya.POSLink.Refund.create(%{
+        "store_id"           => store_id,
+        "payment_request_id" => payment_request_id
+      })
   """
   @spec create(map(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def create(params, opts \\ []) do

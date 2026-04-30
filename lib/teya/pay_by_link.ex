@@ -35,6 +35,14 @@ defmodule Teya.PayByLink do
   ## Options
 
   - `idempotency_key` — override the auto-generated idempotency key
+
+  ## Examples
+
+      {:ok, %{"payment_link" => url}} =
+        Teya.PayByLink.create(%{
+          "amount" => %{"currency" => "GBP", "value" => 5000},
+          "expires_at" => "2024-12-31T23:59:59Z"
+        })
   """
   @spec create(map(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def create(params, opts \\ []) do
@@ -46,6 +54,11 @@ defmodule Teya.PayByLink do
 
   The response includes `status`: `"VALID"`, `"COMPLETED"`, `"MANUALLY_EXPIRED"`,
   `"DISABLED"`, or `"EXPIRED"`.
+
+  ## Examples
+
+      {:ok, link} = Teya.PayByLink.get(payment_link_id)
+      link["status"]  # "VALID" | "COMPLETED" | "EXPIRED"
   """
   @spec get(String.t(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def get(payment_link_id, opts \\ []) do
@@ -61,6 +74,10 @@ defmodule Teya.PayByLink do
   ## Options
 
   - `idempotency_key` — override the auto-generated idempotency key
+
+  ## Examples
+
+      {:ok, _} = Teya.PayByLink.update(payment_link_id, %{"expires_at" => "2025-06-30T23:59:59Z"})
   """
   @spec update(String.t(), map(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def update(payment_link_id, params, opts \\ []) do

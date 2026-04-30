@@ -25,8 +25,8 @@ defmodule Teya.SSETest do
 
     test "parses multiple consecutive events" do
       input =
-        "event: full\ndata: {\"status\":\"NEW\"}\n\n" <>
-          "event: diff\ndata: {\"status\":\"IN_PROGRESS\"}\n\n"
+        ~s(event: full\ndata: {"status":"NEW"}\n\n) <>
+          ~s(event: diff\ndata: {"status":"IN_PROGRESS"}\n\n)
 
       assert {[first, second], ""} = SSE.parse(input)
       assert first["event"] == "full"

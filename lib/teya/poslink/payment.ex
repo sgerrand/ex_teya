@@ -140,28 +140,29 @@ defmodule Teya.POSLink.Payment do
   end
 
   defp stream_payment(id, pid) do
-    with {:ok, token} <- Auth.token() do
-      base_url = Application.get_env(:teya, :base_url, "https://api.teya.com")
-      url = base_url <> "/poslink/v2/payment-requests/#{id}"
+    case Auth.token() do
+      {:ok, token} ->
+        base_url = Application.get_env(:teya, :base_url, "https://api.teya.com")
+        url = base_url <> "/poslink/v2/payment-requests/#{id}"
 
-      req_opts =
-        Application.get_env(
-          :teya,
-          :sse_req_options,
-          Application.get_env(:teya, :req_options, [])
-        )
+        req_opts =
+          Application.get_env(
+            :teya,
+            :sse_req_options,
+            Application.get_env(:teya, :req_options, [])
+          )
 
-      case Req.get(url, [auth: {:bearer, token}, into: :self] ++ req_opts) do
-        {:ok, %{status: 200, body: %Req.Response.Async{ref: ref}}} ->
-          receive_loop(ref, "", id, pid)
+        case Req.get(url, [auth: {:bearer, token}, into: :self] ++ req_opts) do
+          {:ok, %{status: 200, body: %Req.Response.Async{ref: ref}}} ->
+            receive_loop(ref, "", id, pid)
 
-        {:ok, resp} ->
-          send(pid, {:poslink_payment_error, id, Error.from_response(resp)})
+          {:ok, resp} ->
+            send(pid, {:poslink_payment_error, id, Error.from_response(resp)})
 
-        {:error, reason} ->
-          send(pid, {:poslink_payment_error, id, reason})
-      end
-    else
+          {:error, reason} ->
+            send(pid, {:poslink_payment_error, id, reason})
+        end
+
       {:error, reason} ->
         send(pid, {:poslink_payment_error, id, reason})
     end

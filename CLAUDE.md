@@ -21,7 +21,7 @@ Elixir client library for the [Teya Online Payments API](https://docs.teya.com/a
 **Runtime dependencies:** `req` (HTTP + test stubs), `jason` (JSON).
 **Dev/test dependencies:** `ex_doc`, `plug` (required by `Req.Test` stubs).
 
-No linter configured (no Credo, no Dialyzer). Only quality tooling in place is `mix format`.
+**Linting:** Credo (`~> 1.7`) is configured and runs on pre-push via lefthook (`mix credo --strict`). No Dialyzer. `mix format` is also enforced.
 
 ## Architecture
 
@@ -83,6 +83,18 @@ Tests use `Req.Test` to stub HTTP. Three separate stub names are used to cleanly
 Auth state is reset between auth tests using `:sys.replace_state/2` on the running `Teya.Auth` GenServer.
 
 `Task.Supervisor.async_nolink` propagates `$callers` to spawned tasks, so `Req.Test` stubs set in the test process are automatically accessible from the task without explicit `allow` calls.
+
+### Auth failure and retry behaviour
+
+`Teya.Auth` refreshes tokens proactively `@refresh_margin_seconds` (30s) before
+expiry. If `fetch_token` fails during a proactive background refresh
+(`handle_info(:refresh, state)`), the GenServer schedules a retry after 10
+seconds — it does **not** crash. The cached token remains valid until it
+expires; only after expiry will `Auth.token/0` return `{:error, reason}`.
+
+If `fetch_token` fails during a synchronous `Auth.token/0` call (e.g. on first
+use when no token is cached), the call returns `{:error, reason}` immediately
+and no token is cached.
 
 ## API versioning
 

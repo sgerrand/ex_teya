@@ -16,7 +16,7 @@ mix docs              # generate ExDoc documentation
 
 ## Project context
 
-Elixir client library for the [Teya Online Payments API](https://docs.teya.com/apis/online-payments/apis), published as the `teya` Hex package. Targets Elixir `~> 1.19`.
+Elixir client library for the [Teya Online Payments API](https://docs.teya.com/apis/online-payments/apis) and the [Teya POSLink API](https://docs.teya.com/apis/poslink/openapi.yaml), published as the `teya` Hex package. Targets Elixir `~> 1.17`.
 
 **Runtime dependencies:** `req` (HTTP + test stubs), `jason` (JSON).
 **Dev/test dependencies:** `ex_doc`, `plug` (required by `Req.Test` stubs).
@@ -25,37 +25,64 @@ No linter configured (no Credo, no Dialyzer). Only quality tooling in place is `
 
 ## Architecture
 
-The library is an OTP application (`Teya.Application`) that starts a supervised `Teya.Auth` GenServer. Auth fetches and caches OAuth 2.0 tokens (client credentials grant) and refreshes them proactively before expiry.
+The library is an OTP application (`Teya.Application`) that starts a `Task.Supervisor` (always) and a `Teya.Auth` GenServer (only when `:client_id` is configured). Auth fetches and caches OAuth 2.0 tokens (client credentials grant) and refreshes them proactively before expiry.
 
 ```text
 lib/teya/
-  application.ex   — starts Teya.Auth; only if :client_id is configured
-  config.ex        — %Teya.Config{} struct + Config.from_env/0
-  error.ex         — %Teya.Error{code, message, status} returned on failures
-  auth.ex          — GenServer: lazy token fetch, cache, proactive refresh
-  client.ex        — HTTP layer: calls Auth.token/0, adds Bearer header,
-                     auto-generates Idempotency-Key on POST/PATCH
-  checkout.ex      — POST/GET /v2/checkout/sessions
-  transaction.ex   — POST/GET /v3/transactions/online
-  pay_by_link.ex   — POST/GET/PATCH /v2/payment-links
-  capture.ex       — POST /v1/transactions/{id}/capture
-  refund.ex        — POST /v3/refunds
-  receipt.ex       — POST /v1/transactions/{id}/receipts
-  token.ex         — DELETE /v1/tokens/{id}
+  application.ex      — starts Teya.TaskSupervisor (always) and Teya.Auth (if :client_id set)
+  config.ex           — %Teya.Config{} struct + Config.from_env/0
+  error.ex            — %Teya.Error{code, message, status} returned on failures
+  auth.ex             — GenServer: lazy token fetch, cache, proactive refresh
+  client.ex           — HTTP layer: calls Auth.token/0, adds Bearer header,
+                        auto-generates Idempotency-Key on POST/PATCH
+  sse.ex              — pure SSE frame parser: parse/1 splits a buffer into events
+  checkout.ex         — POST/GET /v2/checkout/sessions
+  transaction.ex      — POST/GET /v3/transactions/online
+  pay_by_link.ex      — POST/GET/PATCH /v2/payment-links
+  capture.ex          — POST /v1/transactions/{id}/capture
+  refund.ex           — POST /v3/refunds
+  receipt.ex          — POST /v1/transactions/{id}/receipts
+  token.ex            — DELETE /v1/tokens/{id}
+  poslink/
+    store.ex          — GET /poslink/v1/stores, GET /poslink/v1/stores/{id}/terminals
+    payment.ex        — POST/PATCH /poslink/v2/payment-requests, GET /poslink/v1/payment-requests
+                        subscribe/2: spawns a Task to stream SSE payment status events
+    refund.ex         — POST /poslink/v1/refunds
+    receipt.ex        — POST /poslink/v1/receipt-requests
+                        subscribe_status/2: spawns a Task to stream SSE printer status events
 ```
+
+### POSLink streaming (Approach 2: task + message-passing)
+
+`Payment.subscribe/2` and `Receipt.subscribe_status/2` use
+`Task.Supervisor.async_nolink(Teya.TaskSupervisor, ...)` to open an SSE
+connection (`Req.get/2` with `into: :self`) and forward parsed events as
+messages to the caller:
+
+- `{:poslink_payment, id, event_type, data}` / `{:poslink_payment_error, id, reason}`
+- `{:poslink_receipt, id, event_type, data}` / `{:poslink_receipt_error, id, reason}`
+
+SSE bytes are parsed by `Teya.SSE.parse/1`, which accumulates a buffer across
+chunks and emits complete events. `event_type` is `"full"` (complete snapshot)
+or `"diff"` (partial update). `data` is a decoded JSON map.
 
 ## Testing
 
-Tests use `Req.Test` to stub HTTP. Two separate stub names are used to cleanly separate concerns:
+Tests use `Req.Test` to stub HTTP. Three separate stub names are used to cleanly separate concerns:
 
 - `Teya.Auth` stub — handles token endpoint (`/connect/token`); set in `APICase` setup and `allow`-ed to the Auth GenServer process
 - `Teya.Client` stub — handles API endpoint calls; set per-test via `stub_api/1`
+- `Teya.POSLink.Subscriber` stub — handles POSLink SSE streaming requests; configured via `:sse_req_options` in test config
 
 `Req.Test.stub` must always be called **before** `Req.Test.allow` — allow copies the current stub to a location accessible from the target process.
 
 `Teya.APICase` in `test/support/api_case.ex` is the shared test case template for resource module tests. Use `stub_api/1`, `json_response/3`, and `error_response/4` helpers.
 
+`Teya.POSLink.SubscribeCase` in `test/support/poslink_subscribe_case.ex` is the test case template for streaming (subscribe) tests. It pre-seeds the Auth GenServer with a valid token instead of resetting it to nil — this avoids a race condition where a `Task.Supervisor.async_nolink` task outlives the test process and triggers a stub-not-found crash in `Teya.Auth` when it tries to call `fetch_token`. Use `stub_sse/1`, `json_response/3`, and `error_response/4` helpers.
+
 Auth state is reset between auth tests using `:sys.replace_state/2` on the running `Teya.Auth` GenServer.
+
+`Task.Supervisor.async_nolink` propagates `$callers` to spawned tasks, so `Req.Test` stubs set in the test process are automatically accessible from the task without explicit `allow` calls.
 
 ## API versioning
 

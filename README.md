@@ -31,6 +31,7 @@ config :teya,
   token_url: "https://identity.teya.com/connect/token",
   base_url: "https://api.teya.com",
   scopes: [
+    # Online Payments
     "checkout/sessions/create",
     "checkout/sessions/id/get",
     "payment-links/create",
@@ -41,7 +42,17 @@ config :teya,
     "captures/create",
     "refunds/create",
     "transactions/id/receipts/create",
-    "token/delete"
+    "token/delete",
+    # POSLink (card-present terminals)
+    "poslink/stores/get",
+    "poslink/stores/id/terminals/get",
+    "poslink/payment-requests/create",
+    "poslink/payment-requests/id/get",
+    "poslink/payment-requests/id/update",
+    "poslink/payment-requests/get",
+    "poslink/refunds/create",
+    "poslink/receipt-requests/create",
+    "poslink/receipt-requests/id/status/get"
   ]
 ```
 
@@ -133,6 +144,90 @@ Generate a shareable payment link:
 
 ```elixir
 {:ok, _} = Teya.Refund.create(%{"transaction_id" => transaction_id})
+```
+
+### POSLink (Card-Present Terminals)
+
+POSLink integrates ePOS software with physical payment terminals. Discover
+available stores and terminals, then create payment requests and stream their
+status in real time.
+
+#### Discover stores and terminals
+
+```elixir
+{:ok, %{"stores" => stores}} = Teya.POSLink.Store.list()
+
+store_id = hd(stores)["store_id"]
+{:ok, %{"terminals" => terminals}} = Teya.POSLink.Store.list_terminals(store_id)
+
+terminal_id = hd(terminals)["terminal_id"]
+```
+
+#### Take a card-present payment
+
+Create a payment request and subscribe to real-time status updates via SSE.
+Events arrive as messages to the calling process:
+
+```elixir
+params = %{
+  "store_id"         => store_id,
+  "terminal_id"      => terminal_id,
+  "requested_amount" => %{"amount" => 1000, "currency" => "GBP"}
+}
+
+{:ok, %{"payment_request_id" => id}} = Teya.POSLink.Payment.create(params)
+{:ok, _task} = Teya.POSLink.Payment.subscribe(id, self())
+
+receive do
+  {:poslink_payment, ^id, "full", %{"status" => "SUCCESSFUL"} = data} ->
+    # payment complete — data contains full transaction metadata
+  {:poslink_payment, ^id, _type, %{"status" => "FAILED"}} ->
+    # card declined or terminal error
+  {:poslink_payment, ^id, _type, %{"status" => status}} when status in ["NEW", "IN_PROGRESS"] ->
+    # intermediate state — keep waiting
+  {:poslink_payment_error, ^id, reason} ->
+    # connection or auth failure
+end
+```
+
+`subscribe/2` returns immediately; the task runs under `Teya.TaskSupervisor`
+and sends messages until the server closes the stream. The second argument is
+the recipient pid and defaults to `self()`.
+
+#### Cancel a payment
+
+```elixir
+{:ok, _} = Teya.POSLink.Payment.cancel(payment_request_id)
+```
+
+#### POSLink refunds
+
+```elixir
+{:ok, _} = Teya.POSLink.Refund.create(%{
+  "store_id"           => store_id,
+  "payment_request_id" => payment_request_id
+})
+```
+
+#### Print a receipt
+
+Submit a receipt print job and stream its printer status:
+
+```elixir
+{:ok, %{"receipt_id" => receipt_id}} =
+  Teya.POSLink.Receipt.create(%{
+    "store_id"    => store_id,
+    "terminal_id" => terminal_id,
+    "content"     => %{"type" => "JSON", "data" => %{"total" => "£10.00"}}
+  })
+
+{:ok, _task} = Teya.POSLink.Receipt.subscribe_status(receipt_id, self())
+
+receive do
+  {:poslink_receipt, ^receipt_id, _type, %{"status" => "PRINTED"}} -> :ok
+  {:poslink_receipt, ^receipt_id, _type, %{"status" => "FAILED"}}  -> handle_failure()
+  {:poslink_receipt_error, ^receipt_id, reason}                    -> handle_error(reason)
+end
 ```
 
 ### Idempotency Keys

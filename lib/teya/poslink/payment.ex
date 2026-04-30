@@ -13,7 +13,7 @@ defmodule Teya.POSLink.Payment do
   `poslink/payment-requests/get`.
   """
 
-  alias Teya.Client
+  alias Teya.{Auth, Client, Error, SSE}
 
   @doc """
   Creates a payment request at a terminal.
@@ -93,5 +93,104 @@ defmodule Teya.POSLink.Payment do
   @spec list(keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def list(opts \\ []) do
     Client.request(:get, "/poslink/v1/payment-requests", opts)
+  end
+
+  @doc """
+  Subscribes to real-time status updates for a payment request via SSE.
+
+  Spawns a supervised task under `Teya.TaskSupervisor` that opens the SSE
+  stream for `payment_request_id` and forwards parsed events as messages to
+  `pid` (defaults to `self()`).
+
+  ## Messages sent to `pid`
+
+  - `{:poslink_payment, id, event_type, data}` — a status event where:
+    - `id` is the `payment_request_id`
+    - `event_type` is `"full"` (complete snapshot) or `"diff"` (partial update)
+    - `data` is the decoded JSON map (e.g. `%{"status" => "SUCCESSFUL", ...}`)
+  - `{:poslink_payment_error, id, reason}` — the stream ended with an error;
+    `reason` is a `%Teya.Error{}` or a transport exception
+
+  The task exits normally when the server closes the stream (terminal payment
+  state reached) or with an error tuple when the connection fails.
+
+  ## Example
+
+      {:ok, _task} = Teya.POSLink.Payment.subscribe(payment_request_id)
+
+      receive do
+        {:poslink_payment, ^payment_request_id, "full", %{"status" => "SUCCESSFUL"} = data} ->
+          handle_success(data)
+
+        {:poslink_payment, ^payment_request_id, _type, %{"status" => "FAILED"} = data} ->
+          handle_failure(data)
+
+        {:poslink_payment_error, ^payment_request_id, reason} ->
+          handle_error(reason)
+      end
+  """
+  @spec subscribe(String.t(), pid()) :: {:ok, Task.t()}
+  def subscribe(payment_request_id, pid \\ self()) do
+    task =
+      Task.Supervisor.async_nolink(Teya.TaskSupervisor, fn ->
+        stream_payment(payment_request_id, pid)
+      end)
+
+    {:ok, task}
+  end
+
+  defp stream_payment(id, pid) do
+    with {:ok, token} <- Auth.token() do
+      base_url = Application.get_env(:teya, :base_url, "https://api.teya.com")
+      url = base_url <> "/poslink/v2/payment-requests/#{id}"
+
+      req_opts =
+        Application.get_env(
+          :teya,
+          :sse_req_options,
+          Application.get_env(:teya, :req_options, [])
+        )
+
+      case Req.get(url, [auth: {:bearer, token}, into: :self] ++ req_opts) do
+        {:ok, %{status: 200, body: %Req.Response.Async{ref: ref}}} ->
+          receive_loop(ref, "", id, pid)
+
+        {:ok, resp} ->
+          send(pid, {:poslink_payment_error, id, Error.from_response(resp)})
+
+        {:error, reason} ->
+          send(pid, {:poslink_payment_error, id, reason})
+      end
+    else
+      {:error, reason} ->
+        send(pid, {:poslink_payment_error, id, reason})
+    end
+  end
+
+  defp receive_loop(ref, buffer, id, pid) do
+    receive do
+      {^ref, {:data, chunk}} ->
+        {events, rest} = SSE.parse(buffer <> chunk)
+
+        Enum.each(events, fn event ->
+          event_type = Map.get(event, "event")
+
+          case Jason.decode(Map.get(event, "data", "null")) do
+            {:ok, data} when is_map(data) ->
+              send(pid, {:poslink_payment, id, event_type, data})
+
+            _ ->
+              :ok
+          end
+        end)
+
+        receive_loop(ref, rest, id, pid)
+
+      {^ref, :done} ->
+        :ok
+
+      {^ref, {:error, reason}} ->
+        send(pid, {:poslink_payment_error, id, reason})
+    end
   end
 end

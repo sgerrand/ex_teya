@@ -9,4 +9,5 @@ config :teya,
   # Auth uses a separate stub name so the token endpoint can be stubbed
   # independently of the API endpoints.
   auth_req_options: [plug: {Req.Test, Teya.Auth}, retry: false],
-  req_options: [plug: {Req.Test, Teya.Client}, retry: false]
+  req_options: [plug: {Req.Test, Teya.Client}, retry: false],
+  sse_req_options: [plug: {Req.Test, Teya.POSLink.Subscriber}, retry: false]

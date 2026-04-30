@@ -1,10 +1,13 @@
 defmodule Teya.MixProject do
   use Mix.Project
 
+  @version "0.1.0"
+  @source_url "https://github.com/sgerrand/ex_teya"
+
   def project do
     [
       app: :teya,
-      version: "0.1.0",
+      version: @version,
       elixir: "~> 1.17",
       start_permanent: Mix.env() == :prod,
       elixirc_paths: elixirc_paths(Mix.env()),
@@ -56,7 +59,26 @@ defmodule Teya.MixProject do
   defp docs do
     [
       main: "Teya",
-      extras: ["README.md"]
+      extras: ["README.md"],
+      source_url: @source_url,
+      source_ref: "v#{@version}",
+      groups_for_modules: [
+        "Online Payments": [
+          Teya.Checkout,
+          Teya.Transaction,
+          Teya.PayByLink,
+          Teya.Capture,
+          Teya.Refund,
+          Teya.Receipt,
+          Teya.Token
+        ],
+        "POSLink (Card-Present)": [
+          Teya.POSLink.Payment,
+          Teya.POSLink.Refund,
+          Teya.POSLink.Receipt,
+          Teya.POSLink.Store
+        ]
+      ]
     ]
   end
 
@@ -64,7 +86,7 @@ defmodule Teya.MixProject do
     [
       licenses: ["BSD-2-Clause"],
       links: %{
-        "GitHub" => "https://github.com/sgerrand/ex_teya"
+        "GitHub" => @source_url
       }
     ]
   end

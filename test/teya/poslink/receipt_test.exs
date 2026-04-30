@@ -1,6 +1,9 @@
 defmodule Teya.POSLink.ReceiptTest do
   use Teya.APICase, async: false
 
+  alias Teya.Error
+  alias Teya.POSLink.Receipt
+
   describe "create/2" do
     test "creates a receipt request successfully" do
       stub_api(fn conn ->
@@ -24,7 +27,7 @@ defmodule Teya.POSLink.ReceiptTest do
         }
       }
 
-      assert {:ok, response} = Teya.POSLink.Receipt.create(params)
+      assert {:ok, response} = Receipt.create(params)
       assert response["receipt_id"] == "receipt-uuid-1"
       assert response["status"] == "ENQUEUED"
     end
@@ -41,7 +44,7 @@ defmodule Teya.POSLink.ReceiptTest do
         "content" => %{"type" => "JSON", "data" => %{}}
       }
 
-      assert {:ok, _} = Teya.POSLink.Receipt.create(params, idempotency_key: "receipt-ref-99")
+      assert {:ok, _} = Receipt.create(params, idempotency_key: "receipt-ref-99")
     end
 
     test "returns Teya.Error on 400 bad request" do
@@ -49,8 +52,8 @@ defmodule Teya.POSLink.ReceiptTest do
         error_response(conn, 400, "BAD_REQUEST", "Missing required field: content")
       end)
 
-      assert {:error, %Teya.Error{code: "BAD_REQUEST", status: 400}} =
-               Teya.POSLink.Receipt.create(%{"store_id" => "store-uuid-1"})
+      assert {:error, %Error{code: "BAD_REQUEST", status: 400}} =
+               Receipt.create(%{"store_id" => "store-uuid-1"})
     end
 
     test "returns Teya.Error on 404 terminal not found" do
@@ -58,8 +61,8 @@ defmodule Teya.POSLink.ReceiptTest do
         error_response(conn, 404, "NOT_FOUND", "Terminal not found")
       end)
 
-      assert {:error, %Teya.Error{status: 404}} =
-               Teya.POSLink.Receipt.create(%{"terminal_id" => "bad-uuid"})
+      assert {:error, %Error{status: 404}} =
+               Receipt.create(%{"terminal_id" => "bad-uuid"})
     end
 
     test "returns Teya.Error on 429 rate limit" do
@@ -67,8 +70,8 @@ defmodule Teya.POSLink.ReceiptTest do
         error_response(conn, 429, "TOO_MANY_REQUESTS", "Rate limit exceeded")
       end)
 
-      assert {:error, %Teya.Error{status: 429}} =
-               Teya.POSLink.Receipt.create(%{})
+      assert {:error, %Error{status: 429}} =
+               Receipt.create(%{})
     end
   end
 end

@@ -1,6 +1,9 @@
 defmodule Teya.POSLink.PaymentTest do
   use Teya.APICase, async: false
 
+  alias Teya.Error
+  alias Teya.POSLink.Payment
+
   describe "create/2" do
     test "creates a payment request successfully" do
       stub_api(fn conn ->
@@ -21,7 +24,7 @@ defmodule Teya.POSLink.PaymentTest do
         "requested_amount" => %{"amount" => 1000, "currency" => "GBP"}
       }
 
-      assert {:ok, response} = Teya.POSLink.Payment.create(params)
+      assert {:ok, response} = Payment.create(params)
       assert response["payment_request_id"] == "pr-uuid-1"
       assert response["status"] == "NEW"
     end
@@ -38,7 +41,7 @@ defmodule Teya.POSLink.PaymentTest do
         "requested_amount" => %{"amount" => 500, "currency" => "EUR"}
       }
 
-      assert {:ok, _} = Teya.POSLink.Payment.create(params, idempotency_key: "order-ref-42")
+      assert {:ok, _} = Payment.create(params, idempotency_key: "order-ref-42")
     end
 
     test "returns Teya.Error on 400 bad request" do
@@ -46,8 +49,8 @@ defmodule Teya.POSLink.PaymentTest do
         error_response(conn, 400, "BAD_REQUEST", "Missing required field: store_id")
       end)
 
-      assert {:error, %Teya.Error{code: "BAD_REQUEST", status: 400}} =
-               Teya.POSLink.Payment.create(%{})
+      assert {:error, %Error{code: "BAD_REQUEST", status: 400}} =
+               Payment.create(%{})
     end
 
     test "returns Teya.Error on 404 terminal not found" do
@@ -55,8 +58,8 @@ defmodule Teya.POSLink.PaymentTest do
         error_response(conn, 404, "NOT_FOUND", "Terminal not found")
       end)
 
-      assert {:error, %Teya.Error{status: 404}} =
-               Teya.POSLink.Payment.create(%{"terminal_id" => "bad-uuid"})
+      assert {:error, %Error{status: 404}} =
+               Payment.create(%{"terminal_id" => "bad-uuid"})
     end
   end
 
@@ -75,7 +78,7 @@ defmodule Teya.POSLink.PaymentTest do
         })
       end)
 
-      assert {:ok, response} = Teya.POSLink.Payment.cancel(payment_id)
+      assert {:ok, response} = Payment.cancel(payment_id)
       assert response["status"] == "CANCELLING"
     end
 
@@ -84,7 +87,7 @@ defmodule Teya.POSLink.PaymentTest do
         error_response(conn, 404, "NOT_FOUND", "Payment request not found")
       end)
 
-      assert {:error, %Teya.Error{status: 404}} = Teya.POSLink.Payment.cancel("nonexistent")
+      assert {:error, %Error{status: 404}} = Payment.cancel("nonexistent")
     end
 
     test "returns Teya.Error on 409 when payment already in terminal state" do
@@ -92,8 +95,8 @@ defmodule Teya.POSLink.PaymentTest do
         error_response(conn, 409, "CONFLICT", "Payment is already in a terminal state")
       end)
 
-      assert {:error, %Teya.Error{code: "CONFLICT", status: 409}} =
-               Teya.POSLink.Payment.cancel("pr-uuid-done")
+      assert {:error, %Error{code: "CONFLICT", status: 409}} =
+               Payment.cancel("pr-uuid-done")
     end
   end
 
@@ -112,7 +115,7 @@ defmodule Teya.POSLink.PaymentTest do
         })
       end)
 
-      assert {:ok, response} = Teya.POSLink.Payment.list()
+      assert {:ok, response} = Payment.list()
       assert length(response["payment_requests"]) == 2
     end
 
@@ -122,7 +125,7 @@ defmodule Teya.POSLink.PaymentTest do
         json_response(conn, 200, %{"payment_requests" => [], "total" => 0})
       end)
 
-      assert {:ok, _} = Teya.POSLink.Payment.list(params: [status: "SUCCESSFUL"])
+      assert {:ok, _} = Payment.list(params: [status: "SUCCESSFUL"])
     end
 
     test "returns Teya.Error on 400 invalid filter params" do
@@ -130,8 +133,8 @@ defmodule Teya.POSLink.PaymentTest do
         error_response(conn, 400, "BAD_REQUEST", "Invalid status value")
       end)
 
-      assert {:error, %Teya.Error{status: 400}} =
-               Teya.POSLink.Payment.list(params: [status: "INVALID"])
+      assert {:error, %Error{status: 400}} =
+               Payment.list(params: [status: "INVALID"])
     end
   end
 end

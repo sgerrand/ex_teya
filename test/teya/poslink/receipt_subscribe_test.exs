@@ -1,6 +1,9 @@
 defmodule Teya.POSLink.ReceiptSubscribeTest do
   use Teya.POSLink.SubscribeCase, async: false
 
+  alias Teya.Error
+  alias Teya.POSLink.Receipt
+
   defp sse_event(type, data) do
     "event: #{type}\ndata: #{Jason.encode!(data)}\n\n"
   end
@@ -22,7 +25,7 @@ defmodule Teya.POSLink.ReceiptSubscribeTest do
       receipt_id = "receipt-uuid-1"
       stub_receipt_sse(receipt_id, sse_event("full", %{"status" => "ENQUEUED"}))
 
-      assert {:ok, %Task{}} = Teya.POSLink.Receipt.subscribe_status(receipt_id, self())
+      assert {:ok, %Task{}} = Receipt.subscribe_status(receipt_id, self())
       assert_receive {:poslink_receipt, ^receipt_id, _, _}, 500
     end
 
@@ -31,7 +34,7 @@ defmodule Teya.POSLink.ReceiptSubscribeTest do
       data = %{"status" => "PRINTED", "receipt_id" => receipt_id}
       stub_receipt_sse(receipt_id, sse_event("full", data))
 
-      {:ok, _task} = Teya.POSLink.Receipt.subscribe_status(receipt_id, self())
+      {:ok, _task} = Receipt.subscribe_status(receipt_id, self())
 
       assert_receive {:poslink_receipt, ^receipt_id, "full", received_data}, 500
       assert received_data["status"] == "PRINTED"
@@ -47,7 +50,7 @@ defmodule Teya.POSLink.ReceiptSubscribeTest do
 
       stub_receipt_sse(receipt_id, body)
 
-      {:ok, _task} = Teya.POSLink.Receipt.subscribe_status(receipt_id, self())
+      {:ok, _task} = Receipt.subscribe_status(receipt_id, self())
 
       assert_receive {:poslink_receipt, ^receipt_id, "full", %{"status" => "ENQUEUED"}}, 500
       assert_receive {:poslink_receipt, ^receipt_id, "diff", %{"status" => "PRINTING"}}, 500
@@ -63,9 +66,9 @@ defmodule Teya.POSLink.ReceiptSubscribeTest do
         |> Req.Test.json(%{"code" => "NOT_FOUND", "description" => "Receipt not found"})
       end)
 
-      {:ok, _task} = Teya.POSLink.Receipt.subscribe_status(receipt_id, self())
+      {:ok, _task} = Receipt.subscribe_status(receipt_id, self())
 
-      assert_receive {:poslink_receipt_error, ^receipt_id, %Teya.Error{status: 404}}, 500
+      assert_receive {:poslink_receipt_error, ^receipt_id, %Error{status: 404}}, 500
     end
 
     test "sends poslink_receipt_error on transport failure" do
@@ -75,7 +78,7 @@ defmodule Teya.POSLink.ReceiptSubscribeTest do
         Req.Test.transport_error(conn, :closed)
       end)
 
-      {:ok, _task} = Teya.POSLink.Receipt.subscribe_status(receipt_id, self())
+      {:ok, _task} = Receipt.subscribe_status(receipt_id, self())
 
       assert_receive {:poslink_receipt_error, ^receipt_id, %Req.TransportError{reason: :closed}},
                      500

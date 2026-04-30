@@ -1,6 +1,9 @@
 defmodule Teya.POSLink.RefundTest do
   use Teya.APICase, async: false
 
+  alias Teya.Error
+  alias Teya.POSLink.Refund
+
   describe "create/2" do
     test "creates a refund successfully" do
       stub_api(fn conn ->
@@ -20,7 +23,7 @@ defmodule Teya.POSLink.RefundTest do
         "payment_request_id" => "payment-uuid-9012"
       }
 
-      assert {:ok, response} = Teya.POSLink.Refund.create(params)
+      assert {:ok, response} = Refund.create(params)
       assert response["status"] == "SUCCESSFUL"
       assert response["refund_id"] == "refund-uuid-1"
     end
@@ -31,7 +34,7 @@ defmodule Teya.POSLink.RefundTest do
       end)
 
       params = %{"store_id" => "store-uuid-1", "payment_request_id" => "payment-uuid-9012"}
-      assert {:ok, response} = Teya.POSLink.Refund.create(params)
+      assert {:ok, response} = Refund.create(params)
       assert response["status"] == "PENDING"
     end
 
@@ -42,7 +45,7 @@ defmodule Teya.POSLink.RefundTest do
       end)
 
       params = %{"store_id" => "store-uuid-1", "payment_request_id" => "payment-uuid-9012"}
-      assert {:ok, _} = Teya.POSLink.Refund.create(params, idempotency_key: "my-refund-ref")
+      assert {:ok, _} = Refund.create(params, idempotency_key: "my-refund-ref")
     end
 
     test "returns Teya.Error on 404 when payment not found" do
@@ -50,8 +53,8 @@ defmodule Teya.POSLink.RefundTest do
         error_response(conn, 404, "NOT_FOUND", "Payment request not found")
       end)
 
-      assert {:error, %Teya.Error{status: 404}} =
-               Teya.POSLink.Refund.create(%{"payment_request_id" => "bad-uuid"})
+      assert {:error, %Error{status: 404}} =
+               Refund.create(%{"payment_request_id" => "bad-uuid"})
     end
 
     test "returns Teya.Error on 409 for duplicate refund" do
@@ -59,8 +62,8 @@ defmodule Teya.POSLink.RefundTest do
         error_response(conn, 409, "CONFLICT", "Refund already processed")
       end)
 
-      assert {:error, %Teya.Error{code: "CONFLICT", status: 409}} =
-               Teya.POSLink.Refund.create(%{
+      assert {:error, %Error{code: "CONFLICT", status: 409}} =
+               Refund.create(%{
                  "store_id" => "store-uuid-1",
                  "payment_request_id" => "payment-uuid-9012"
                })

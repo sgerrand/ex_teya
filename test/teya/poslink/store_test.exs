@@ -1,6 +1,9 @@
 defmodule Teya.POSLink.StoreTest do
   use Teya.APICase, async: false
 
+  alias Teya.Error
+  alias Teya.POSLink.Store
+
   describe "list/1" do
     test "returns list of stores on success" do
       stub_api(fn conn ->
@@ -16,7 +19,7 @@ defmodule Teya.POSLink.StoreTest do
         })
       end)
 
-      assert {:ok, response} = Teya.POSLink.Store.list()
+      assert {:ok, response} = Store.list()
       assert length(response["stores"]) == 2
       assert hd(response["stores"])["store_id"] == "store-uuid-1"
     end
@@ -26,8 +29,8 @@ defmodule Teya.POSLink.StoreTest do
         error_response(conn, 401, "UNAUTHORISED", "Invalid token")
       end)
 
-      assert {:error, %Teya.Error{code: "UNAUTHORISED", status: 401}} =
-               Teya.POSLink.Store.list()
+      assert {:error, %Error{code: "UNAUTHORISED", status: 401}} =
+               Store.list()
     end
 
     test "returns Teya.Error on 429 rate limit" do
@@ -35,7 +38,7 @@ defmodule Teya.POSLink.StoreTest do
         error_response(conn, 429, "TOO_MANY_REQUESTS", "Rate limit exceeded")
       end)
 
-      assert {:error, %Teya.Error{status: 429}} = Teya.POSLink.Store.list()
+      assert {:error, %Error{status: 429}} = Store.list()
     end
   end
 
@@ -55,7 +58,7 @@ defmodule Teya.POSLink.StoreTest do
         })
       end)
 
-      assert {:ok, response} = Teya.POSLink.Store.list_terminals(store_id)
+      assert {:ok, response} = Store.list_terminals(store_id)
       assert length(response["terminals"]) == 2
       assert hd(response["terminals"])["terminal_id"] == "term-uuid-1"
     end
@@ -65,8 +68,8 @@ defmodule Teya.POSLink.StoreTest do
         error_response(conn, 404, "NOT_FOUND", "Store not found")
       end)
 
-      assert {:error, %Teya.Error{status: 404}} =
-               Teya.POSLink.Store.list_terminals("nonexistent-store")
+      assert {:error, %Error{status: 404}} =
+               Store.list_terminals("nonexistent-store")
     end
   end
 end

@@ -31,32 +31,36 @@ config :teya,
   token_url: "https://identity.teya.com/connect/token",
   base_url: "https://api.teya.com",
   scopes: [
-    # Online Payments
-    "checkout/sessions/create",
-    "checkout/sessions/id/get",
-    "payment-links/create",
-    "payment-links/id/get",
-    "payment-links/id/update",
-    "transactions/online/create",
-    "transactions/online/id/get",
-    "captures/create",
-    "refunds/create",
-    "transactions/id/receipts/create",
-    "token/delete",
-    # POSLink (card-present terminals)
-    "poslink/stores/get",
-    "poslink/stores/id/terminals/get",
-    "poslink/payment-requests/create",
-    "poslink/payment-requests/id/get",
-    "poslink/payment-requests/id/update",
-    "poslink/payment-requests/get",
-    "poslink/refunds/create",
-    "poslink/receipt-requests/create",
-    "poslink/receipt-requests/id/status/get"
+    # list only the scopes your application needs — see table below
   ]
 ```
 
 OAuth tokens are fetched automatically and refreshed before expiry. Only request the scopes your application needs.
+
+### Scope reference
+
+| Scope | Library function |
+| --- | --- |
+| `checkout/sessions/create` | `Teya.Checkout.create_session/2` |
+| `checkout/sessions/id/get` | `Teya.Checkout.get_session/1` |
+| `payment-links/create` | `Teya.PayByLink.create/2` |
+| `payment-links/id/get` | `Teya.PayByLink.get/1` |
+| `payment-links/id/update` | `Teya.PayByLink.update/2` |
+| `transactions/online/create` | `Teya.Transaction.create/2` |
+| `transactions/online/id/get` | `Teya.Transaction.get/1` |
+| `captures/create` | `Teya.Capture.create/3` |
+| `refunds/create` | `Teya.Refund.create/2` |
+| `transactions/id/receipts/create` | `Teya.Receipt.create/3` |
+| `token/delete` | `Teya.Token.delete/3` |
+| `poslink/stores/get` | `Teya.POSLink.Store.list/1` |
+| `poslink/stores/id/terminals/get` | `Teya.POSLink.Store.list_terminals/2` |
+| `poslink/payment-requests/create` | `Teya.POSLink.Payment.create/2` |
+| `poslink/payment-requests/id/get` | `Teya.POSLink.Payment.subscribe/2` |
+| `poslink/payment-requests/id/update` | `Teya.POSLink.Payment.cancel/2` |
+| `poslink/payment-requests/get` | `Teya.POSLink.Payment.list/1` |
+| `poslink/refunds/create` | `Teya.POSLink.Refund.create/2` |
+| `poslink/receipt-requests/create` | `Teya.POSLink.Receipt.create/2` |
+| `poslink/receipt-requests/id/status/get` | `Teya.POSLink.Receipt.subscribe_status/2` |
 
 Obtain credentials from the [Teya Developer Portal](https://docs.teya.com/apis/developer-portal/introduction).
 
@@ -194,6 +198,13 @@ end
 and sends messages until the server closes the stream. The second argument is
 the recipient pid and defaults to `self()`.
 
+> **Task lifecycle:** The spawned task is not linked to the caller and is not
+> restarted by the supervisor. If the SSE stream drops mid-payment (network
+> error, server restart), the task sends `{:poslink_payment_error, id, reason}`
+> and exits — there is no automatic reconnection. To recover, call
+> `Teya.POSLink.Payment.list/1` to poll the current status, or call
+> `subscribe/2` again with the same `payment_request_id`.
+
 #### Cancel a payment
 
 ```elixir
@@ -250,6 +261,46 @@ case Teya.Checkout.create_session(params) do
   {:error, %Teya.Error{status: status}} -> {:error, status}
 end
 ```
+
+## Troubleshooting
+
+### Rate limiting (`TOO_MANY_REQUESTS`)
+
+Teya returns HTTP 429 when you exceed the rate limit. Back off exponentially
+and retry using the same idempotency key to avoid duplicate operations:
+
+```elixir
+case Teya.POSLink.Payment.create(params, idempotency_key: ref) do
+  {:error, %Teya.Error{code: "TOO_MANY_REQUESTS"}} ->
+    Process.sleep(1_000)
+    Teya.POSLink.Payment.create(params, idempotency_key: ref)
+  result ->
+    result
+end
+```
+
+### 3DS redirect flow
+
+When `Teya.Transaction.create/2` returns
+`{:ok, %{"type" => "REDIRECT_TRANSACTION_RESPONSE"}}`, the cardholder must
+complete a 3DS challenge before the payment is authorised. Redirect them to
+`resp["redirect_transaction_response"]["redirect_url"]` and poll
+`Teya.Transaction.get/1` after they return to your `success_url` / `failure_url`.
+
+### SSE stream disconnects mid-payment
+
+If a `{:poslink_payment_error, id, _reason}` message arrives before a terminal
+status (`"SUCCESSFUL"`, `"FAILED"`, `"CANCELLED"`), the SSE connection dropped.
+The payment may or may not have completed on the terminal. Check the current
+state with `Teya.POSLink.Payment.list/1` (filter by `payment_request_id`), then
+re-subscribe with `Teya.POSLink.Payment.subscribe/2` if still in progress.
+
+### Auth token refresh failures
+
+If the token endpoint is unreachable, `Teya.Auth` schedules a retry after
+10 seconds. While retrying, API calls return `{:error, reason}`. The cached
+token (if any) remains usable until it expires. Once connectivity is restored,
+the retry succeeds automatically — no restart required.
 
 ## Development
 

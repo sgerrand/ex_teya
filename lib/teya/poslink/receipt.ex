@@ -10,6 +10,21 @@ defmodule Teya.POSLink.Receipt do
 
   Required OAuth scopes: `poslink/receipt-requests/create`,
   `poslink/receipt-requests/id/status/get`.
+
+  ## Task lifecycle
+
+  `subscribe_status/2` returns `{:ok, %Task{}}` immediately. The task runs
+  under `Teya.TaskSupervisor` with `async_nolink`, meaning:
+
+  - The task is **not linked** to the caller — a task crash does not take down
+    the calling process.
+  - The supervisor does **not restart** the task if it exits.
+  - If the **caller process dies**, the task continues running until the SSE
+    stream ends or errors, then exits normally.
+  - If the **SSE stream disconnects** (network error, server restart), the task
+    sends `{:poslink_receipt_error, id, reason}` and exits. There is no
+    automatic reconnection. Call `subscribe_status/2` again to open a fresh
+    stream.
   """
 
   alias Teya.{Auth, Client, Error, SSE}
@@ -36,6 +51,15 @@ defmodule Teya.POSLink.Receipt do
   ## Options
 
   - `:idempotency_key` — override the auto-generated idempotency key
+
+  ## Examples
+
+      {:ok, %{"receipt_id" => id}} =
+        Teya.POSLink.Receipt.create(%{
+          "store_id"    => store_id,
+          "terminal_id" => terminal_id,
+          "content"     => %{"type" => "JSON", "data" => %{"total" => "£10.00"}}
+        })
   """
   @spec create(map(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def create(params, opts \\ []) do

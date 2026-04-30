@@ -11,6 +11,21 @@ defmodule Teya.POSLink.Payment do
   Required OAuth scopes: `poslink/payment-requests/create`,
   `poslink/payment-requests/id/get`, `poslink/payment-requests/id/update`,
   `poslink/payment-requests/get`.
+
+  ## Task lifecycle
+
+  `subscribe/2` returns `{:ok, %Task{}}` immediately. The task runs under
+  `Teya.TaskSupervisor` with `async_nolink`, meaning:
+
+  - The task is **not linked** to the caller — a task crash does not take down
+    the calling process.
+  - The supervisor does **not restart** the task if it exits.
+  - If the **caller process dies**, the task continues running until the SSE
+    stream ends or errors, then exits normally.
+  - If the **SSE stream disconnects** mid-payment (network error, server
+    restart), the task sends `{:poslink_payment_error, id, reason}` and exits.
+    There is no automatic reconnection. To recover, call `Payment.list/1` to
+    poll the current status, or call `subscribe/2` again to open a fresh stream.
   """
 
   alias Teya.{Auth, Client, Error, SSE}
@@ -38,6 +53,16 @@ defmodule Teya.POSLink.Payment do
   ## Options
 
   - `:idempotency_key` — override the auto-generated idempotency key
+
+  ## Examples
+
+      params = %{
+        "store_id"         => store_id,
+        "terminal_id"      => terminal_id,
+        "requested_amount" => %{"amount" => 1000, "currency" => "GBP"}
+      }
+
+      {:ok, %{"payment_request_id" => id}} = Teya.POSLink.Payment.create(params)
   """
   @spec create(map(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def create(params, opts \\ []) do
@@ -58,6 +83,10 @@ defmodule Teya.POSLink.Payment do
   ## Options
 
   - `:idempotency_key` — override the auto-generated idempotency key
+
+  ## Examples
+
+      {:ok, %{"status" => "CANCELLING"}} = Teya.POSLink.Payment.cancel(payment_request_id)
   """
   @spec cancel(String.t(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def cancel(payment_request_id, opts \\ []) do

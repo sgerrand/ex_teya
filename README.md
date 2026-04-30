@@ -297,7 +297,7 @@ re-subscribe with `Teya.POSLink.Payment.subscribe/2` if still in progress.
 
 ### Auth token refresh failures
 
-If the token endpoint is unreachable, `Teya.Auth` schedules a retry after
+If the token endpoint is unreachable, the auth process schedules a retry after
 10 seconds. While retrying, API calls return `{:error, reason}`. The cached
 token (if any) remains usable until it expires. Once connectivity is restored,
 the retry succeeds automatically — no restart required.

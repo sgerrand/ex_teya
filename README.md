@@ -15,7 +15,7 @@ Add `teya` to your dependencies in `mix.exs`:
 ```elixir
 def deps do
   [
-    {:teya, "~> 0.2.0"}
+    {:teya, "~> 0.3.0"}
   ]
 end
 ```

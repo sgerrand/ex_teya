@@ -1,6 +1,13 @@
 defmodule Teya do
   @moduledoc """
-  Elixir client for the [Teya Online Payments API](https://docs.teya.com/apis/online-payments/apis).
+  Elixir client for the Teya APIs:
+
+  - **[Online Payments](https://docs.teya.com/apis/online-payments/apis)** —
+    hosted checkout, embedded card forms, pay-by-link, and token management
+  - **[Payments Gateway](https://docs.teya.com/apis/payments/openapi.yaml)** —
+    direct terminal integration for card-present transactions and reversals
+  - **[POSLink](https://docs.teya.com/apis/poslink/openapi.yaml)** —
+    ePOS middleware for Teya-managed payment terminals
 
   ## Configuration
 
@@ -12,6 +19,7 @@ defmodule Teya do
         token_url: "https://identity.teya.com/connect/token",
         base_url: "https://api.teya.com",
         scopes: [
+          # Online Payments
           "checkout/sessions/create",
           "checkout/sessions/id/get",
           "payment-links/create",
@@ -22,13 +30,28 @@ defmodule Teya do
           "captures/create",
           "refunds/create",
           "transactions/id/receipts/create",
-          "token/delete"
+          "token/delete",
+          # Payments Gateway
+          "transactions/card-present/create",
+          "reversals/create",
+          # POSLink
+          "poslink/stores/get",
+          "poslink/stores/id/terminals/get",
+          "poslink/payment-requests/create",
+          "poslink/payment-requests/id/get",
+          "poslink/payment-requests/id/update",
+          "poslink/payment-requests/get",
+          "poslink/refunds/create",
+          "poslink/receipt-requests/create",
+          "poslink/receipt-requests/id/status/get"
         ]
 
-  OAuth tokens are fetched automatically and refreshed before
-  expiry. Only request the scopes your application needs.
+  OAuth tokens are fetched automatically and refreshed before expiry.
+  Only request the scopes your application needs.
 
   ## API modules
+
+  ### Online Payments
 
   | Module | Purpose |
   |---|---|
@@ -39,6 +62,22 @@ defmodule Teya do
   | `Teya.Refund` | Refund completed transactions |
   | `Teya.Receipt` | Send digital receipts |
   | `Teya.Token` | Manage saved payment method tokens |
+
+  ### Payments Gateway
+
+  | Module | Purpose |
+  |---|---|
+  | `Teya.CardPresent` | Card-present transactions with raw EMV/track data |
+  | `Teya.Reversal` | Void unsettled transactions |
+
+  ### POSLink
+
+  | Module | Purpose |
+  |---|---|
+  | `Teya.POSLink.Payment` | Create payment requests and stream status events |
+  | `Teya.POSLink.Refund` | Refund a POSLink payment |
+  | `Teya.POSLink.Receipt` | Print receipts and stream printer status |
+  | `Teya.POSLink.Store` | List stores and terminals |
 
   ## Error handling
 

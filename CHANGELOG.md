@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0](https://github.com/sgerrand/ex_teya/compare/v0.2.0...v0.3.0) (2026-05-01)
+
+
+### Features
+
+* add Teya.CardPresent for card-present transactions ([bcce7f9](https://github.com/sgerrand/ex_teya/commit/bcce7f9a9e7d32e6a75c8983bc429e334938fa87))
+* add Teya.Reversal for voiding unsettled transactions ([b326668](https://github.com/sgerrand/ex_teya/commit/b326668935470d4952d08d77c5ce4ad24a7cf4ac))
+
 ## [0.2.0](https://github.com/sgerrand/ex_teya/compare/v0.1.0...v0.2.0) (2026-05-01)
 
 

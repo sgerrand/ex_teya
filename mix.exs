@@ -70,7 +70,9 @@ defmodule Teya.MixProject do
           Teya.Capture,
           Teya.Refund,
           Teya.Receipt,
-          Teya.Token
+          Teya.Token,
+          Teya.CardPresent,
+          Teya.Reversal
         ],
         "POSLink (Card-Present)": [
           Teya.POSLink.Payment,

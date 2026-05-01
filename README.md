@@ -50,6 +50,8 @@ OAuth tokens are fetched automatically and refreshed before expiry. Only request
 | `transactions/online/id/get` | `Teya.Transaction.get/1` |
 | `captures/create` | `Teya.Capture.create/3` |
 | `refunds/create` | `Teya.Refund.create/2` |
+| `transactions/card-present/create` | `Teya.CardPresent.create/2` |
+| `reversals/create` | `Teya.Reversal.create/2` |
 | `transactions/id/receipts/create` | `Teya.Receipt.create/3` |
 | `token/delete` | `Teya.Token.delete/3` |
 | `poslink/stores/get` | `Teya.POSLink.Store.list/1` |
@@ -148,6 +150,52 @@ Generate a shareable payment link:
 
 ```elixir
 {:ok, _} = Teya.Refund.create(%{"transaction_id" => transaction_id})
+```
+
+### Card-Present (Direct Terminal Integration)
+
+Process a payment where your software supplies the raw card data from a POS
+terminal (EMV TLV, encrypted track, PIN block). For Teya-managed terminals
+accessed through ePOS middleware, see [POSLink](#poslink-card-present-terminals)
+instead.
+
+```elixir
+params = %{
+  "type"          => "SALE",
+  "entry_mode"    => "CONTACT_EMV",
+  "amounts"       => %{"amount" => 1000, "currency" => "GBP"},
+  "emv_data"      => "9F2608AABBCCDD112233",
+  "track_data"    => %{
+    "encryption_key_id" => "key-1",
+    "encrypted_track"   => "...",
+    "encryption_ksn"    => "ksn-1"
+  },
+  "transacted_at" => DateTime.utc_now() |> DateTime.to_iso8601()
+}
+
+{:ok, response} = Teya.CardPresent.create(params)
+response["status"]  # "SUCCESS" | "FAILURE" | "PENDING"
+```
+
+### Reversal
+
+Void a transaction before it settles with the card network. Use a refund
+(`Teya.Refund`) for transactions that have already settled.
+
+```elixir
+# Reverse by transaction ID
+{:ok, response} = Teya.Reversal.create(%{
+  "reversal_reason" => "CARD_REVERSAL",
+  "transaction_id"  => transaction_id
+})
+
+# Or by the idempotency key used when creating the original transaction
+{:ok, response} = Teya.Reversal.create(%{
+  "reversal_reason" => "COMMUNICATION_REVERSAL",
+  "idempotency_key" => original_idempotency_key
+})
+
+response["status"]  # "SUCCESS" | "FAILURE" | "PENDING" | "ACKNOWLEDGED"
 ```
 
 ### POSLink (Card-Present Terminals)

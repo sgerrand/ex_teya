@@ -1,12 +1,15 @@
 defmodule Teya.Auth do
   @moduledoc false
   use GenServer
+  require Logger
 
   alias Teya.Config
 
   @refresh_margin_seconds 30
+  @base_retry_delay_ms 1_000
+  @max_retry_delay_ms 60_000
 
-  defstruct [:config, :token, :expires_at, :refresh_timer_ref]
+  defstruct [:config, :token, :expires_at, :refresh_timer_ref, retry_count: 0]
 
   def start_link(%Config{} = config) do
     GenServer.start_link(__MODULE__, config, name: __MODULE__)
@@ -32,19 +35,31 @@ defmodule Teya.Auth do
 
   @impl true
   def handle_info(:refresh, state) do
+    Logger.debug("Teya.Auth: proactive token refresh started")
+
     case fetch_token(state.config) do
       {:ok, token, expires_at} ->
+        expires_in = expires_at - System.monotonic_time(:second)
+        Logger.info("Teya.Auth: token refreshed, expires in #{expires_in}s")
+
         {:noreply,
          %{
            state
            | token: token,
              expires_at: expires_at,
+             retry_count: 0,
              refresh_timer_ref: schedule_refresh(state, expires_at)
          }}
 
-      {:error, _} ->
-        ref = Process.send_after(self(), :refresh, :timer.seconds(10))
-        {:noreply, %{state | refresh_timer_ref: ref}}
+      {:error, reason} ->
+        delay_ms = retry_delay_ms(state.retry_count)
+
+        Logger.warning(
+          "Teya.Auth: token refresh failed (#{inspect(reason)}), retrying in #{delay_ms}ms"
+        )
+
+        ref = Process.send_after(self(), :refresh, delay_ms)
+        {:noreply, %{state | refresh_timer_ref: ref, retry_count: state.retry_count + 1}}
     end
   end
 
@@ -61,11 +76,15 @@ defmodule Teya.Auth do
   defp do_fetch(state) do
     case fetch_token(state.config) do
       {:ok, token, expires_at} ->
+        expires_in = expires_at - System.monotonic_time(:second)
+        Logger.debug("Teya.Auth: token fetched, expires in #{expires_in}s")
+
         {:ok,
          %{
            state
            | token: token,
              expires_at: expires_at,
+             retry_count: 0,
              refresh_timer_ref: schedule_refresh(state, expires_at)
          }}
 
@@ -93,7 +112,8 @@ defmodule Teya.Auth do
     opts =
       [
         body: body,
-        headers: [{"content-type", "application/x-www-form-urlencoded"}]
+        headers: [{"content-type", "application/x-www-form-urlencoded"}],
+        receive_timeout: 10_000
       ] ++ req_opts
 
     case Req.post(config.token_url, opts) do
@@ -112,5 +132,10 @@ defmodule Teya.Auth do
     if ref, do: Process.cancel_timer(ref)
     delay = max(expires_at - System.monotonic_time(:second) - @refresh_margin_seconds, 0)
     Process.send_after(self(), :refresh, :timer.seconds(delay))
+  end
+
+  defp retry_delay_ms(count) do
+    delay = @base_retry_delay_ms * trunc(:math.pow(2, count))
+    min(delay, @max_retry_delay_ms)
   end
 end

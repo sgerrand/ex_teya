@@ -6,7 +6,7 @@ defmodule Teya.AuthTest do
     # Reset cached token to force a fresh fetch on each test
     :sys.replace_state(auth_pid, fn state ->
       if state.refresh_timer_ref, do: Process.cancel_timer(state.refresh_timer_ref)
-      %{state | token: nil, expires_at: nil, refresh_timer_ref: nil}
+      %{state | token: nil, expires_at: nil, refresh_timer_ref: nil, retry_count: 0}
     end)
 
     %{auth_pid: auth_pid}
@@ -103,6 +103,44 @@ defmodule Teya.AuthTest do
       state = :sys.get_state(auth_pid)
 
       assert is_reference(state.refresh_timer_ref)
+    end
+
+    test "retry delay grows exponentially with each failure", %{auth_pid: auth_pid} do
+      stub_auth(auth_pid, fn conn ->
+        conn
+        |> Plug.Conn.put_status(503)
+        |> Req.Test.json(%{"error" => "service_unavailable"})
+      end)
+
+      :sys.replace_state(auth_pid, fn state -> %{state | retry_count: 0} end)
+      send(auth_pid, :refresh)
+      :sys.get_state(auth_pid)
+      state_after_1 = :sys.get_state(auth_pid)
+      assert state_after_1.retry_count == 1
+
+      stub_auth(auth_pid, fn conn ->
+        conn
+        |> Plug.Conn.put_status(503)
+        |> Req.Test.json(%{"error" => "service_unavailable"})
+      end)
+
+      send(auth_pid, :refresh)
+      :sys.get_state(auth_pid)
+      state_after_2 = :sys.get_state(auth_pid)
+      assert state_after_2.retry_count == 2
+    end
+
+    test "resets retry count after successful refresh", %{auth_pid: auth_pid} do
+      :sys.replace_state(auth_pid, fn state -> %{state | retry_count: 5} end)
+
+      stub_auth(auth_pid, fn conn ->
+        Req.Test.json(conn, %{"access_token" => "recovered_token", "expires_in" => 3600})
+      end)
+
+      send(auth_pid, :refresh)
+      :sys.get_state(auth_pid)
+
+      assert :sys.get_state(auth_pid).retry_count == 0
     end
   end
 end

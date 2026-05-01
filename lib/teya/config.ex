@@ -24,6 +24,8 @@ defmodule Teya.Config do
         ]
   """
 
+  require Logger
+
   @type t :: %__MODULE__{
           client_id: String.t(),
           client_secret: String.t(),
@@ -50,5 +52,23 @@ defmodule Teya.Config do
       base_url: Application.get_env(:teya, :base_url, "https://api.teya.com"),
       scopes: Application.get_env(:teya, :scopes, [])
     }
+    |> validate!()
   end
+
+  defp validate!(%__MODULE__{} = config) do
+    if blank?(config.client_id),
+      do: raise(ArgumentError, "Teya: :client_id must be a non-empty string")
+
+    if blank?(config.client_secret),
+      do: raise(ArgumentError, "Teya: :client_secret must be a non-empty string")
+
+    if config.scopes == [],
+      do: Logger.warning("Teya: no :scopes configured — token requests will request no scopes")
+
+    config
+  end
+
+  defp blank?(nil), do: true
+  defp blank?(""), do: true
+  defp blank?(_), do: false
 end

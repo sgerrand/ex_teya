@@ -27,7 +27,7 @@ defmodule Teya.POSLink.Receipt do
     stream.
   """
 
-  alias Teya.{Auth, Client, Error, SSE}
+  alias Teya.{Auth, Client, SSE}
 
   @doc """
   Submits a receipt print request to a terminal.
@@ -80,7 +80,7 @@ defmodule Teya.POSLink.Receipt do
     - `event_type` is `"full"` (complete snapshot) or `"diff"` (partial update)
     - `data` is the decoded JSON map (e.g. `%{"status" => "PRINTED", ...}`)
   - `{:poslink_receipt_error, id, reason}` — the stream ended with an error;
-    `reason` is a `%Teya.Error{}` or a transport exception
+    `reason` is a `%Teya.Error{}`, a transport exception, or `:stream_timeout`
 
   ## Example
 
@@ -120,45 +120,9 @@ defmodule Teya.POSLink.Receipt do
             Application.get_env(:teya, :req_options, [])
           )
 
-        case Req.get(url, [auth: {:bearer, token}, into: :self] ++ req_opts) do
-          {:ok, %{status: 200, body: %Req.Response.Async{ref: ref}}} ->
-            receive_loop(ref, "", id, pid)
-
-          {:ok, resp} ->
-            send(pid, {:poslink_receipt_error, id, Error.from_response(resp)})
-
-          {:error, reason} ->
-            send(pid, {:poslink_receipt_error, id, reason})
-        end
+        SSE.stream(url, token, id, :poslink_receipt, :poslink_receipt_error, pid, req_opts)
 
       {:error, reason} ->
-        send(pid, {:poslink_receipt_error, id, reason})
-    end
-  end
-
-  defp receive_loop(ref, buffer, id, pid) do
-    receive do
-      {^ref, {:data, chunk}} ->
-        {events, rest} = SSE.parse(buffer <> chunk)
-
-        Enum.each(events, fn event ->
-          event_type = Map.get(event, "event")
-
-          case Jason.decode(Map.get(event, "data", "null")) do
-            {:ok, data} when is_map(data) ->
-              send(pid, {:poslink_receipt, id, event_type, data})
-
-            _ ->
-              :ok
-          end
-        end)
-
-        receive_loop(ref, rest, id, pid)
-
-      {^ref, :done} ->
-        :ok
-
-      {^ref, {:error, reason}} ->
         send(pid, {:poslink_receipt_error, id, reason})
     end
   end

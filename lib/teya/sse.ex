@@ -36,6 +36,8 @@ defmodule Teya.SSE do
   discarded and never appear in the output list.
   """
 
+  alias Teya.Error
+
   @type event :: %{String.t() => String.t() | non_neg_integer()}
 
   @doc """
@@ -71,6 +73,48 @@ defmodule Teya.SSE do
           |> Enum.reject(&is_nil/1)
 
         {events, remaining}
+    end
+  end
+
+  @doc false
+  def stream(url, token, id, ok_tag, error_tag, pid, req_opts \\ []) do
+    case Req.get(url, [auth: {:bearer, token}, into: :self] ++ req_opts) do
+      {:ok, %{status: 200, body: %Req.Response.Async{ref: ref}}} ->
+        stream_loop(ref, "", id, ok_tag, error_tag, pid)
+
+      {:ok, resp} ->
+        send(pid, {error_tag, id, Error.from_response(resp)})
+
+      {:error, reason} ->
+        send(pid, {error_tag, id, reason})
+    end
+  end
+
+  defp stream_loop(ref, buffer, id, ok_tag, error_tag, pid) do
+    timeout_ms = Application.get_env(:teya, :sse_stream_timeout_ms, 60_000)
+
+    receive do
+      {^ref, {:data, chunk}} ->
+        {events, rest} = parse(buffer <> chunk)
+
+        Enum.each(events, fn event ->
+          event_type = Map.get(event, "event")
+
+          case Jason.decode(Map.get(event, "data", "null")) do
+            {:ok, data} when is_map(data) -> send(pid, {ok_tag, id, event_type, data})
+            _ -> :ok
+          end
+        end)
+
+        stream_loop(ref, rest, id, ok_tag, error_tag, pid)
+
+      {^ref, :done} ->
+        :ok
+
+      {^ref, {:error, reason}} ->
+        send(pid, {error_tag, id, reason})
+    after
+      timeout_ms -> send(pid, {error_tag, id, :stream_timeout})
     end
   end
 

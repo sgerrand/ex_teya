@@ -24,11 +24,12 @@ defmodule Teya.POSLink.Payment do
     stream ends or errors, then exits normally.
   - If the **SSE stream disconnects** mid-payment (network error, server
     restart), the task sends `{:poslink_payment_error, id, reason}` and exits.
-    There is no automatic reconnection. To recover, call `Payment.list/1` to
-    poll the current status, or call `subscribe/2` again to open a fresh stream.
+    There is no automatic reconnection. To recover, call `Payment.get/1` or
+    `Payment.list/1` to poll the current status, or call `subscribe/2` again to
+    open a fresh stream.
   """
 
-  alias Teya.{Auth, Client, Error, SSE}
+  alias Teya.{Auth, Client, SSE}
 
   @doc """
   Creates a payment request at a terminal.
@@ -100,6 +101,27 @@ defmodule Teya.POSLink.Payment do
   end
 
   @doc """
+  Fetches the current state of a single payment request by its ID.
+
+  Useful as a fallback when an SSE stream from `subscribe/2` disconnects before
+  the payment reaches a terminal state — check the current status, then
+  re-subscribe if still in progress.
+
+  ## Parameters
+
+  - `payment_request_id` — UUID returned from `create/2`
+
+  ## Examples
+
+      {:ok, payment} = Teya.POSLink.Payment.get(payment_request_id)
+      payment["status"]  # "NEW" | "IN_PROGRESS" | "SUCCESSFUL" | "FAILED" | "CANCELLED"
+  """
+  @spec get(String.t(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
+  def get(payment_request_id, opts \\ []) do
+    Client.request(:get, "/poslink/v2/payment-requests/#{payment_request_id}", opts)
+  end
+
+  @doc """
   Lists payment requests with optional filtering.
 
   Returns `{:ok, response}` containing a paginated list of payment request
@@ -138,7 +160,7 @@ defmodule Teya.POSLink.Payment do
     - `event_type` is `"full"` (complete snapshot) or `"diff"` (partial update)
     - `data` is the decoded JSON map (e.g. `%{"status" => "SUCCESSFUL", ...}`)
   - `{:poslink_payment_error, id, reason}` — the stream ended with an error;
-    `reason` is a `%Teya.Error{}` or a transport exception
+    `reason` is a `%Teya.Error{}`, a transport exception, or `:stream_timeout`
 
   The task exits normally when the server closes the stream (terminal payment
   state reached) or with an error tuple when the connection fails.
@@ -181,45 +203,9 @@ defmodule Teya.POSLink.Payment do
             Application.get_env(:teya, :req_options, [])
           )
 
-        case Req.get(url, [auth: {:bearer, token}, into: :self] ++ req_opts) do
-          {:ok, %{status: 200, body: %Req.Response.Async{ref: ref}}} ->
-            receive_loop(ref, "", id, pid)
-
-          {:ok, resp} ->
-            send(pid, {:poslink_payment_error, id, Error.from_response(resp)})
-
-          {:error, reason} ->
-            send(pid, {:poslink_payment_error, id, reason})
-        end
+        SSE.stream(url, token, id, :poslink_payment, :poslink_payment_error, pid, req_opts)
 
       {:error, reason} ->
-        send(pid, {:poslink_payment_error, id, reason})
-    end
-  end
-
-  defp receive_loop(ref, buffer, id, pid) do
-    receive do
-      {^ref, {:data, chunk}} ->
-        {events, rest} = SSE.parse(buffer <> chunk)
-
-        Enum.each(events, fn event ->
-          event_type = Map.get(event, "event")
-
-          case Jason.decode(Map.get(event, "data", "null")) do
-            {:ok, data} when is_map(data) ->
-              send(pid, {:poslink_payment, id, event_type, data})
-
-            _ ->
-              :ok
-          end
-        end)
-
-        receive_loop(ref, rest, id, pid)
-
-      {^ref, :done} ->
-        :ok
-
-      {^ref, {:error, reason}} ->
         send(pid, {:poslink_payment_error, id, reason})
     end
   end

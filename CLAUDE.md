@@ -35,7 +35,7 @@ lib/teya/
   auth.ex             — GenServer: lazy token fetch, cache, proactive refresh
   client.ex           — HTTP layer: calls Auth.token/0, adds Bearer header,
                         auto-generates Idempotency-Key on POST/PATCH
-  sse.ex              — pure SSE frame parser: parse/1 splits a buffer into events
+  sse.ex              — SSE frame parser (parse/1) + shared stream helper (stream/7)
   checkout.ex         — POST/GET /v2/checkout/sessions
   transaction.ex      — POST/GET /v3/transactions/online
   pay_by_link.ex      — POST/GET/PATCH /v2/payment-links
@@ -45,7 +45,7 @@ lib/teya/
   token.ex            — DELETE /v1/tokens/{id}
   poslink/
     store.ex          — GET /poslink/v1/stores, GET /poslink/v1/stores/{id}/terminals
-    payment.ex        — POST/PATCH /poslink/v2/payment-requests, GET /poslink/v1/payment-requests
+    payment.ex        — POST/PATCH/GET /poslink/v2/payment-requests, GET /poslink/v1/payment-requests
                         subscribe/2: spawns a Task to stream SSE payment status events
     refund.ex         — POST /poslink/v1/refunds
     receipt.ex        — POST /poslink/v1/receipt-requests

@@ -100,6 +100,35 @@ defmodule Teya.POSLink.PaymentTest do
     end
   end
 
+  describe "get/2" do
+    test "fetches a single payment request by ID" do
+      payment_id = "pr-uuid-1"
+
+      stub_api(fn conn ->
+        assert conn.method == "GET"
+        assert conn.request_path == "/poslink/v2/payment-requests/#{payment_id}"
+        assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer test_access_token"]
+
+        json_response(conn, 200, %{
+          "payment_request_id" => payment_id,
+          "status" => "SUCCESSFUL"
+        })
+      end)
+
+      assert {:ok, response} = Payment.get(payment_id)
+      assert response["payment_request_id"] == payment_id
+      assert response["status"] == "SUCCESSFUL"
+    end
+
+    test "returns Teya.Error on 404 when payment not found" do
+      stub_api(fn conn ->
+        error_response(conn, 404, "NOT_FOUND", "Payment request not found")
+      end)
+
+      assert {:error, %Error{status: 404}} = Payment.get("nonexistent-id")
+    end
+  end
+
   describe "list/1" do
     test "returns a list of payment requests" do
       stub_api(fn conn ->

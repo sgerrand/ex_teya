@@ -20,6 +20,10 @@ defmodule Teya.Error do
     %__MODULE__{code: code, message: message, status: status}
   end
 
+  def from_response(%{status: status, body: body}) do
+    %__MODULE__{status: status, message: body |> inspect() |> String.slice(0, 500)}
+  end
+
   def from_response(%{status: status}) do
     %__MODULE__{status: status}
   end

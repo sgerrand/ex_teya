@@ -27,7 +27,8 @@ defmodule Teya.Client do
           method: method,
           url: base_url <> path,
           auth: {:bearer, token},
-          headers: idempotency_headers(method, opts)
+          headers: idempotency_headers(method, opts),
+          receive_timeout: 30_000
         ]
         |> put_if_present(:json, Keyword.get(opts, :body))
         |> put_if_present(:params, Keyword.get(opts, :params))

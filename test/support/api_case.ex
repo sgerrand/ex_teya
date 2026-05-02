@@ -8,24 +8,28 @@ defmodule Teya.APICase do
     end
   end
 
-  # Stub the token endpoint for Auth's process, then allow Auth to access it.
-  # stub must come before allow — allow copies the current stub into a location
-  # accessible from Auth's GenServer process.
+  # Pre-seed a valid token directly into the Auth GenServer state. Resetting to
+  # nil and stubbing the token endpoint races with stale `:refresh` messages
+  # left by prior tests (e.g. retry timers from auth_test.exs): when a refresh
+  # fires after the owning test process has exited, the `Req.Test` stub lookup
+  # raises, crashing Auth and leaving a small window where `Process.whereis`
+  # may return nil or a freshly restarted PID with no stub allowed.
   setup do
     auth_pid = Process.whereis(Teya.Auth)
 
     if auth_pid do
       :sys.replace_state(auth_pid, fn state ->
         if state.refresh_timer_ref, do: Process.cancel_timer(state.refresh_timer_ref)
-        %{state | token: nil, expires_at: nil, refresh_timer_ref: nil}
+
+        %{
+          state
+          | token: "test_access_token",
+            expires_at: System.monotonic_time(:second) + 3600,
+            refresh_timer_ref: nil,
+            retry_count: 0
+        }
       end)
     end
-
-    Req.Test.stub(Teya.Auth, fn conn ->
-      Req.Test.json(conn, %{"access_token" => "test_access_token", "expires_in" => 3600})
-    end)
-
-    if auth_pid, do: Req.Test.allow(Teya.Auth, self(), auth_pid)
 
     :ok
   end
@@ -34,7 +38,8 @@ defmodule Teya.APICase do
   Stubs the Teya API with the given handler for the current test process.
 
   The handler receives `%Plug.Conn{}` and must return it after sending a response.
-  Token endpoint requests are handled automatically via the Auth stub set in setup.
+  The Auth GenServer is pre-seeded with a valid token in setup, so no token
+  endpoint stub is required.
   """
   def stub_api(api_handler) when is_function(api_handler, 1) do
     Req.Test.stub(Teya.Client, api_handler)

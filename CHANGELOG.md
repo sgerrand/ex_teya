@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/sgerrand/ex_teya/compare/v0.3.0...v0.4.0) (2026-05-02)
+
+
+### Features
+
+* add Teya.DCC for unauthenticated currency conversion quotes ([9bc0b64](https://github.com/sgerrand/ex_teya/commit/9bc0b648bd1db504bcf1768b76ec3e6c38b79638))
+
 ## [0.3.0](https://github.com/sgerrand/ex_teya/compare/v0.2.0...v0.3.0) (2026-05-01)
 
 

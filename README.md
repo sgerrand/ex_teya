@@ -198,6 +198,37 @@ Void a transaction before it settles with the card network. Use a refund
 response["status"]  # "SUCCESS" | "FAILURE" | "PENDING" | "ACKNOWLEDGED"
 ```
 
+### Dynamic Currency Conversion (DCC)
+
+Before a card-present transaction, check whether the cardholder's card is
+eligible for DCC and retrieve a rate quote. No OAuth credentials are required
+for this endpoint.
+
+```elixir
+case Teya.DCC.quote(%{
+  "store_id"      => store_id,
+  "card_first9"   => String.slice(card_number, 0, 9),
+  "base_amount"   => 1000,
+  "base_currency" => "GBP"
+}) do
+  {:ok, offer} ->
+    # Offer the cardholder: pay offer["cardholder_amount"] offer["cardholder_currency"]
+    # If accepted, include the quote in the card-present transaction:
+    dcc_params = %{
+      "quoted_at"         => offer["quoted_at"],
+      "cardholder_amount" => %{
+        "amount"   => offer["cardholder_amount"],
+        "currency" => offer["cardholder_currency"]
+      }
+    }
+    Teya.CardPresent.create(Map.put(card_present_params, "dcc", dcc_params))
+
+  {:error, %Teya.Error{code: code}} when code in ["NON_ELIGIBLE_CARD", "SAME_CURRENCY"] ->
+    # Card not eligible — proceed without DCC
+    Teya.CardPresent.create(card_present_params)
+end
+```
+
 ### POSLink (Card-Present Terminals)
 
 POSLink integrates ePOS software with physical payment terminals. Discover

@@ -6,6 +6,8 @@ defmodule Teya do
     hosted checkout, embedded card forms, pay-by-link, and token management
   - **[Payments Gateway](https://docs.teya.com/apis/payments/openapi.yaml)** —
     direct terminal integration for card-present transactions and reversals
+  - **[Dynamic Currency Conversion](https://docs.teya.com/apis/dynamic-currency-conversion/openapi.yaml)** —
+    unauthenticated BIN eligibility check and real-time exchange rate quotes
   - **[POSLink](https://docs.teya.com/apis/poslink/openapi.yaml)** —
     ePOS middleware for Teya-managed payment terminals
 
@@ -69,6 +71,12 @@ defmodule Teya do
   |---|---|
   | `Teya.CardPresent` | Card-present transactions with raw EMV/track data |
   | `Teya.Reversal` | Void unsettled transactions |
+
+  ### Dynamic Currency Conversion
+
+  | Module | Purpose |
+  |---|---|
+  | `Teya.DCC` | BIN eligibility check and exchange rate quote (no OAuth required) |
 
   ### POSLink
 

@@ -40,6 +40,16 @@ defmodule Teya.APICase do
     Req.Test.stub(Teya.Client, api_handler)
   end
 
+  @doc """
+  Stubs the DCC endpoint with the given handler for the current test process.
+
+  Use instead of `stub_api/1` for `Teya.DCC.quote/1` calls, which do not go
+  through the authenticated client.
+  """
+  def stub_dcc(handler) when is_function(handler, 1) do
+    Req.Test.stub(Teya.DCC, handler)
+  end
+
   @doc "Sends a JSON response with the given status and body map."
   def json_response(conn, status, body) do
     conn

@@ -48,6 +48,7 @@ defmodule Teya.MixProject do
   defp deps do
     [
       {:req, "~> 0.5"},
+      {:req_server_sent_events, "~> 0.2"},
       {:jason, "~> 1.4"},
       {:plug, "~> 1.16", only: :test},
       {:excoveralls, "~> 0.18", only: :test},

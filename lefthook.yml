@@ -18,7 +18,7 @@ pre-commit:
       run: check-jsonschema --schemafile https://raw.githubusercontent.com/googleapis/release-please/main/schemas/manifest.json {staged_files}
     markdownlint:
       glob: "*.md"
-      run: markdownlint-cli2 {staged_files}
+      run: mado check {staged_files}
     mix-format:
       run: mix format --check-formatted
     mix-compile:

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-brew install actionlint check-jsonschema lefthook markdownlint-cli2
+brew tap akiomik/mado https://github.com/akiomik/mado.git
+brew install mado
+brew install actionlint check-jsonschema lefthook
 lefthook install

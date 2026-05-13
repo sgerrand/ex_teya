@@ -12,6 +12,7 @@ Elixir client for the [Teya API](https://docs.teya.com/apis/overview).
 Add `teya` to your dependencies in `mix.exs`:
 
 <!-- x-release-please-start-version -->
+
 ```elixir
 def deps do
   [
@@ -19,6 +20,7 @@ def deps do
   ]
 end
 ```
+
 <!-- x-release-please-end -->
 
 ## Configuration

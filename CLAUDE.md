@@ -99,10 +99,10 @@ and no token is cached.
 ## Documentation conventions
 
 `Teya.Auth` is an internal module (`@moduledoc false`) and must stay hidden from
-public docs. Do not reference it with backtick module syntax (`` `Teya.Auth` ``)
-in README.md or any other file processed by ExDoc — use plain prose instead
-(e.g. "the auth process"). ExDoc treats backtick-quoted module names as links
-and will warn (or error with `--warnings-as-errors`) when the target is hidden.
+public docs. Do not wrap it in backticks in README.md or any other file
+processed by ExDoc — use plain prose instead (e.g. "the auth process"). ExDoc
+treats backtick-quoted module names as links and will warn (or error with
+`--warnings-as-errors`) when the target is hidden.
 
 ## API versioning
 

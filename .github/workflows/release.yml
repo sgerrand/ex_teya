@@ -8,7 +8,8 @@ on:
 permissions: {}
 
 jobs:
-  release:
+  release-mate:
+    name: Release Mate
     runs-on: ubuntu-latest
     permissions: {}
     steps:

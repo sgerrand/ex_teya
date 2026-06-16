@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions: {}
     steps:
-      - uses: release-mate/action@71f10a09c0b5161420efe386fdfa657f9f7d5688 # v1.1.1
+      - uses: release-mate/action@ab5434d252b3c7e7fd57abe6a2e611f04c25213b # v1.2.0
         with:
           client-id: ${{ secrets.RELEASE_MATE_CLIENT_ID }}
           app-private-key: ${{ secrets.RELEASE_MATE_PRIVATE_KEY }}

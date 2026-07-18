@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.1](https://github.com/sgerrand/ex_teya/compare/v0.4.0...v0.4.1) (2026-07-18)
+
+
+### Bug Fixes
+
+* **deps:** bump jason from 1.4.4 to 1.4.5 ([#11](https://github.com/sgerrand/ex_teya/issues/11)) ([f6695de](https://github.com/sgerrand/ex_teya/commit/f6695de567efcf1b33d8e8713e540d0f8fa126f6))
+* **deps:** bump req from 0.5.17 to 0.5.18 ([#13](https://github.com/sgerrand/ex_teya/issues/13)) ([2ced175](https://github.com/sgerrand/ex_teya/commit/2ced1754af8dfce613f796df651e94beb4603ff8))
+* **deps:** bump req from 0.5.18 to 0.6.1 ([#18](https://github.com/sgerrand/ex_teya/issues/18)) ([eff3b6c](https://github.com/sgerrand/ex_teya/commit/eff3b6ca3f2e167806f35500ec769eed472debe4))
+* **deps:** bump req_server_sent_events from 0.2.0 to 0.2.1 ([#22](https://github.com/sgerrand/ex_teya/issues/22)) ([26713b6](https://github.com/sgerrand/ex_teya/commit/26713b641d58e1240aa5ec07c139463ac5981e56))
+
 ## [0.4.0](https://github.com/sgerrand/ex_teya/compare/v0.3.0...v0.4.0) (2026-05-02)
 
 

@@ -9,7 +9,8 @@ mix deps.get          # fetch dependencies
 mix compile           # build
 mix test              # run full test suite
 mix test test/teya/checkout_test.exs   # run a single test file
-mix test --cover      # run tests with coverage (output → /cover/)
+mix coveralls         # run tests with coverage; fails below 100%
+mix coveralls.html    # same, plus an HTML report in /cover/
 mix format            # format code
 mix docs              # generate ExDoc documentation
 ```
@@ -81,6 +82,19 @@ Tests use `Req.Test` to stub HTTP. Three separate stub names are used to cleanly
 `Teya.POSLink.SubscribeCase` in `test/support/poslink_subscribe_case.ex` is the test case template for streaming (subscribe) tests. It pre-seeds the Auth GenServer with a valid token instead of resetting it to nil — this avoids a race condition where a `Task.Supervisor.async_nolink` task outlives the test process and triggers a stub-not-found crash in `Teya.Auth` when it tries to call `fetch_token`. Use `stub_sse/1`, `json_response/3`, and `error_response/4` helpers.
 
 Auth state is reset between auth tests using `:sys.replace_state/2` on the running `Teya.Auth` GenServer.
+
+### Coverage
+
+Coverage is measured by ExCoveralls and must stay at 100%. Settings live in
+`coveralls.json`: `test/support/` is skipped, and `minimum_coverage` is 100.
+They cannot move into `mix.exs` — ExCoveralls reads only `:tool` and
+`:test_task` from the `test_coverage` project option, and takes everything
+else from JSON.
+
+Only the local, HTML and Cobertura reporters check that threshold. The lcov
+reporter (used in CI to produce the file uploaded to Coveralls) does not, so CI
+runs `mix coveralls` as a separate step to fail the build on a coverage drop.
+The same command runs on pre-push via lefthook.
 
 `Task.Supervisor.async_nolink` propagates `$callers` to spawned tasks, so `Req.Test` stubs set in the test process are automatically accessible from the task without explicit `allow` calls.
 

@@ -32,3 +32,5 @@ pre-push:
       run: mix credo --strict
     test:
       run: mix test --warnings-as-errors
+    coverage:
+      run: mix coveralls

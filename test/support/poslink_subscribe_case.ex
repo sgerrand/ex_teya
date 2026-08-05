@@ -41,6 +41,26 @@ defmodule Teya.POSLink.SubscribeCase do
     Req.Test.stub(Teya.POSLink.Subscriber, handler)
   end
 
+  @doc """
+  Clears the cached auth token and stubs the token endpoint with `handler`.
+
+  Use to exercise the token-fetch failure branch of the subscribe helpers. The
+  stub is allowed to the auth process, which is where the token request runs.
+  """
+  def stub_auth(handler) when is_function(handler, 1) do
+    auth_pid = Process.whereis(Teya.Auth)
+
+    Req.Test.stub(Teya.Auth, handler)
+    Req.Test.allow(Teya.Auth, self(), auth_pid)
+
+    :sys.replace_state(auth_pid, fn state ->
+      if state.refresh_timer_ref, do: Process.cancel_timer(state.refresh_timer_ref)
+      %{state | token: nil, expires_at: nil, refresh_timer_ref: nil, retry_count: 0}
+    end)
+
+    :ok
+  end
+
   @doc "Sends a JSON response with the given status and body map."
   def json_response(conn, status, body) do
     conn

@@ -83,5 +83,19 @@ defmodule Teya.POSLink.ReceiptSubscribeTest do
       assert_receive {:poslink_receipt_error, ^receipt_id, %Req.TransportError{reason: :closed}},
                      500
     end
+
+    test "sends poslink_receipt_error when the token fetch fails" do
+      receipt_id = "receipt-uuid-5"
+
+      stub_auth(fn conn ->
+        Req.Test.transport_error(conn, :econnrefused)
+      end)
+
+      {:ok, _task} = Receipt.subscribe_status(receipt_id, self())
+
+      assert_receive {:poslink_receipt_error, ^receipt_id,
+                      %Req.TransportError{reason: :econnrefused}},
+                     500
+    end
   end
 end

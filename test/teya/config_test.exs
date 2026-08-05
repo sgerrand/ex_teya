@@ -15,6 +15,26 @@ defmodule Teya.ConfigTest do
       assert config.scopes == ["checkout/sessions/create", "checkout/sessions/id/get"]
     end
 
+    test "raises ArgumentError when client_id is nil" do
+      Application.put_env(:teya, :client_id, nil)
+
+      assert_raise ArgumentError, ~r/:client_id must be a non-empty string/, fn ->
+        Config.from_env()
+      end
+    after
+      Application.put_env(:teya, :client_id, "test_client_id")
+    end
+
+    test "raises ArgumentError when client_secret is nil" do
+      Application.put_env(:teya, :client_secret, nil)
+
+      assert_raise ArgumentError, ~r/:client_secret must be a non-empty string/, fn ->
+        Config.from_env()
+      end
+    after
+      Application.put_env(:teya, :client_secret, "test_client_secret")
+    end
+
     test "raises ArgumentError when client_id is blank" do
       Application.put_env(:teya, :client_id, "")
 

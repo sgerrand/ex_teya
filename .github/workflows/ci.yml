@@ -12,7 +12,7 @@ permissions:
 jobs:
   required:
     name: Required
-    needs: [docs, lint-markdown, test]
+    needs: [coverage, docs, lint-markdown, test]
     runs-on: ubuntu-latest
 
     steps:
@@ -61,6 +61,10 @@ jobs:
       with:
         file: cover/lcov.info
         github-token: ${{ secrets.GITHUB_TOKEN }}
+    # The lcov reporter does not check the threshold in coveralls.json, so run
+    # the local reporter as well to fail the build on a coverage drop.
+    - name: Enforce minimum coverage
+      run: mix coveralls
 
   docs:
     name: Documentation

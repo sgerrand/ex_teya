@@ -107,5 +107,35 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       assert_receive {:poslink_payment, ^payment_id, "full", %{"status" => "NEW"}}, 500
       refute_receive {:poslink_payment, ^payment_id, "full", _other}, 100
     end
+
+    test "ignores keepalive frames that carry no data" do
+      payment_id = "pr-uuid-7"
+
+      body =
+        ": keepalive\n\n" <>
+          "event: ping\n\n" <>
+          sse_event("full", %{"status" => "NEW"})
+
+      stub_payment_sse(body)
+
+      {:ok, _task} = Payment.subscribe(payment_id, self())
+
+      assert_receive {:poslink_payment, ^payment_id, "full", %{"status" => "NEW"}}, 500
+      refute_receive {:poslink_payment, ^payment_id, _type, _data}, 100
+    end
+
+    test "sends poslink_payment_error when the token fetch fails" do
+      payment_id = "pr-uuid-8"
+
+      stub_auth(fn conn ->
+        conn
+        |> Plug.Conn.put_status(401)
+        |> Req.Test.json(%{"error" => "invalid_client"})
+      end)
+
+      {:ok, _task} = Payment.subscribe(payment_id, self())
+
+      assert_receive {:poslink_payment_error, ^payment_id, %Req.Response{status: 401}}, 500
+    end
   end
 end

@@ -46,9 +46,21 @@ defmodule Teya.POSLink.SubscribeCase do
 
   Use to exercise the token-fetch failure branch of the subscribe helpers. The
   stub is allowed to the auth process, which is where the token request runs.
+
+  Raises if the auth process is not running. Unlike the seeding in `setup`,
+  which is a no-op without it, this helper is a precondition: with no auth
+  process there is no token fetch to fail, so the calling test would pass
+  without ever reaching the branch it claims to cover.
   """
   def stub_auth(handler) when is_function(handler, 1) do
-    auth_pid = Process.whereis(Teya.Auth)
+    auth_pid =
+      Process.whereis(Teya.Auth) ||
+        raise """
+        stub_auth/1 requires the Teya.Auth process to be running, but it is not.
+
+        Teya.Application only starts it when :client_id is configured. Check
+        that config/test.exs sets it and that no earlier test deleted it.
+        """
 
     Req.Test.stub(Teya.Auth, handler)
     Req.Test.allow(Teya.Auth, self(), auth_pid)

@@ -1,5 +1,7 @@
 defmodule Teya.ConfigTest do
-  use ExUnit.Case, async: true
+  # Not async: these tests mutate global Application env for :teya, which
+  # application_test.exs also touches.
+  use ExUnit.Case, async: false
   import ExUnit.CaptureLog
 
   alias Teya.Config

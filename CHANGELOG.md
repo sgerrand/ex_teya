@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/sgerrand/ex_teya/compare/v0.4.1...v0.4.2) (2026-08-06)
+
+
+### Bug Fixes
+
+* **deps:** bump req_server_sent_events from 0.2.1 to 0.2.2 ([#25](https://github.com/sgerrand/ex_teya/issues/25)) ([4f901e8](https://github.com/sgerrand/ex_teya/commit/4f901e850384893071fd6aa68f08c0c245130837))
+
 ## [0.4.1](https://github.com/sgerrand/ex_teya/compare/v0.4.0...v0.4.1) (2026-07-18)
 
 

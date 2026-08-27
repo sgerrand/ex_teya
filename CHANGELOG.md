@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.3](https://github.com/sgerrand/ex_teya/compare/v0.4.2...v0.4.3) (2026-08-27)
+
+
+### Bug Fixes
+
+* **deps:** bump req from 0.7.1 to 0.7.2 ([#30](https://github.com/sgerrand/ex_teya/issues/30)) ([a57b467](https://github.com/sgerrand/ex_teya/commit/a57b467ab766c39e36f51e6d96ab09615fd5240e))
+
 ## [0.4.2](https://github.com/sgerrand/ex_teya/compare/v0.4.1...v0.4.2) (2026-08-06)
 
 

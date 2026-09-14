@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.4.3](https://github.com/sgerrand/ex_teya/compare/v0.4.2...v0.4.3) (2026-09-10)
+
+
+### Bug Fixes
+
+* **deps:** bump req from 0.7.1 to 0.7.2 ([#30](https://github.com/sgerrand/ex_teya/issues/30)) ([a57b467](https://github.com/sgerrand/ex_teya/commit/a57b467ab766c39e36f51e6d96ab09615fd5240e))
+* **deps:** bump req_server_sent_events from 0.2.2 to 0.2.3 ([#34](https://github.com/sgerrand/ex_teya/issues/34)) ([07093df](https://github.com/sgerrand/ex_teya/commit/07093df0a7fe7b5ddca9cc05e2db7c6a76fcbf06))
+
 ## [0.4.2](https://github.com/sgerrand/ex_teya/compare/v0.4.1...v0.4.2) (2026-08-06)
 
 

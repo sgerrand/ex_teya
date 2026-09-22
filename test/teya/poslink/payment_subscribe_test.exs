@@ -77,7 +77,23 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
 
       {:ok, _task} = Payment.subscribe(payment_id, self())
 
-      assert_receive {:poslink_payment_error, ^payment_id, %Error{status: 404}}, 500
+      assert_receive {:poslink_payment_error, ^payment_id, error}, 500
+
+      assert %Error{code: "NOT_FOUND", message: "Payment not found", status: 404} = error
+    end
+
+    test "keeps a non-JSON error body in the message" do
+      payment_id = "pr-uuid-9"
+
+      stub_sse(fn conn ->
+        Plug.Conn.send_resp(conn, 502, "upstream unavailable")
+      end)
+
+      {:ok, _task} = Payment.subscribe(payment_id, self())
+
+      assert_receive {:poslink_payment_error, ^payment_id, error}, 500
+      assert %Error{code: nil, status: 502} = error
+      assert error.message =~ "upstream unavailable"
     end
 
     test "sends poslink_payment_error on transport failure" do
@@ -169,7 +185,9 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
         error_response(conn, 404, "NOT_FOUND", "Payment request not found")
       end)
 
-      assert {:error, %Error{status: 404}} = Payment.get("nonexistent")
+      assert {:error,
+              %Error{code: "NOT_FOUND", message: "Payment request not found", status: 404}} =
+               Payment.get("nonexistent")
     end
 
     test "returns :no_event when the stream closes without an event" do

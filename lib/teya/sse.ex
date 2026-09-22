@@ -7,6 +7,10 @@ defmodule Teya.SSE do
   decoded maps to the caller process as `{ok_tag, id, event_type, data}`
   messages. Non-200 responses and transport errors are forwarded as
   `{error_tag, id, reason}`.
+
+  An error response is not an event stream, so its body is collected as raw
+  bytes and left to Req to decode. That keeps the `code` and `message` the API
+  sent in the resulting `%Teya.Error{}`.
   """
 
   alias ReqServerSentEvents.Frame
@@ -31,6 +35,7 @@ defmodule Teya.SSE do
       )
       |> Req.new()
       |> ReqServerSentEvents.attach()
+      |> collect_error_body()
 
     case Req.get(req) do
       {:ok, %{status: 200}} ->
@@ -42,6 +47,22 @@ defmodule Teya.SSE do
       {:error, reason} ->
         send(pid, {error_tag, id, reason})
     end
+  end
+
+  # The SSE plugin decodes every chunk as event-stream bytes, which drops the
+  # body of an error response: it has no frame delimiter, so it sits in the
+  # plugin's buffer forever. Wrap the plugin's collector and keep the raw
+  # bytes whenever the status is not a success.
+  defp collect_error_body(%Req.Request{into: sse_into} = req) do
+    collector = fn {:data, chunk}, {req, resp} ->
+      if resp.status in 200..299 do
+        sse_into.({:data, chunk}, {req, resp})
+      else
+        {:cont, {req, %{resp | body: (resp.body || "") <> chunk}}}
+      end
+    end
+
+    %{req | into: collector}
   end
 
   defp forward_frame(%Frame{data: nil}, _id, _ok_tag, _pid), do: :ok

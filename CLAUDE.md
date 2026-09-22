@@ -46,9 +46,10 @@ lib/teya/
   token.ex            — DELETE /v1/tokens/{id}
   poslink/
     store.ex          — GET /poslink/v1/stores, GET /poslink/v1/stores/{id}/terminals
-    payment.ex        — POST/PATCH/GET /poslink/v2/payment-requests, GET /poslink/v1/payment-requests
+    payment.ex        — POST /poslink/v3/payment-requests, GET /poslink/v3/payment-requests/{id} (SSE),
+                        PATCH /poslink/v2/payment-requests/{id}, GET /poslink/v2/payment-requests
                         subscribe/2: spawns a Task to stream SSE payment status events
-    refund.ex         — POST /poslink/v1/refunds
+    refund.ex         — POST /poslink/v2/refunds
     receipt.ex        — POST /poslink/v1/receipt-requests
                         subscribe_status/2: spawns a Task to stream SSE printer status events
 ```

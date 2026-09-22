@@ -24,9 +24,9 @@ defmodule Teya.POSLink.Payment do
     stream ends or errors, then exits normally.
   - If the **SSE stream disconnects** mid-payment (network error, server
     restart), the task sends `{:poslink_payment_error, id, reason}` and exits.
-    There is no automatic reconnection. To recover, call `Payment.get/1` or
-    `Payment.list/1` to poll the current status, or call `subscribe/2` again to
-    open a fresh stream.
+    There is no automatic reconnection. To recover, call `get/2` to fetch the
+    current status, or call `subscribe/2` again to open a fresh stream. A new
+    stream always starts with a full snapshot of the payment request.
   """
 
   alias Teya.{Auth, Client, SSE}
@@ -44,12 +44,16 @@ defmodule Teya.POSLink.Payment do
   - `terminal_id` — UUID of the target terminal
   - `requested_amount` — `%{"amount" => 1000, "currency" => "GBP"}` (amount
     in minor units); optionally include `"tip"` for tip-enabled terminals
+  - `transaction_type` — `"SALE"` or `"REFUND"`
+  - `merchant_reference` — caller-supplied reference (max 60 chars)
 
   ## Optional params
 
-  - `merchant_reference` — caller-supplied reference (max 60 chars)
-  - `transaction_type` — currently only `"SALE"` (default)
-  - `metadata` — arbitrary key/value pairs (max 10 keys)
+  - `epos_instance_id` — identifier of the ePOS instance making the request
+  - `basket_transaction_id` — identifier of the basket in the ePOS
+  - `tab_id` — Pay at Table tab to settle; requires `payment_type`
+  - `payment_type` — `"FULL"` or `"SPLIT"`
+  - `payment_method` — `"CARD"` or `"CASH"`
 
   ## Options
 
@@ -60,14 +64,16 @@ defmodule Teya.POSLink.Payment do
       params = %{
         "store_id"         => store_id,
         "terminal_id"      => terminal_id,
-        "requested_amount" => %{"amount" => 1000, "currency" => "GBP"}
+        "requested_amount"   => %{"amount" => 1000, "currency" => "GBP"},
+        "transaction_type"   => "SALE",
+        "merchant_reference" => "order-1234"
       }
 
       {:ok, %{"payment_request_id" => id}} = Teya.POSLink.Payment.create(params)
   """
   @spec create(map(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def create(params, opts \\ []) do
-    Client.request(:post, "/poslink/v2/payment-requests", Keyword.put(opts, :body, params))
+    Client.request(:post, "/poslink/v3/payment-requests", Keyword.put(opts, :body, params))
   end
 
   @doc """
@@ -101,7 +107,11 @@ defmodule Teya.POSLink.Payment do
   end
 
   @doc """
-  Fetches the current state of a single payment request by its ID.
+  Fetches the current state of a single payment request or refund by its ID.
+
+  The POSLink API has no plain JSON endpoint for a single payment request.
+  This function opens the status stream, returns the first snapshot, and then
+  closes the stream.
 
   Useful as a fallback when an SSE stream from `subscribe/2` disconnects before
   the payment reaches a terminal state — check the current status, then
@@ -111,43 +121,75 @@ defmodule Teya.POSLink.Payment do
 
   - `payment_request_id` — UUID returned from `create/2`
 
+  ## Options
+
+  - `:timeout` — milliseconds to wait for the snapshot (default `30_000`);
+    returns `{:error, :timeout}` when it runs out
+
   ## Examples
 
       {:ok, payment} = Teya.POSLink.Payment.get(payment_request_id)
-      payment["status"]  # "NEW" | "IN_PROGRESS" | "SUCCESSFUL" | "FAILED" | "CANCELLED"
+      payment["status"]  # "NEW" | "IN_PROGRESS" | "SUCCESSFUL" | "FAILED" | "CANCELLING" | "CANCELLED"
   """
-  @spec get(String.t(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
+  @spec get(String.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def get(payment_request_id, opts \\ []) do
-    Client.request(:get, "/poslink/v2/payment-requests/#{payment_request_id}", opts)
+    timeout = Keyword.get(opts, :timeout, 30_000)
+    {:ok, task} = subscribe(payment_request_id, self())
+    ref = task.ref
+
+    result =
+      receive do
+        {:poslink_payment, ^payment_request_id, _type, data} -> {:ok, data}
+        {:poslink_payment_error, ^payment_request_id, reason} -> {:error, reason}
+        {^ref, _} -> {:error, :no_event}
+      after
+        timeout -> {:error, :timeout}
+      end
+
+    Task.shutdown(task, :brutal_kill)
+    flush(payment_request_id)
+    result
+  end
+
+  defp flush(id) do
+    receive do
+      {:poslink_payment, ^id, _type, _data} -> flush(id)
+      {:poslink_payment_error, ^id, _reason} -> flush(id)
+    after
+      0 -> :ok
+    end
   end
 
   @doc """
-  Lists payment requests with optional filtering.
+  Lists a store's payments and refunds, newest first.
 
-  Returns `{:ok, response}` containing a paginated list of payment request
-  objects and pagination metadata.
+  Returns `{:ok, response}` with a `"payment_requests"` list and a
+  `"pagination"` map.
 
-  ## Optional params (passed as `:params` keyword option)
+  ## Query params (passed as `:params` keyword option)
 
+  - `store_id` — UUID of the store (required)
+  - `terminal_id` — filter by terminal
   - `status` — filter by status: `"NEW"`, `"IN_PROGRESS"`, `"SUCCESSFUL"`,
     `"CANCELLING"`, `"CANCELLED"`, `"FAILED"`
-  - `store_id` — UUID to filter by store
-  - `from` — ISO 8601 datetime lower bound (inclusive)
-  - `to` — ISO 8601 datetime upper bound (inclusive)
-  - `limit` — max results per page (default varies)
-  - `offset` — pagination offset
+  - `transaction_type` — `"SALE"` or `"REFUND"`
+  - `start_date_time` — ISO 8601 datetime lower bound
+  - `end_date_time` — ISO 8601 datetime upper bound
+  - `limit` — results per page, 1–100 (default 10)
+  - `offset` — pagination offset (default 0)
+  - `sort` — `"ASC"` or `"DESC"`
 
   ## Example
 
-      Teya.POSLink.Payment.list(params: [status: "SUCCESSFUL", limit: 20])
+      Teya.POSLink.Payment.list(params: [store_id: store_id, status: "SUCCESSFUL", limit: 20])
   """
   @spec list(keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def list(opts \\ []) do
-    Client.request(:get, "/poslink/v1/payment-requests", opts)
+    Client.request(:get, "/poslink/v2/payment-requests", opts)
   end
 
   @doc """
-  Subscribes to real-time status updates for a payment request via SSE.
+  Subscribes to real-time status updates for a payment request or refund via SSE.
 
   Spawns a supervised task under `Teya.TaskSupervisor` that opens the SSE
   stream for `payment_request_id` and forwards parsed events as messages to
@@ -164,6 +206,10 @@ defmodule Teya.POSLink.Payment do
 
   The task exits normally when the server closes the stream (terminal payment
   state reached) or with an error tuple when the connection fails.
+
+  Failed and cancelled events may carry a `"status_reason"` such as
+  `"TERMINAL_UNREACHABLE"` or `"TRANSACTION_ALREADY_IN_PROGRESS"`. Teya may add
+  new reasons over time, so handle unknown values.
 
   ## Example
 
@@ -194,7 +240,7 @@ defmodule Teya.POSLink.Payment do
     case Auth.token() do
       {:ok, token} ->
         base_url = Application.get_env(:teya, :base_url, "https://api.teya.com")
-        url = base_url <> "/poslink/v2/payment-requests/#{id}"
+        url = base_url <> "/poslink/v3/payment-requests/#{id}"
 
         req_opts =
           Application.get_env(

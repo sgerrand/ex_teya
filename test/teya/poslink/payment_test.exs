@@ -8,7 +8,7 @@ defmodule Teya.POSLink.PaymentTest do
     test "creates a payment request successfully" do
       stub_api(fn conn ->
         assert conn.method == "POST"
-        assert conn.request_path == "/poslink/v2/payment-requests"
+        assert conn.request_path == "/poslink/v3/payment-requests"
         assert Plug.Conn.get_req_header(conn, "idempotency-key") != []
         assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer test_access_token"]
 
@@ -21,7 +21,9 @@ defmodule Teya.POSLink.PaymentTest do
       params = %{
         "store_id" => "store-uuid-1",
         "terminal_id" => "term-uuid-1",
-        "requested_amount" => %{"amount" => 1000, "currency" => "GBP"}
+        "requested_amount" => %{"amount" => 1000, "currency" => "GBP"},
+        "transaction_type" => "SALE",
+        "merchant_reference" => "order-1"
       }
 
       assert {:ok, response} = Payment.create(params)
@@ -38,7 +40,9 @@ defmodule Teya.POSLink.PaymentTest do
       params = %{
         "store_id" => "store-uuid-1",
         "terminal_id" => "term-uuid-1",
-        "requested_amount" => %{"amount" => 500, "currency" => "EUR"}
+        "requested_amount" => %{"amount" => 500, "currency" => "EUR"},
+        "transaction_type" => "SALE",
+        "merchant_reference" => "order-42"
       }
 
       assert {:ok, _} = Payment.create(params, idempotency_key: "order-ref-42")
@@ -100,61 +104,35 @@ defmodule Teya.POSLink.PaymentTest do
     end
   end
 
-  describe "get/2" do
-    test "fetches a single payment request by ID" do
-      payment_id = "pr-uuid-1"
-
-      stub_api(fn conn ->
-        assert conn.method == "GET"
-        assert conn.request_path == "/poslink/v2/payment-requests/#{payment_id}"
-        assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer test_access_token"]
-
-        json_response(conn, 200, %{
-          "payment_request_id" => payment_id,
-          "status" => "SUCCESSFUL"
-        })
-      end)
-
-      assert {:ok, response} = Payment.get(payment_id)
-      assert response["payment_request_id"] == payment_id
-      assert response["status"] == "SUCCESSFUL"
-    end
-
-    test "returns Teya.Error on 404 when payment not found" do
-      stub_api(fn conn ->
-        error_response(conn, 404, "NOT_FOUND", "Payment request not found")
-      end)
-
-      assert {:error, %Error{status: 404}} = Payment.get("nonexistent-id")
-    end
-  end
-
   describe "list/1" do
     test "returns a list of payment requests" do
       stub_api(fn conn ->
         assert conn.method == "GET"
-        assert conn.request_path == "/poslink/v1/payment-requests"
+        assert conn.request_path == "/poslink/v2/payment-requests"
+        assert conn.query_string == "store_id=store-uuid-1"
 
         json_response(conn, 200, %{
           "payment_requests" => [
             %{"payment_request_id" => "pr-uuid-1", "status" => "SUCCESSFUL"},
             %{"payment_request_id" => "pr-uuid-2", "status" => "FAILED"}
           ],
-          "total" => 2
+          "pagination" => %{"total" => 2}
         })
       end)
 
-      assert {:ok, response} = Payment.list()
+      assert {:ok, response} = Payment.list(params: [store_id: "store-uuid-1"])
       assert length(response["payment_requests"]) == 2
     end
 
     test "passes query params to the API" do
       stub_api(fn conn ->
         assert conn.query_string =~ "status=SUCCESSFUL"
-        json_response(conn, 200, %{"payment_requests" => [], "total" => 0})
+        assert conn.query_string =~ "transaction_type=REFUND"
+        json_response(conn, 200, %{"payment_requests" => [], "pagination" => %{"total" => 0}})
       end)
 
-      assert {:ok, _} = Payment.list(params: [status: "SUCCESSFUL"])
+      params = [store_id: "store-uuid-1", status: "SUCCESSFUL", transaction_type: "REFUND"]
+      assert {:ok, _} = Payment.list(params: params)
     end
 
     test "returns Teya.Error on 400 invalid filter params" do

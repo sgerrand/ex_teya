@@ -11,7 +11,7 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
   defp stub_payment_sse(body) do
     stub_sse(fn conn ->
       assert conn.method == "GET"
-      assert String.starts_with?(conn.request_path, "/poslink/v2/payment-requests/")
+      assert String.starts_with?(conn.request_path, "/poslink/v3/payment-requests/")
       assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer test_access_token"]
 
       conn
@@ -136,6 +136,55 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       {:ok, _task} = Payment.subscribe(payment_id, self())
 
       assert_receive {:poslink_payment_error, ^payment_id, %Req.Response{status: 401}}, 500
+    end
+  end
+
+  describe "get/2" do
+    test "returns the first snapshot and closes the stream" do
+      payment_id = "pr-uuid-20"
+
+      body =
+        sse_event("full", %{"payment_request_id" => payment_id, "status" => "IN_PROGRESS"}) <>
+          sse_event("diff", %{"status" => "SUCCESSFUL"})
+
+      stub_payment_sse(body)
+
+      assert {:ok, %{"status" => "IN_PROGRESS"}} = Payment.get(payment_id)
+      refute_received {:poslink_payment, ^payment_id, _type, _data}
+    end
+
+    test "discards a stream error that arrives after the snapshot" do
+      payment_id = "pr-uuid-23"
+      stub_payment_sse(sse_event("full", %{"status" => "NEW"}))
+
+      send(self(), {:poslink_payment, payment_id, "full", %{"status" => "IN_PROGRESS"}})
+      send(self(), {:poslink_payment_error, payment_id, :closed})
+
+      assert {:ok, %{"status" => "IN_PROGRESS"}} = Payment.get(payment_id)
+      refute_received {:poslink_payment_error, ^payment_id, _reason}
+    end
+
+    test "returns Teya.Error when the payment is not found" do
+      stub_sse(fn conn ->
+        error_response(conn, 404, "NOT_FOUND", "Payment request not found")
+      end)
+
+      assert {:error, %Error{status: 404}} = Payment.get("nonexistent")
+    end
+
+    test "returns :no_event when the stream closes without an event" do
+      stub_payment_sse("")
+
+      assert {:error, :no_event} = Payment.get("pr-uuid-21")
+    end
+
+    test "returns :timeout when no event arrives in time" do
+      stub_sse(fn conn ->
+        Process.sleep(500)
+        Plug.Conn.send_resp(conn, 200, "")
+      end)
+
+      assert {:error, :timeout} = Payment.get("pr-uuid-22", timeout: 50)
     end
   end
 end

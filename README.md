@@ -59,7 +59,7 @@ OAuth tokens are fetched automatically and refreshed before expiry. Only request
 | `poslink/stores/get` | `Teya.POSLink.Store.list/1` |
 | `poslink/stores/id/terminals/get` | `Teya.POSLink.Store.list_terminals/2` |
 | `poslink/payment-requests/create` | `Teya.POSLink.Payment.create/2` |
-| `poslink/payment-requests/id/get` | `Teya.POSLink.Payment.subscribe/2` |
+| `poslink/payment-requests/id/get` | `Teya.POSLink.Payment.subscribe/2`, `Teya.POSLink.Payment.get/2` |
 | `poslink/payment-requests/id/update` | `Teya.POSLink.Payment.cancel/2` |
 | `poslink/payment-requests/get` | `Teya.POSLink.Payment.list/1` |
 | `poslink/refunds/create` | `Teya.POSLink.Refund.create/2` |
@@ -257,7 +257,9 @@ Events arrive as messages to the calling process:
 params = %{
   "store_id"         => store_id,
   "terminal_id"      => terminal_id,
-  "requested_amount" => %{"amount" => 1000, "currency" => "GBP"}
+  "requested_amount"   => %{"amount" => 1000, "currency" => "GBP"},
+  "transaction_type"   => "SALE",
+  "merchant_reference" => "order-1234"
 }
 
 {:ok, %{"payment_request_id" => id}} = Teya.POSLink.Payment.create(params)
@@ -283,7 +285,7 @@ the recipient pid and defaults to `self()`.
 > restarted by the supervisor. If the SSE stream drops mid-payment (network
 > error, server restart), the task sends `{:poslink_payment_error, id, reason}`
 > and exits — there is no automatic reconnection. To recover, call
-> `Teya.POSLink.Payment.list/1` to poll the current status, or call
+> `Teya.POSLink.Payment.get/2` to fetch the current status, or call
 > `subscribe/2` again with the same `payment_request_id`.
 
 #### Cancel a payment
@@ -296,10 +298,15 @@ the recipient pid and defaults to `self()`.
 
 ```elixir
 {:ok, _} = Teya.POSLink.Refund.create(%{
-  "store_id"           => store_id,
-  "payment_request_id" => payment_request_id
+  "transaction_id" => gateway_payment_id,
+  "amount"         => 1500
 })
 ```
+
+`transaction_id` must be the `gateway_payment_id` of the original payment. It
+arrives on the payment's status stream when the payment completes. Do not send
+the payment's own `transaction_id` — it is a different identifier and the
+refund fails with `404 TRANSACTION_NOT_FOUND`.
 
 #### Print a receipt
 
@@ -373,7 +380,7 @@ complete a 3DS challenge before the payment is authorised. Redirect them to
 If a `{:poslink_payment_error, id, _reason}` message arrives before a terminal
 status (`"SUCCESSFUL"`, `"FAILED"`, `"CANCELLED"`), the SSE connection dropped.
 The payment may or may not have completed on the terminal. Check the current
-state with `Teya.POSLink.Payment.list/1` (filter by `payment_request_id`), then
+state with `Teya.POSLink.Payment.get/2`, then
 re-subscribe with `Teya.POSLink.Payment.subscribe/2` if still in progress.
 
 ### Auth token refresh failures

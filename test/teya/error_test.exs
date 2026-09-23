@@ -75,6 +75,15 @@ defmodule Teya.ErrorTest do
                Teya.Error.from_oauth_response(response)
     end
 
+    test "keeps the body as the message for a gateway error on the token endpoint" do
+      response = %{status: 503, body: %{"error" => "service_unavailable"}}
+
+      assert %Teya.Error{code: nil, status: 503, message: message} =
+               Teya.Error.from_oauth_response(response)
+
+      assert message =~ "service_unavailable"
+    end
+
     test "falls back to the standard shape for a non-OAuth body" do
       response = %{
         status: 500,

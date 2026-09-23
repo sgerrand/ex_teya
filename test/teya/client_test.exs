@@ -86,6 +86,26 @@ defmodule Teya.ClientTest do
       assert {:ok, _} = Teya.Client.request(:get, "/v1/test")
     end
 
+    test "ignores an idempotency key set in configured headers" do
+      original = Application.get_env(:teya, :req_options)
+
+      Application.put_env(
+        :teya,
+        :req_options,
+        original ++ [headers: [{"idempotency-key", "from-config"}]]
+      )
+
+      on_exit(fn -> Application.put_env(:teya, :req_options, original) end)
+
+      stub_api(fn conn ->
+        assert Plug.Conn.get_req_header(conn, "idempotency-key") == ["order-42"]
+        json_response(conn, 200, %{"ok" => true})
+      end)
+
+      assert {:ok, _} =
+               Teya.Client.request(:post, "/v1/test", body: %{}, idempotency_key: "order-42")
+    end
+
     test "returns error tuple on transport failure" do
       stub_api(fn conn ->
         Req.Test.transport_error(conn, :timeout)

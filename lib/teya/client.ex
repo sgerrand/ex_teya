@@ -69,12 +69,7 @@ defmodule Teya.Client do
         |> put_if_present(:json, Keyword.get(opts, :body))
         |> put_if_present(:params, Keyword.get(opts, :params))
         |> Keyword.merge(req_opts)
-        |> Keyword.put(
-          :headers,
-          merge_headers(req_opts, [
-            {"user-agent", @user_agent} | idempotency_headers(method, opts)
-          ])
-        )
+        |> Keyword.put(:headers, request_headers(method, opts, req_opts))
 
       case Req.request(req) do
         {:ok, %{status: status} = resp} when status in 200..299 -> {:ok, resp.body}
@@ -82,6 +77,22 @@ defmodule Teya.Client do
         {:error, reason} -> {:error, reason}
       end
     end
+  end
+
+  # One idempotency key in config would mark every POST as a retry of the
+  # first, and the API would answer them all with that first response, so the
+  # generated or per-call key wins over a configured one.
+  defp request_headers(method, opts, req_opts) do
+    configured =
+      req_opts
+      |> Keyword.get(:headers, [])
+      |> normalise_headers()
+      |> Enum.reject(fn {name, _value} -> name == "idempotency-key" end)
+
+    merge_headers(
+      [headers: configured],
+      [{"user-agent", @user_agent} | idempotency_headers(method, opts)]
+    )
   end
 
   defp put_if_present(opts, _key, nil), do: opts

@@ -46,11 +46,12 @@ defmodule Teya.Error do
   end
 
   @doc false
-  # The token endpoint answers in the OAuth 2.0 error format. Only the auth
-  # path uses this: an API error body that happens to carry an "error" key is
-  # a gateway or proxy page, and its detail is worth keeping as a message.
+  # The token endpoint answers in the OAuth 2.0 error format, which RFC 6749
+  # sends as 400, or 401 for a bad client. Any other status in front of that
+  # endpoint is a gateway or proxy page, so keep its body as the message
+  # rather than reading a non-OAuth string as a code.
   def from_oauth_response(%{status: status, body: %{"error" => code} = body})
-      when is_binary(code) do
+      when is_binary(code) and status in [400, 401] do
     %__MODULE__{code: code, message: body["error_description"], status: status}
   end
 

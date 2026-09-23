@@ -124,7 +124,15 @@ defmodule Teya.POSLink.Payment do
   ## Options
 
   - `:timeout` — milliseconds to wait for the snapshot, or `:infinity`
-    (default `30_000`); returns `{:error, :timeout}` when it runs out
+    (default `30_000`)
+
+  ## Errors
+
+  - `{:error, %Teya.Error{}}` — the API refused the request
+  - `{:error, :timeout}` — no snapshot arrived before `:timeout` passed
+  - `{:error, :no_event}` — the stream closed without sending one
+  - `{:error, reason}` — the stream failed; `reason` is a transport exception
+    or the exit reason of the task reading the stream
 
   ## Examples
 
@@ -165,13 +173,27 @@ defmodule Teya.POSLink.Payment do
 
     ref = stream.ref
 
-    receive do
-      # Only a "full" event is a snapshot. A "diff" carries just the fields
-      # that changed, and a keepalive carries neither.
-      {:poslink_payment, ^payment_request_id, "full", data} -> {:ok, data}
-      {:poslink_payment_error, ^payment_request_id, reason} -> {:error, reason}
-      {^ref, _} -> {:error, :no_event}
-    end
+    result =
+      receive do
+        # A snapshot is a "full" event, or an unnamed one: SSE calls a frame
+        # with no event line "message". A "diff" carries only the fields that
+        # changed, and a named keepalive is neither.
+        {:poslink_payment, ^payment_request_id, type, data}
+        when type in ["full", "message", nil] ->
+          {:ok, data}
+
+        {:poslink_payment_error, ^payment_request_id, reason} ->
+          {:error, reason}
+
+        {^ref, _} ->
+          {:error, :no_event}
+      end
+
+    # A linked task only dies with its parent when the parent exits
+    # abnormally, so close the stream here rather than leaving it to hold a
+    # connection open until the payment ends or the SSE timeout passes.
+    Task.shutdown(stream, :brutal_kill)
+    result
   end
 
   @doc """

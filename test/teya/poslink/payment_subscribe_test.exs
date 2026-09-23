@@ -8,6 +8,14 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
     "event: #{type}\ndata: #{Jason.encode!(data)}\n\n"
   end
 
+  defp eventually(check, attempts \\ 100) do
+    cond do
+      check.() -> true
+      attempts > 0 -> Process.sleep(10) && eventually(check, attempts - 1)
+      true -> false
+    end
+  end
+
   # Kills the tasks get/2 started, identified as the ones that were not
   # running before the call.
   defp kill_new_tasks(before, attempts \\ 100) do
@@ -300,6 +308,30 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
 
       assert {:error, _reason} = result
       assert elapsed_us < 5_000_000
+    end
+
+    test "closes the stream once it has the snapshot" do
+      payment_id = "pr-uuid-29"
+      before = Task.Supervisor.children(Teya.TaskSupervisor)
+
+      # Never closes, so a leaked stream task would stay alive.
+      stub_sse(fn conn ->
+        conn = Plug.Conn.send_chunked(conn, 200)
+        {:ok, conn} = Plug.Conn.chunk(conn, sse_event("full", %{"status" => "NEW"}))
+        Process.sleep(5_000)
+        conn
+      end)
+
+      assert {:ok, %{"status" => "NEW"}} = Payment.get(payment_id)
+
+      assert eventually(fn -> Task.Supervisor.children(Teya.TaskSupervisor) -- before == [] end)
+    end
+
+    test "treats an event with no name as a snapshot" do
+      payment_id = "pr-uuid-30"
+      stub_payment_sse("data: #{Jason.encode!(%{"status" => "NEW"})}\n\n")
+
+      assert {:ok, %{"status" => "NEW"}} = Payment.get(payment_id)
     end
 
     test "accepts :infinity as the timeout" do

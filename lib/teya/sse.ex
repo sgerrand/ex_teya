@@ -26,7 +26,7 @@ defmodule Teya.SSE do
   """
 
   alias ReqServerSentEvents.Frame
-  alias Teya.Error
+  alias Teya.{Client, Error}
 
   @default_max_error_body_bytes 65_536
 
@@ -111,7 +111,7 @@ defmodule Teya.SSE do
     # stream and reconnect themselves, so retrying is off unless configured.
     # The user agent is Req's own option, which gives way to one configured
     # as an option or a header.
-    [retry: false, user_agent: Teya.Client.user_agent()]
+    [retry: false, user_agent: Client.user_agent()]
     |> Keyword.merge(configured)
     |> Keyword.merge(
       url: url,

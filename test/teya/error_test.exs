@@ -26,21 +26,13 @@ defmodule Teya.ErrorTest do
                Teya.Error.from_response(response)
     end
 
-    test "builds error from an OAuth error body" do
-      response = %{
-        status: 401,
-        body: %{"error" => "invalid_client", "error_description" => "Unknown client"}
-      }
+    test "keeps the body as the message for a gateway error carrying an error key" do
+      response = %{status: 503, body: %{"error" => "service_unavailable"}}
 
-      assert %Teya.Error{code: "invalid_client", message: "Unknown client", status: 401} =
+      assert %Teya.Error{code: nil, status: 503, message: message} =
                Teya.Error.from_response(response)
-    end
 
-    test "builds error from an OAuth error body without a description" do
-      response = %{status: 400, body: %{"error" => "invalid_scope"}}
-
-      assert %Teya.Error{code: "invalid_scope", message: nil, status: 400} =
-               Teya.Error.from_response(response)
+      assert message =~ "service_unavailable"
     end
 
     test "preserves body as message when response shape is unexpected" do
@@ -62,6 +54,35 @@ defmodule Teya.ErrorTest do
     test "builds error from response without body" do
       assert %Teya.Error{code: nil, message: nil, status: 500} =
                Teya.Error.from_response(%{status: 500})
+    end
+  end
+
+  describe "from_oauth_response/1" do
+    test "builds error from an OAuth error body" do
+      response = %{
+        status: 401,
+        body: %{"error" => "invalid_client", "error_description" => "Unknown client"}
+      }
+
+      assert %Teya.Error{code: "invalid_client", message: "Unknown client", status: 401} =
+               Teya.Error.from_oauth_response(response)
+    end
+
+    test "builds error from an OAuth error body without a description" do
+      response = %{status: 400, body: %{"error" => "invalid_scope"}}
+
+      assert %Teya.Error{code: "invalid_scope", message: nil, status: 400} =
+               Teya.Error.from_oauth_response(response)
+    end
+
+    test "falls back to the standard shape for a non-OAuth body" do
+      response = %{
+        status: 500,
+        body: %{"code" => "INTERNAL_SERVER_ERROR", "description" => "Boom"}
+      }
+
+      assert %Teya.Error{code: "INTERNAL_SERVER_ERROR", message: "Boom", status: 500} =
+               Teya.Error.from_oauth_response(response)
     end
   end
 end

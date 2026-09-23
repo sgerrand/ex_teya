@@ -406,8 +406,15 @@ such as `"invalid_client"` and `"invalid_scope"`.
 ### User agent
 
 Every request sends `User-Agent: teya-elixir/<version>`, which Teya recommends
-so they can identify your integration. Override it with your own header
-through `:req_options`.
+so they can identify your integration. Set your own `user-agent` in
+`:req_options` to replace it:
+
+```elixir
+config :teya, req_options: [headers: [{"user-agent", "acme-shop/1.0"}]]
+```
+
+Headers set there are merged with the ones the library adds: yours wins by
+name, and the rest — including the generated `Idempotency-Key` — still go out.
 
 ## Troubleshooting
 

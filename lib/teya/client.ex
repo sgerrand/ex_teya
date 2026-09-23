@@ -9,6 +9,30 @@ defmodule Teya.Client do
   @doc false
   def user_agent, do: @user_agent
 
+  @doc false
+  # Req options are merged last, so headers set there replace the list built
+  # here outright. Fold them together first: a caller's header wins by name,
+  # and the rest of ours survive.
+  def merge_headers(req_opts, defaults) do
+    configured = req_opts |> Keyword.get(:headers, []) |> normalise_headers()
+    names = MapSet.new(configured, fn {name, _value} -> name end)
+
+    Enum.reject(defaults, fn {name, _value} -> MapSet.member?(names, name) end) ++ configured
+  end
+
+  defp normalise_headers(headers) when is_list(headers) do
+    Enum.map(headers, fn {name, value} -> {downcase(name), value} end)
+  end
+
+  defp normalise_headers(headers) when is_map(headers) do
+    Enum.flat_map(headers, fn {name, value} ->
+      name = downcase(name)
+      value |> List.wrap() |> Enum.map(&{name, &1})
+    end)
+  end
+
+  defp downcase(name), do: name |> to_string() |> String.downcase()
+
   @doc """
   Makes an authenticated HTTP request to the Teya API.
 
@@ -33,12 +57,17 @@ defmodule Teya.Client do
           method: method,
           url: base_url <> path,
           auth: {:bearer, token},
-          headers: [{"user-agent", @user_agent} | idempotency_headers(method, opts)],
           receive_timeout: 30_000
         ]
         |> put_if_present(:json, Keyword.get(opts, :body))
         |> put_if_present(:params, Keyword.get(opts, :params))
         |> Keyword.merge(req_opts)
+        |> Keyword.put(
+          :headers,
+          merge_headers(req_opts, [
+            {"user-agent", @user_agent} | idempotency_headers(method, opts)
+          ])
+        )
 
       case Req.request(req) do
         {:ok, %{status: status} = resp} when status in 200..299 -> {:ok, resp.body}

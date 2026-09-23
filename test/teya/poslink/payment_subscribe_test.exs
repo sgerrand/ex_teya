@@ -312,6 +312,32 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
                      2_000
     end
 
+    test "keeps headers configured for the stream" do
+      payment_id = "pr-uuid-12"
+      original = Application.get_env(:teya, :sse_req_options)
+
+      Application.put_env(
+        :teya,
+        :sse_req_options,
+        original ++ [headers: [{"x-trace-id", "abc"}]]
+      )
+
+      on_exit(fn -> Application.put_env(:teya, :sse_req_options, original) end)
+
+      stub_sse(fn conn ->
+        assert Plug.Conn.get_req_header(conn, "x-trace-id") == ["abc"]
+        assert Plug.Conn.get_req_header(conn, "user-agent") == [Teya.Client.user_agent()]
+
+        conn
+        |> Plug.Conn.put_resp_content_type("text/event-stream")
+        |> Plug.Conn.send_resp(200, sse_event("full", %{"status" => "NEW"}))
+      end)
+
+      {:ok, _task} = Payment.subscribe(payment_id, self())
+
+      assert_receive {:poslink_payment, ^payment_id, "full", _data}, 500
+    end
+
     test "sends poslink_payment_error on transport failure" do
       payment_id = "pr-uuid-5"
 

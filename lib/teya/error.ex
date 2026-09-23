@@ -11,8 +11,8 @@ defmodule Teya.Error do
   `"INSUFFICIENT_FUNDS"`, `"CARD_EXPIRED"`, `"BLOCKED_CARD"` and
   `"SUSPECTED_FRAUD"`. Teya adds codes over time, so handle unknown values.
 
-  Token endpoint failures use the OAuth 2.0 error format, giving codes such as
-  `"invalid_client"` and `"invalid_scope"`.
+  Token endpoint failures use the OAuth 2.0 error format instead, giving codes
+  such as `"invalid_client"` and `"invalid_scope"`.
 
   `invalid_parameters` lists the request fields the API rejected, when it says
   which. Each entry is a map with `"name"` and `"reason"` keys.
@@ -37,10 +37,6 @@ defmodule Teya.Error do
     }
   end
 
-  def from_response(%{status: status, body: %{"error" => code} = body}) when is_binary(code) do
-    %__MODULE__{code: code, message: body["error_description"], status: status}
-  end
-
   def from_response(%{status: status, body: body}) do
     %__MODULE__{status: status, message: body |> inspect() |> String.slice(0, 500)}
   end
@@ -48,4 +44,15 @@ defmodule Teya.Error do
   def from_response(%{status: status}) do
     %__MODULE__{status: status}
   end
+
+  @doc false
+  # The token endpoint answers in the OAuth 2.0 error format. Only the auth
+  # path uses this: an API error body that happens to carry an "error" key is
+  # a gateway or proxy page, and its detail is worth keeping as a message.
+  def from_oauth_response(%{status: status, body: %{"error" => code} = body})
+      when is_binary(code) do
+    %__MODULE__{code: code, message: body["error_description"], status: status}
+  end
+
+  def from_oauth_response(resp), do: from_response(resp)
 end

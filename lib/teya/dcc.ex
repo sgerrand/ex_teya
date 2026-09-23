@@ -11,7 +11,7 @@ defmodule Teya.DCC do
   This endpoint does not require OAuth authentication.
   """
 
-  alias Teya.Error
+  alias Teya.{Client, Error}
 
   @doc """
   Checks DCC eligibility and returns an exchange rate quote.
@@ -77,11 +77,14 @@ defmodule Teya.DCC do
       [
         method: :post,
         url: base_url <> "/fx/v3/dcc",
-        headers: [{"user-agent", Teya.Client.user_agent()}],
         json: params,
         receive_timeout: 30_000
       ]
       |> Keyword.merge(req_opts)
+      |> Keyword.put(
+        :headers,
+        Client.merge_headers(req_opts, [{"user-agent", Client.user_agent()}])
+      )
 
     case Req.request(req) do
       {:ok, %{status: status} = resp} when status in 200..299 -> {:ok, resp.body}

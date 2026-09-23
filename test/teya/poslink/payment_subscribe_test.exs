@@ -8,14 +8,15 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
     "event: #{type}\ndata: #{Jason.encode!(data)}\n\n"
   end
 
-  defp wait_for_task_and_kill(attempts \\ 50) do
-    case Task.Supervisor.children(Teya.TaskSupervisor) do
-      [] when attempts > 0 ->
-        Process.sleep(10)
-        wait_for_task_and_kill(attempts - 1)
+  # Kills the tasks get/2 started, identified as the ones that were not
+  # running before the call.
+  defp kill_new_tasks(before, attempts \\ 100) do
+    started = Task.Supervisor.children(Teya.TaskSupervisor) -- before
 
-      children ->
-        Enum.each(children, &Process.exit(&1, :kill))
+    cond do
+      started != [] -> Enum.each(started, &Process.exit(&1, :kill))
+      attempts > 0 -> Process.sleep(10) && kill_new_tasks(before, attempts - 1)
+      true -> flunk("get/2 started no task under Teya.TaskSupervisor")
     end
   end
 
@@ -258,7 +259,7 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       assert {:error, :no_event} = Payment.get("pr-uuid-21")
     end
 
-    test "returns a timeout when the collector dies without answering" do
+    test "reports the reason when the task waiting for the snapshot is killed" do
       payment_id = "pr-uuid-25"
 
       stub_sse(fn conn ->
@@ -267,12 +268,45 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       end)
 
       caller = self()
-      spawn(fn -> send(caller, {:got, Payment.get(payment_id, timeout: 5_000)}) end)
+      before = Task.Supervisor.children(Teya.TaskSupervisor)
 
-      # Kill the task waiting for the snapshot, as a supervisor shutdown would.
-      wait_for_task_and_kill()
+      # Task.start keeps $callers, so the stream task still finds the stub.
+      {:ok, _pid} =
+        Task.start(fn -> send(caller, {:got, Payment.get(payment_id, timeout: 5_000)}) end)
 
-      assert_receive {:got, {:error, :timeout}}, 2_000
+      kill_new_tasks(before)
+
+      assert_receive {:got, {:error, :killed}}, 2_000
+    end
+
+    test "returns a keepalive-free snapshot" do
+      payment_id = "pr-uuid-26"
+
+      body =
+        "event: ping\ndata: {\"keepalive\":true}\n\n" <>
+          sse_event("full", %{"status" => "NEW", "gateway_payment_id" => "gw-2"})
+
+      stub_payment_sse(body)
+
+      assert {:ok, %{"status" => "NEW", "gateway_payment_id" => "gw-2"}} = Payment.get(payment_id)
+    end
+
+    test "reports a crashed stream without waiting out the timeout" do
+      payment_id = "pr-uuid-28"
+
+      stub_sse(fn _conn -> raise "boom" end)
+
+      {elapsed_us, result} = :timer.tc(fn -> Payment.get(payment_id, timeout: 10_000) end)
+
+      assert {:error, _reason} = result
+      assert elapsed_us < 5_000_000
+    end
+
+    test "accepts :infinity as the timeout" do
+      payment_id = "pr-uuid-27"
+      stub_payment_sse(sse_event("full", %{"status" => "NEW"}))
+
+      assert {:ok, %{"status" => "NEW"}} = Payment.get(payment_id, timeout: :infinity)
     end
 
     test "returns :timeout when no event arrives in time" do

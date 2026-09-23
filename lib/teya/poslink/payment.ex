@@ -31,8 +31,6 @@ defmodule Teya.POSLink.Payment do
 
   alias Teya.{Auth, Client, SSE}
 
-  @collector_grace_ms 500
-
   @doc """
   Creates a payment request at a terminal.
 
@@ -125,8 +123,8 @@ defmodule Teya.POSLink.Payment do
 
   ## Options
 
-  - `:timeout` — milliseconds to wait for the snapshot (default `30_000`);
-    returns `{:error, :timeout}` when it runs out
+  - `:timeout` — milliseconds to wait for the snapshot, or `:infinity`
+    (default `30_000`); returns `{:error, :timeout}` when it runs out
 
   ## Examples
 
@@ -139,39 +137,41 @@ defmodule Teya.POSLink.Payment do
 
     collector =
       Task.Supervisor.async_nolink(Teya.TaskSupervisor, fn ->
-        await_snapshot(payment_request_id, timeout)
+        await_snapshot(payment_request_id)
       end)
 
-    outcome = Task.yield(collector, timeout + @collector_grace_ms)
-    Task.shutdown(collector, :brutal_kill)
-
-    case outcome do
+    case Task.yield(collector, timeout) || Task.shutdown(collector, :brutal_kill) do
       {:ok, result} -> result
-      # No answer in time, or the collector died without sending one.
-      _ -> {:error, :timeout}
+      {:exit, reason} -> {:error, reason}
+      nil -> {:error, :timeout}
     end
   end
 
   # Runs in the collector task, so the stream's messages land in a mailbox of
   # its own. Receiving them in the caller would take messages belonging to a
   # subscribe/2 stream the caller already had open for the same payment.
-  defp await_snapshot(payment_request_id, timeout) do
-    {:ok, stream} = subscribe(payment_request_id, self())
+  #
+  # The stream task is linked here, not spawned through subscribe/2: killing
+  # the collector then takes the stream with it, and a stream that crashes
+  # brings the collector down so get/2 reports the reason instead of waiting
+  # out the timeout.
+  defp await_snapshot(payment_request_id) do
+    collector = self()
+
+    stream =
+      Task.Supervisor.async(Teya.TaskSupervisor, fn ->
+        stream_payment(payment_request_id, collector)
+      end)
+
     ref = stream.ref
 
-    result =
-      receive do
-        # A "diff" carries only the fields that changed, so it is not a
-        # snapshot. Leave it and wait for one.
-        {:poslink_payment, ^payment_request_id, type, data} when type != "diff" -> {:ok, data}
-        {:poslink_payment_error, ^payment_request_id, reason} -> {:error, reason}
-        {^ref, _} -> {:error, :no_event}
-      after
-        timeout -> {:error, :timeout}
-      end
-
-    Task.shutdown(stream, :brutal_kill)
-    result
+    receive do
+      # Only a "full" event is a snapshot. A "diff" carries just the fields
+      # that changed, and a keepalive carries neither.
+      {:poslink_payment, ^payment_request_id, "full", data} -> {:ok, data}
+      {:poslink_payment_error, ^payment_request_id, reason} -> {:error, reason}
+      {^ref, _} -> {:error, :no_event}
+    end
   end
 
   @doc """

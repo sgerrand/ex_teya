@@ -96,6 +96,41 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       assert error.message =~ "upstream unavailable"
     end
 
+    test "sends poslink_payment_error on a 2xx status that is not 200" do
+      payment_id = "pr-uuid-10"
+
+      stub_sse(fn conn ->
+        conn
+        |> Plug.Conn.put_status(202)
+        |> Req.Test.json(%{"code" => "ACCEPTED", "description" => "Stream not ready"})
+      end)
+
+      {:ok, _task} = Payment.subscribe(payment_id, self())
+
+      assert_receive {:poslink_payment_error, ^payment_id, error}, 500
+      assert %Error{code: "ACCEPTED", message: "Stream not ready", status: 202} = error
+    end
+
+    test "stops accumulating an oversized error body" do
+      payment_id = "pr-uuid-11"
+      chunk = String.duplicate("x", 4_096)
+
+      stub_sse(fn conn ->
+        conn = Plug.Conn.send_chunked(conn, 500)
+
+        Enum.reduce(1..5, conn, fn _i, conn ->
+          {:ok, conn} = Plug.Conn.chunk(conn, chunk)
+          conn
+        end)
+      end)
+
+      {:ok, _task} = Payment.subscribe(payment_id, self())
+
+      assert_receive {:poslink_payment_error, ^payment_id, error}, 500
+      assert %Error{status: 500} = error
+      assert byte_size(error.message) <= 512
+    end
+
     test "sends poslink_payment_error on transport failure" do
       payment_id = "pr-uuid-5"
 

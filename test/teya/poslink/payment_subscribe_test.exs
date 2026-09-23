@@ -8,6 +8,14 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
     "event: #{type}\ndata: #{Jason.encode!(data)}\n\n"
   end
 
+  defp eventually(check, attempts \\ 200) do
+    cond do
+      check.() -> true
+      attempts > 0 -> Process.sleep(10) && eventually(check, attempts - 1)
+      true -> false
+    end
+  end
+
   # Kills the tasks get/2 started, identified as the ones that were not
   # running before the call.
   defp kill_new_tasks(before, attempts \\ 100) do
@@ -315,11 +323,35 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       assert {:error, :no_snapshot} = Payment.get(payment_id)
     end
 
-    test "treats an event with no name as a snapshot" do
+    test "does not take an event with no name as a snapshot" do
       payment_id = "pr-uuid-30"
       stub_payment_sse("data: #{Jason.encode!(%{"status" => "NEW"})}\n\n")
 
-      assert {:ok, %{"status" => "NEW"}} = Payment.get(payment_id)
+      assert {:error, :no_event} = Payment.get(payment_id)
+    end
+
+    test "does not call a keepalive a partial update" do
+      payment_id = "pr-uuid-32"
+      stub_payment_sse("event: ping\ndata: {\"keepalive\":true}\n\n")
+
+      assert {:error, :no_event} = Payment.get(payment_id)
+    end
+
+    test "stops waiting when the calling process dies" do
+      payment_id = "pr-uuid-33"
+      before = Task.Supervisor.children(Teya.TaskSupervisor)
+
+      stub_sse(fn conn ->
+        Process.sleep(2_000)
+        Plug.Conn.send_resp(conn, 200, "")
+      end)
+
+      {:ok, caller} = Task.start(fn -> Payment.get(payment_id, timeout: :infinity) end)
+
+      assert eventually(fn -> Task.Supervisor.children(Teya.TaskSupervisor) -- before != [] end)
+      Process.exit(caller, :kill)
+
+      assert eventually(fn -> Task.Supervisor.children(Teya.TaskSupervisor) -- before == [] end)
     end
 
     test "accepts :infinity as the timeout" do

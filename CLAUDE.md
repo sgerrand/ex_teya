@@ -36,7 +36,8 @@ lib/teya/
   auth.ex             — GenServer: lazy token fetch, cache, proactive refresh
   client.ex           — HTTP layer: calls Auth.token/0, adds Bearer header,
                         auto-generates Idempotency-Key on POST/PATCH
-  sse.ex              — SSE frame parser (parse/1) + shared stream helper (stream/7)
+  sse.ex              — shared SSE stream helper (stream/7); frames are decoded by
+                        the req_server_sent_events plugin
   checkout.ex         — POST/GET /v2/checkout/sessions
   transaction.ex      — POST/GET /v3/transactions/online
   pay_by_link.ex      — POST/GET/PATCH /v2/payment-links
@@ -64,9 +65,10 @@ messages to the caller:
 - `{:poslink_payment, id, event_type, data}` / `{:poslink_payment_error, id, reason}`
 - `{:poslink_receipt, id, event_type, data}` / `{:poslink_receipt_error, id, reason}`
 
-SSE bytes are parsed by `Teya.SSE.parse/1`, which accumulates a buffer across
-chunks and emits complete events. `event_type` is `"full"` (complete snapshot)
-or `"diff"` (partial update). `data` is a decoded JSON map.
+SSE bytes are decoded by the `req_server_sent_events` plugin, which
+`Teya.SSE.stream/7` attaches. `event_type` is `"full"` (complete snapshot) or
+`"diff"` (partial update), and is `nil` for a frame with no event line. `data`
+is a decoded JSON map.
 
 ## Testing
 

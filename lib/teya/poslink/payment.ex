@@ -62,8 +62,8 @@ defmodule Teya.POSLink.Payment do
   ## Examples
 
       params = %{
-        "store_id"         => store_id,
-        "terminal_id"      => terminal_id,
+        "store_id"           => store_id,
+        "terminal_id"        => terminal_id,
         "requested_amount"   => %{"amount" => 1000, "currency" => "GBP"},
         "transaction_type"   => "SALE",
         "merchant_reference" => "order-1234"
@@ -111,9 +111,7 @@ defmodule Teya.POSLink.Payment do
 
   The POSLink API has no plain JSON endpoint for a single payment request.
   This function opens the status stream, returns the first snapshot, and then
-  closes the stream. If the calling process dies while waiting, the stream is
-  left to close on its own, which takes until the payment ends or the SSE
-  idle timeout passes.
+  closes the stream, including when the calling process dies while waiting.
 
   Useful as a fallback when an SSE stream from `subscribe/2` disconnects before
   the payment reaches a terminal state — check the current status, then
@@ -147,9 +145,11 @@ defmodule Teya.POSLink.Payment do
   def get(payment_request_id, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 30_000)
 
+    caller = self()
+
     collector =
       Task.Supervisor.async_nolink(Teya.TaskSupervisor, fn ->
-        await_snapshot(payment_request_id)
+        await_snapshot(payment_request_id, caller)
       end)
 
     case Task.yield(collector, timeout) || Task.shutdown(collector, :brutal_kill) do
@@ -168,8 +168,9 @@ defmodule Teya.POSLink.Payment do
   # to hold a connection open. The collector traps exits so that a stream
   # which crashes is reported rather than killing the collector on the spot,
   # which could throw away a snapshot already received.
-  defp await_snapshot(payment_request_id) do
+  defp await_snapshot(payment_request_id, caller) do
     Process.flag(:trap_exit, true)
+    Process.monitor(caller)
     collector = self()
 
     stream =
@@ -177,7 +178,7 @@ defmodule Teya.POSLink.Payment do
         stream_payment(payment_request_id, collector)
       end)
 
-    result = receive_snapshot(payment_request_id, stream.ref, false)
+    result = receive_snapshot(payment_request_id, stream, false)
 
     # A linked task only dies with its parent when the parent exits
     # abnormally, and the collector returns normally with a snapshot.
@@ -185,23 +186,30 @@ defmodule Teya.POSLink.Payment do
     result
   end
 
-  defp receive_snapshot(payment_request_id, ref, diff_seen?) do
+  defp receive_snapshot(payment_request_id, stream, diff_seen?) do
+    %{ref: ref, pid: stream_pid} = stream
+
     receive do
-      # A snapshot is a "full" event, or an unnamed one — a frame with no
-      # event line arrives with no name. A "diff" carries only the fields that
-      # changed, so it is not a snapshot; keep waiting, but remember it so the
-      # caller can be told a partial update was all the stream had.
-      {:poslink_payment, ^payment_request_id, type, data} when type in ["full", nil] ->
+      # Only a "full" event is a snapshot of the whole payment request.
+      {:poslink_payment, ^payment_request_id, "full", data} ->
         {:ok, data}
 
-      {:poslink_payment, ^payment_request_id, _diff, _data} ->
-        receive_snapshot(payment_request_id, ref, true)
+      # A "diff" carries only the fields that changed. Keep waiting, but
+      # remember it, so the caller can be told a partial update was all the
+      # stream had. Any other event, such as a keepalive, says nothing about
+      # the payment and is ignored.
+      {:poslink_payment, ^payment_request_id, type, _data} ->
+        receive_snapshot(payment_request_id, stream, diff_seen? or type == "diff")
 
       {:poslink_payment_error, ^payment_request_id, reason} ->
         {:error, reason}
 
-      {:EXIT, _pid, reason} when reason != :normal ->
+      {:EXIT, ^stream_pid, reason} when reason != :normal ->
         {:error, reason}
+
+      # Nobody is waiting for the answer any more.
+      {:DOWN, _ref, :process, _pid, _reason} ->
+        {:error, :caller_down}
 
       {^ref, _} ->
         if diff_seen?, do: {:error, :no_snapshot}, else: {:error, :no_event}

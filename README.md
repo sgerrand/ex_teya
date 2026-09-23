@@ -39,6 +39,13 @@ config :teya,
 
 OAuth tokens are fetched automatically and refreshed before expiry. Only request the scopes your application needs.
 
+These settings are optional:
+
+| Setting | Default | What it does |
+|---|---|---|
+| `:sse_stream_timeout_ms` | `60_000` | How long a POSLink stream waits for the next event before it gives up |
+| `:sse_max_error_body_bytes` | `65_536` | How much of a failed stream's error body is kept. A JSON error larger than this is cut and can no longer be read, so the error keeps its status and raw text but no code |
+
 ### Scope reference
 
 | Scope | Library function |

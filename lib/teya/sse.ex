@@ -76,13 +76,14 @@ defmodule Teya.SSE do
   end
 
   defp keep_error_chunk(chunk, {req, resp}) do
-    limit = max_error_body_bytes()
-    body = take_error_body(resp.body, chunk, limit)
+    {body, cut?} = take_error_body(resp.body, chunk, max_error_body_bytes())
     resp = %{resp | body: body}
 
-    # Nothing more will be kept, so stop reading rather than pulling a whole
-    # error page off the wire to throw it away.
-    if byte_size(body) >= limit,
+    # Once a chunk has been cut, nothing more will be kept, so stop reading
+    # rather than pulling a whole error page off the wire to throw it away.
+    # The kept body can end up shorter than the cap, so its size cannot be
+    # what decides this.
+    if cut?,
       do: {:halt, {req, resp}},
       else: {:cont, {req, resp}}
   end
@@ -106,19 +107,26 @@ defmodule Teya.SSE do
     budget = max(limit - byte_size(body), 0)
 
     if byte_size(chunk) <= budget do
-      body <> chunk
+      {body <> chunk, false}
     else
-      body <> whole_characters(binary_part(chunk, 0, budget))
+      {body <> whole_characters(binary_part(chunk, 0, budget)), true}
     end
   end
 
   # Cutting at a byte boundary can split a character in two, leaving text that
-  # no longer prints as text. Drop the trailing bytes of a split character.
-  defp whole_characters(text) do
-    if String.valid?(text) do
+  # no longer prints as text. A character is at most four bytes, so drop up to
+  # three trailing bytes to end on a whole one. Anything still not text was
+  # never text — a compressed or mis-encoded error page — and is kept as it
+  # is rather than walked back byte by byte to the first bad one.
+  defp whole_characters(text, attempts \\ 3)
+
+  defp whole_characters(text, 0), do: text
+
+  defp whole_characters(text, attempts) do
+    if String.valid?(text) or text == "" do
       text
     else
-      whole_characters(binary_part(text, 0, byte_size(text) - 1))
+      text |> binary_part(0, byte_size(text) - 1) |> whole_characters(attempts - 1)
     end
   end
 

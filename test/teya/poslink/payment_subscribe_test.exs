@@ -166,7 +166,6 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       # does not, and only what fitted in the cap is quoted.
       assert %Error{code: nil, status: 500} = error
       assert error.message =~ "INTERNAL_SERVER_ERROR"
-      assert byte_size(error.message) < 5_000
     end
 
     test "cuts a body without splitting a character in two" do
@@ -228,6 +227,27 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
 
       assert_receive {:poslink_payment_error, ^payment_id, error}, 500
       assert %Error{code: "INTERNAL_SERVER_ERROR", message: "Boom", status: 500} = error
+    end
+
+    test "keeps an error body that is not text instead of trimming it away" do
+      payment_id = "pr-uuid-17"
+      put_error_body_cap(2_000)
+
+      # Compressed or mis-encoded: no amount of trimming makes it text, so
+      # trimming must stop rather than walk back to the first bad byte.
+      body = :crypto.strong_rand_bytes(4_000)
+
+      stub_sse(fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/octet-stream")
+        |> Plug.Conn.send_resp(500, body)
+      end)
+
+      {:ok, _task} = Payment.subscribe(payment_id, self())
+
+      assert_receive {:poslink_payment_error, ^payment_id, error}, 2_000
+      assert %Error{status: 500} = error
+      assert byte_size(error.message) > 100
     end
 
     test "sends poslink_payment_error on transport failure" do

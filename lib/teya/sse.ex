@@ -88,7 +88,10 @@ defmodule Teya.SSE do
   end
 
   defp max_error_body_bytes do
-    Application.get_env(:teya, :sse_max_error_body_bytes, @default_max_error_body_bytes)
+    case Application.get_env(:teya, :sse_max_error_body_bytes, @default_max_error_body_bytes) do
+      bytes when is_integer(bytes) and bytes > 0 -> bytes
+      _ -> @default_max_error_body_bytes
+    end
   end
 
   # An error body is not streamed, so it could be any size — a gateway error
@@ -105,7 +108,17 @@ defmodule Teya.SSE do
     if byte_size(chunk) <= budget do
       body <> chunk
     else
-      body <> binary_part(chunk, 0, budget)
+      body <> whole_characters(binary_part(chunk, 0, budget))
+    end
+  end
+
+  # Cutting at a byte boundary can split a character in two, leaving text that
+  # no longer prints as text. Drop the trailing bytes of a split character.
+  defp whole_characters(text) do
+    if String.valid?(text) do
+      text
+    else
+      whole_characters(binary_part(text, 0, byte_size(text) - 1))
     end
   end
 

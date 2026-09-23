@@ -169,6 +169,67 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       assert byte_size(error.message) < 5_000
     end
 
+    test "cuts a body without splitting a character in two" do
+      payment_id = "pr-uuid-14"
+      # Lands inside the two bytes of an "é".
+      put_error_body_cap(50)
+
+      stub_sse(fn conn ->
+        conn
+        |> Plug.Conn.put_status(500)
+        |> Req.Test.json(%{
+          "code" => "INTERNAL_SERVER_ERROR",
+          "description" => String.duplicate("é", 100)
+        })
+      end)
+
+      {:ok, _task} = Payment.subscribe(payment_id, self())
+
+      assert_receive {:poslink_payment_error, ^payment_id, error}, 500
+      assert %Error{status: 500} = error
+
+      # Readable text, not a dump of raw bytes.
+      assert error.message =~ "INTERNAL_SERVER_ERROR"
+      refute error.message =~ "<<"
+    end
+
+    test "keeps the earlier chunks of a body that arrives in pieces" do
+      payment_id = "pr-uuid-15"
+      put_error_body_cap(100)
+
+      stub_sse(fn conn ->
+        conn = Plug.Conn.send_chunked(conn, 500)
+
+        Enum.reduce(["a", "b", "c", "d"], conn, fn letter, conn ->
+          {_result, conn} = Plug.Conn.chunk(conn, String.duplicate(letter, 40))
+          conn
+        end)
+      end)
+
+      {:ok, _task} = Payment.subscribe(payment_id, self())
+
+      assert_receive {:poslink_payment_error, ^payment_id, error}, 500
+      assert error.message =~ "aaa"
+      assert error.message =~ "bbb"
+      refute error.message =~ "ddd"
+    end
+
+    test "falls back to the default cap when the setting is not a size" do
+      payment_id = "pr-uuid-16"
+      put_error_body_cap(:not_a_size)
+
+      stub_sse(fn conn ->
+        conn
+        |> Plug.Conn.put_status(500)
+        |> Req.Test.json(%{"code" => "INTERNAL_SERVER_ERROR", "description" => "Boom"})
+      end)
+
+      {:ok, _task} = Payment.subscribe(payment_id, self())
+
+      assert_receive {:poslink_payment_error, ^payment_id, error}, 500
+      assert %Error{code: "INTERNAL_SERVER_ERROR", message: "Boom", status: 500} = error
+    end
+
     test "sends poslink_payment_error on transport failure" do
       payment_id = "pr-uuid-5"
 

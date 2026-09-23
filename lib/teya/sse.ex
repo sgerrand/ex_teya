@@ -19,6 +19,9 @@ defmodule Teya.SSE do
   @max_error_body_bytes 8_192
 
   @doc false
+  def max_error_body_bytes, do: @max_error_body_bytes
+
+  @doc false
   def stream(url, token, id, ok_tag, error_tag, pid, req_opts \\ []) do
     timeout_ms = Application.get_env(:teya, :sse_stream_timeout_ms, 60_000)
 
@@ -68,15 +71,21 @@ defmodule Teya.SSE do
     %{req | into: collector}
   end
 
+  @doc false
   # An error body is not streamed, so it could be any size — a gateway error
-  # page, say. Teya.Error keeps only the first 500 characters, so stop
-  # accumulating once there is more than enough to decode or quote.
-  defp take_error_body(body, chunk) do
+  # page, say. Teya.Error keeps only the first 500 characters, so take no more
+  # than enough to decode or quote. A whole response often arrives as one
+  # chunk, so the chunk itself is cut to what is left of the budget rather
+  # than copied first and cut later.
+  def take_error_body(body, chunk) do
     body = body || ""
+    budget = @max_error_body_bytes - byte_size(body)
 
-    if byte_size(body) >= @max_error_body_bytes,
-      do: body,
-      else: body <> chunk
+    cond do
+      budget <= 0 -> body
+      byte_size(chunk) <= budget -> body <> chunk
+      true -> body <> binary_part(chunk, 0, budget)
+    end
   end
 
   defp forward_frame(%Frame{data: nil}, _id, _ok_tag, _pid), do: :ok

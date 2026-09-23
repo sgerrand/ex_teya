@@ -109,7 +109,9 @@ defmodule Teya.SSE do
     # again without a word: the reader never learns the connection dropped,
     # and the new stream replays its snapshot. Readers are told of a dropped
     # stream and reconnect themselves, so retrying is off unless configured.
-    [retry: false]
+    # The user agent is Req's own option, which gives way to one configured
+    # as an option or a header.
+    [retry: false, user_agent: Teya.Client.user_agent()]
     |> Keyword.merge(configured)
     |> Keyword.merge(
       url: url,

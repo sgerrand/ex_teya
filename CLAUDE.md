@@ -33,7 +33,8 @@ The library is an OTP application (`Teya.Application`) that starts a `Task.Super
 lib/teya/
   application.ex      — starts Teya.TaskSupervisor (always) and Teya.Auth (if :client_id set)
   config.ex           — %Teya.Config{} struct + Config.from_env/0
-  error.ex            — %Teya.Error{code, message, status} returned on failures
+  error.ex            — %Teya.Error{code, message, status, invalid_parameters} returned
+                        on failures, including token endpoint (OAuth) failures
   auth.ex             — GenServer: lazy token fetch, cache, proactive refresh
   client.ex           — HTTP layer: calls Auth.token/0, adds Bearer header,
                         auto-generates Idempotency-Key on POST/PATCH

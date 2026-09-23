@@ -77,6 +77,7 @@ defmodule Teya.DCC do
       [
         method: :post,
         url: base_url <> "/fx/v3/dcc",
+        headers: [{"user-agent", Teya.Client.user_agent()}],
         json: params,
         receive_timeout: 30_000
       ]

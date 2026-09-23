@@ -27,6 +27,7 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       assert conn.method == "GET"
       assert String.starts_with?(conn.request_path, "/poslink/v3/payment-requests/")
       assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer test_access_token"]
+      assert Plug.Conn.get_req_header(conn, "user-agent") == [Teya.Client.user_agent()]
 
       conn
       |> Plug.Conn.put_resp_content_type("text/event-stream")
@@ -366,7 +367,8 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
 
       {:ok, _task} = Payment.subscribe(payment_id, self())
 
-      assert_receive {:poslink_payment_error, ^payment_id, %Req.Response{status: 401}}, 500
+      assert_receive {:poslink_payment_error, ^payment_id, error}, 500
+      assert %Error{code: "invalid_client", status: 401} = error
     end
   end
 

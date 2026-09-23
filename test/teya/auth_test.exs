@@ -24,6 +24,7 @@ defmodule Teya.AuthTest do
       stub_auth(auth_pid, fn conn ->
         assert conn.method == "POST"
         assert conn.request_path == "/connect/token"
+        assert Plug.Conn.get_req_header(conn, "user-agent") == [Teya.Client.user_agent()]
         Req.Test.json(conn, %{"access_token" => "fresh_token", "expires_in" => 3600})
       end)
 
@@ -50,7 +51,7 @@ defmodule Teya.AuthTest do
         |> Req.Test.json(%{"error" => "invalid_client"})
       end)
 
-      assert {:error, _} = Teya.Auth.token()
+      assert {:error, %Teya.Error{code: "invalid_client", status: 401}} = Teya.Auth.token()
     end
 
     test "returns error on token endpoint transport failure", %{auth_pid: auth_pid} do

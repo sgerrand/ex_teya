@@ -3,7 +3,7 @@ defmodule Teya.Auth do
   use GenServer
   require Logger
 
-  alias Teya.Config
+  alias Teya.{Config, Error}
 
   @refresh_margin_seconds 30
   @base_retry_delay_ms 1_000
@@ -112,7 +112,10 @@ defmodule Teya.Auth do
     opts =
       [
         body: body,
-        headers: [{"content-type", "application/x-www-form-urlencoded"}],
+        headers: [
+          {"content-type", "application/x-www-form-urlencoded"},
+          {"user-agent", Teya.Client.user_agent()}
+        ],
         receive_timeout: 10_000
       ] ++ req_opts
 
@@ -121,7 +124,7 @@ defmodule Teya.Auth do
         {:ok, token, System.monotonic_time(:second) + expires_in}
 
       {:ok, resp} ->
-        {:error, resp}
+        {:error, Error.from_response(resp)}
 
       {:error, reason} ->
         {:error, reason}

@@ -12,13 +12,44 @@ defmodule Teya.ErrorTest do
                Teya.Error.from_response(response)
     end
 
+    test "keeps the invalid parameters the API listed" do
+      response = %{
+        status: 400,
+        body: %{
+          "code" => "BAD_REQUEST",
+          "description" => "Invalid input",
+          "invalid_parameters" => [%{"name" => "amount", "reason" => "must be positive"}]
+        }
+      }
+
+      assert %Teya.Error{invalid_parameters: [%{"name" => "amount"}]} =
+               Teya.Error.from_response(response)
+    end
+
+    test "builds error from an OAuth error body" do
+      response = %{
+        status: 401,
+        body: %{"error" => "invalid_client", "error_description" => "Unknown client"}
+      }
+
+      assert %Teya.Error{code: "invalid_client", message: "Unknown client", status: 401} =
+               Teya.Error.from_response(response)
+    end
+
+    test "builds error from an OAuth error body without a description" do
+      response = %{status: 400, body: %{"error" => "invalid_scope"}}
+
+      assert %Teya.Error{code: "invalid_scope", message: nil, status: 400} =
+               Teya.Error.from_response(response)
+    end
+
     test "preserves body as message when response shape is unexpected" do
-      response = %{status: 503, body: %{"error" => "service_unavailable"}}
+      response = %{status: 503, body: %{"detail" => "service unavailable"}}
 
       assert %Teya.Error{code: nil, status: 503, message: message} =
                Teya.Error.from_response(response)
 
-      assert message =~ "service_unavailable"
+      assert message =~ "service unavailable"
     end
 
     test "preserves string body as message" do

@@ -3,6 +3,12 @@ defmodule Teya.Client do
 
   alias Teya.{Auth, Error}
 
+  @version Mix.Project.config()[:version]
+  @user_agent "teya-elixir/#{@version}"
+
+  @doc false
+  def user_agent, do: @user_agent
+
   @doc """
   Makes an authenticated HTTP request to the Teya API.
 
@@ -27,7 +33,7 @@ defmodule Teya.Client do
           method: method,
           url: base_url <> path,
           auth: {:bearer, token},
-          headers: idempotency_headers(method, opts),
+          headers: [{"user-agent", @user_agent} | idempotency_headers(method, opts)],
           receive_timeout: 30_000
         ]
         |> put_if_present(:json, Keyword.get(opts, :body))

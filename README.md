@@ -390,6 +390,25 @@ case Teya.Checkout.create_session(params) do
 end
 ```
 
+When the API says which request fields it rejected, they are kept in
+`invalid_parameters`:
+
+```elixir
+{:error, %Teya.Error{code: "BAD_REQUEST", invalid_parameters: params}} =
+  Teya.Checkout.create_session(bad_params)
+
+# [%{"name" => "amount", "reason" => "must be positive"}]
+```
+
+Token endpoint failures use the OAuth 2.0 error format, so `code` holds values
+such as `"invalid_client"` and `"invalid_scope"`.
+
+### User agent
+
+Every request sends `User-Agent: teya-elixir/<version>`, which Teya recommends
+so they can identify your integration. Override it with your own header
+through `:req_options`.
+
 ## Troubleshooting
 
 ### Rate limiting (`TOO_MANY_REQUESTS`)

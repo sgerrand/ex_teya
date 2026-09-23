@@ -8,6 +8,20 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
     "event: #{type}\ndata: #{Jason.encode!(data)}\n\n"
   end
 
+  # Restores the setting by removing it, since it has no value by default and
+  # putting nil back would be read as a cap of nil.
+  defp put_error_body_cap(bytes) do
+    original = Application.fetch_env(:teya, :sse_max_error_body_bytes)
+    Application.put_env(:teya, :sse_max_error_body_bytes, bytes)
+
+    on_exit(fn ->
+      case original do
+        {:ok, value} -> Application.put_env(:teya, :sse_max_error_body_bytes, value)
+        :error -> Application.delete_env(:teya, :sse_max_error_body_bytes)
+      end
+    end)
+  end
+
   defp stub_payment_sse(body) do
     stub_sse(fn conn ->
       assert conn.method == "GET"
@@ -131,24 +145,28 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       assert %Error{code: "BAD_REQUEST", message: "Invalid input", status: 400} = error
     end
 
-    test "stops accumulating an oversized error body" do
+    test "cuts an error body that runs past the cap" do
       payment_id = "pr-uuid-11"
-      chunk = String.duplicate("x", 4_096)
+      put_error_body_cap(200)
 
       stub_sse(fn conn ->
-        conn = Plug.Conn.send_chunked(conn, 500)
-
-        Enum.reduce(1..5, conn, fn _i, conn ->
-          {:ok, conn} = Plug.Conn.chunk(conn, chunk)
-          conn
-        end)
+        conn
+        |> Plug.Conn.put_status(500)
+        |> Req.Test.json(%{
+          "code" => "INTERNAL_SERVER_ERROR",
+          "description" => String.duplicate("x", 5_000)
+        })
       end)
 
       {:ok, _task} = Payment.subscribe(payment_id, self())
 
       assert_receive {:poslink_payment_error, ^payment_id, error}, 500
-      assert %Error{status: 500} = error
-      assert byte_size(error.message) <= 512
+
+      # Cut mid-JSON, so it no longer decodes: the status survives, the code
+      # does not, and only what fitted in the cap is quoted.
+      assert %Error{code: nil, status: 500} = error
+      assert error.message =~ "INTERNAL_SERVER_ERROR"
+      assert byte_size(error.message) < 5_000
     end
 
     test "sends poslink_payment_error on transport failure" do

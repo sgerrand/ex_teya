@@ -9,17 +9,19 @@ defmodule Teya.SSE do
   `{error_tag, id, reason}`.
 
   An error response is not an event stream, so its body is collected as raw
-  bytes and left to Req to decode. That keeps the `code` and `message` the API
-  sent in the resulting `%Teya.Error{}`.
+  bytes and decoded here, which keeps the `code` and `message` the API sent in
+  the resulting `%Teya.Error{}`.
+
+  Only the first `:sse_max_error_body_bytes` of that body are kept (64 KB by
+  default), so a large error page cannot fill memory. A JSON body past that
+  size is cut and can no longer be decoded: the `%Teya.Error{}` then carries
+  the status and the raw text, but no `code`.
   """
 
   alias ReqServerSentEvents.Frame
   alias Teya.Error
 
-  @max_error_body_bytes 65_536
-
-  @doc false
-  def max_error_body_bytes, do: @max_error_body_bytes
+  @default_max_error_body_bytes 65_536
 
   @doc false
   def stream(url, token, id, ok_tag, error_tag, pid, req_opts \\ []) do
@@ -74,32 +76,36 @@ defmodule Teya.SSE do
   end
 
   defp keep_error_chunk(chunk, {req, resp}) do
-    body = take_error_body(resp.body, chunk)
+    limit = max_error_body_bytes()
+    body = take_error_body(resp.body, chunk, limit)
     resp = %{resp | body: body}
 
     # Nothing more will be kept, so stop reading rather than pulling a whole
     # error page off the wire to throw it away.
-    if byte_size(body) >= @max_error_body_bytes,
+    if byte_size(body) >= limit,
       do: {:halt, {req, resp}},
       else: {:cont, {req, resp}}
   end
 
-  @doc false
+  defp max_error_body_bytes do
+    Application.get_env(:teya, :sse_max_error_body_bytes, @default_max_error_body_bytes)
+  end
+
   # An error body is not streamed, so it could be any size — a gateway error
-  # page, say. The budget is generous because a cut body is no longer valid
-  # JSON, and a JSON error loses its code and description when it cannot be
-  # decoded; an API error listing many invalid parameters still fits well
+  # page, say. The default budget is generous because a cut body is no longer
+  # valid JSON, and a JSON error loses its code and description when it cannot
+  # be decoded; an API error listing many invalid parameters still fits well
   # inside it. A whole response often arrives as one chunk, so the chunk
   # itself is cut to what is left of the budget rather than copied first and
   # cut later.
-  def take_error_body(body, chunk) do
+  defp take_error_body(body, chunk, limit) do
     body = body || ""
-    budget = @max_error_body_bytes - byte_size(body)
+    budget = max(limit - byte_size(body), 0)
 
-    cond do
-      budget <= 0 -> body
-      byte_size(chunk) <= budget -> body <> chunk
-      true -> body <> binary_part(chunk, 0, budget)
+    if byte_size(chunk) <= budget do
+      body <> chunk
+    else
+      body <> binary_part(chunk, 0, budget)
     end
   end
 

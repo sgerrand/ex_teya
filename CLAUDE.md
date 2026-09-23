@@ -97,7 +97,14 @@ reporter (used in CI to produce the file uploaded to Coveralls) does not, so CI
 runs `mix coveralls` as a separate step to fail the build on a coverage drop.
 The same command runs on pre-push via lefthook.
 
-`Task.Supervisor.async_nolink` propagates `$callers` to spawned tasks, so `Req.Test` stubs set in the test process are automatically accessible from the task without explicit `allow` calls.
+`Task.Supervisor.async_nolink` propagates `$callers` to spawned tasks, so `Req.Test` stubs set in the test process are automatically accessible from the task without explicit `allow` calls. `Task.start/1` does too; plain `spawn/1` does not.
+
+`Req.Test` delivers the whole response only once the stub plug returns, even
+for `Plug.Conn.send_chunked/2` plus `Plug.Conn.chunk/2`. A stubbed SSE stream
+therefore cannot stay open while the test inspects state: every event arrives
+at once, and the stream task always ends on its own. Behaviour that depends on
+a still-open stream — such as `Payment.get/2` shutting its stream task down
+once it has the snapshot — cannot be observed through a stub.
 
 ### Auth failure and retry behaviour
 

@@ -111,6 +111,26 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       assert %Error{code: "ACCEPTED", message: "Stream not ready", status: 202} = error
     end
 
+    test "keeps the code of a large JSON error body" do
+      payment_id = "pr-uuid-13"
+
+      stub_sse(fn conn ->
+        conn
+        |> Plug.Conn.put_status(400)
+        |> Req.Test.json(%{
+          "code" => "BAD_REQUEST",
+          "description" => "Invalid input",
+          "invalid_parameters" =>
+            Enum.map(1..500, &%{"name" => "field_#{&1}", "reason" => "must be present"})
+        })
+      end)
+
+      {:ok, _task} = Payment.subscribe(payment_id, self())
+
+      assert_receive {:poslink_payment_error, ^payment_id, error}, 500
+      assert %Error{code: "BAD_REQUEST", message: "Invalid input", status: 400} = error
+    end
+
     test "stops accumulating an oversized error body" do
       payment_id = "pr-uuid-11"
       chunk = String.duplicate("x", 4_096)

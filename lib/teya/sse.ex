@@ -16,7 +16,7 @@ defmodule Teya.SSE do
   alias ReqServerSentEvents.Frame
   alias Teya.Error
 
-  @max_error_body_bytes 8_192
+  @max_error_body_bytes 65_536
 
   @doc false
   def max_error_body_bytes, do: @max_error_body_bytes
@@ -36,6 +36,10 @@ defmodule Teya.SSE do
         url: url,
         auth: {:bearer, token},
         into: handler,
+        # An error body that ran past the cap is cut short, and Req's decoder
+        # answers broken JSON with an exception in place of the response,
+        # taking the status with it. Decode it here instead.
+        decode_body: false,
         receive_timeout: timeout_ms
       )
       |> Req.new()
@@ -47,7 +51,7 @@ defmodule Teya.SSE do
         :ok
 
       {:ok, resp} ->
-        send(pid, {error_tag, id, Error.from_response(resp)})
+        send(pid, {error_tag, id, resp |> decode_body() |> Error.from_response()})
 
       {:error, reason} ->
         send(pid, {error_tag, id, reason})
@@ -61,22 +65,33 @@ defmodule Teya.SSE do
   # other than 200.
   defp collect_error_body(%Req.Request{into: sse_into} = req) do
     collector = fn {:data, chunk}, {req, resp} ->
-      if resp.status == 200 do
-        sse_into.({:data, chunk}, {req, resp})
-      else
-        {:cont, {req, %{resp | body: take_error_body(resp.body, chunk)}}}
-      end
+      if resp.status == 200,
+        do: sse_into.({:data, chunk}, {req, resp}),
+        else: keep_error_chunk(chunk, {req, resp})
     end
 
     %{req | into: collector}
   end
 
+  defp keep_error_chunk(chunk, {req, resp}) do
+    body = take_error_body(resp.body, chunk)
+    resp = %{resp | body: body}
+
+    # Nothing more will be kept, so stop reading rather than pulling a whole
+    # error page off the wire to throw it away.
+    if byte_size(body) >= @max_error_body_bytes,
+      do: {:halt, {req, resp}},
+      else: {:cont, {req, resp}}
+  end
+
   @doc false
   # An error body is not streamed, so it could be any size — a gateway error
-  # page, say. Teya.Error keeps only the first 500 characters, so take no more
-  # than enough to decode or quote. A whole response often arrives as one
-  # chunk, so the chunk itself is cut to what is left of the budget rather
-  # than copied first and cut later.
+  # page, say. The budget is generous because a cut body is no longer valid
+  # JSON, and a JSON error loses its code and description when it cannot be
+  # decoded; an API error listing many invalid parameters still fits well
+  # inside it. A whole response often arrives as one chunk, so the chunk
+  # itself is cut to what is left of the budget rather than copied first and
+  # cut later.
   def take_error_body(body, chunk) do
     body = body || ""
     budget = @max_error_body_bytes - byte_size(body)
@@ -85,6 +100,15 @@ defmodule Teya.SSE do
       budget <= 0 -> body
       byte_size(chunk) <= budget -> body <> chunk
       true -> body <> binary_part(chunk, 0, budget)
+    end
+  end
+
+  defp decode_body(resp) do
+    with body when is_binary(body) <- resp.body,
+         {:ok, decoded} when is_map(decoded) <- Jason.decode(body) do
+      %{resp | body: decoded}
+    else
+      _ -> resp
     end
   end
 

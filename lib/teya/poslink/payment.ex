@@ -31,6 +31,8 @@ defmodule Teya.POSLink.Payment do
 
   alias Teya.{Auth, Client, SSE}
 
+  @collector_grace_ms 500
+
   @doc """
   Creates a payment request at a terminal.
 
@@ -134,30 +136,42 @@ defmodule Teya.POSLink.Payment do
   @spec get(String.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def get(payment_request_id, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 30_000)
-    {:ok, task} = subscribe(payment_request_id, self())
-    ref = task.ref
+
+    collector =
+      Task.Supervisor.async_nolink(Teya.TaskSupervisor, fn ->
+        await_snapshot(payment_request_id, timeout)
+      end)
+
+    outcome = Task.yield(collector, timeout + @collector_grace_ms)
+    Task.shutdown(collector, :brutal_kill)
+
+    case outcome do
+      {:ok, result} -> result
+      # No answer in time, or the collector died without sending one.
+      _ -> {:error, :timeout}
+    end
+  end
+
+  # Runs in the collector task, so the stream's messages land in a mailbox of
+  # its own. Receiving them in the caller would take messages belonging to a
+  # subscribe/2 stream the caller already had open for the same payment.
+  defp await_snapshot(payment_request_id, timeout) do
+    {:ok, stream} = subscribe(payment_request_id, self())
+    ref = stream.ref
 
     result =
       receive do
-        {:poslink_payment, ^payment_request_id, _type, data} -> {:ok, data}
+        # A "diff" carries only the fields that changed, so it is not a
+        # snapshot. Leave it and wait for one.
+        {:poslink_payment, ^payment_request_id, type, data} when type != "diff" -> {:ok, data}
         {:poslink_payment_error, ^payment_request_id, reason} -> {:error, reason}
         {^ref, _} -> {:error, :no_event}
       after
         timeout -> {:error, :timeout}
       end
 
-    Task.shutdown(task, :brutal_kill)
-    flush(payment_request_id)
+    Task.shutdown(stream, :brutal_kill)
     result
-  end
-
-  defp flush(id) do
-    receive do
-      {:poslink_payment, ^id, _type, _data} -> flush(id)
-      {:poslink_payment_error, ^id, _reason} -> flush(id)
-    after
-      0 -> :ok
-    end
   end
 
   @doc """

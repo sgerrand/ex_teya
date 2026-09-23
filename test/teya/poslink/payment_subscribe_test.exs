@@ -8,6 +8,17 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
     "event: #{type}\ndata: #{Jason.encode!(data)}\n\n"
   end
 
+  defp wait_for_task_and_kill(attempts \\ 50) do
+    case Task.Supervisor.children(Teya.TaskSupervisor) do
+      [] when attempts > 0 ->
+        Process.sleep(10)
+        wait_for_task_and_kill(attempts - 1)
+
+      children ->
+        Enum.each(children, &Process.exit(&1, :kill))
+    end
+  end
+
   defp stub_payment_sse(body) do
     stub_sse(fn conn ->
       assert conn.method == "GET"
@@ -204,15 +215,31 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       refute_received {:poslink_payment, ^payment_id, _type, _data}
     end
 
-    test "discards a stream error that arrives after the snapshot" do
+    test "leaves messages belonging to another subscription alone" do
       payment_id = "pr-uuid-23"
       stub_payment_sse(sse_event("full", %{"status" => "NEW"}))
 
+      # As if subscribe/2 were already streaming this payment to the caller.
       send(self(), {:poslink_payment, payment_id, "full", %{"status" => "IN_PROGRESS"}})
-      send(self(), {:poslink_payment_error, payment_id, :closed})
+      send(self(), {:poslink_payment, payment_id, "diff", %{"status" => "SUCCESSFUL"}})
 
-      assert {:ok, %{"status" => "IN_PROGRESS"}} = Payment.get(payment_id)
-      refute_received {:poslink_payment_error, ^payment_id, _reason}
+      assert {:ok, %{"status" => "NEW"}} = Payment.get(payment_id)
+
+      assert_received {:poslink_payment, ^payment_id, "full", %{"status" => "IN_PROGRESS"}}
+      assert_received {:poslink_payment, ^payment_id, "diff", %{"status" => "SUCCESSFUL"}}
+    end
+
+    test "waits for a snapshot rather than returning a diff" do
+      payment_id = "pr-uuid-24"
+
+      body =
+        sse_event("diff", %{"status" => "IN_PROGRESS"}) <>
+          sse_event("full", %{"status" => "SUCCESSFUL", "gateway_payment_id" => "gw-1"})
+
+      stub_payment_sse(body)
+
+      assert {:ok, %{"status" => "SUCCESSFUL", "gateway_payment_id" => "gw-1"}} =
+               Payment.get(payment_id)
     end
 
     test "returns Teya.Error when the payment is not found" do
@@ -229,6 +256,23 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       stub_payment_sse("")
 
       assert {:error, :no_event} = Payment.get("pr-uuid-21")
+    end
+
+    test "returns a timeout when the collector dies without answering" do
+      payment_id = "pr-uuid-25"
+
+      stub_sse(fn conn ->
+        Process.sleep(1_000)
+        Plug.Conn.send_resp(conn, 200, "")
+      end)
+
+      caller = self()
+      spawn(fn -> send(caller, {:got, Payment.get(payment_id, timeout: 5_000)}) end)
+
+      # Kill the task waiting for the snapshot, as a supervisor shutdown would.
+      wait_for_task_and_kill()
+
+      assert_receive {:got, {:error, :timeout}}, 2_000
     end
 
     test "returns :timeout when no event arrives in time" do

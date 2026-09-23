@@ -111,7 +111,9 @@ defmodule Teya.POSLink.Payment do
 
   The POSLink API has no plain JSON endpoint for a single payment request.
   This function opens the status stream, returns the first snapshot, and then
-  closes the stream.
+  closes the stream. If the calling process dies while waiting, the stream is
+  left to close on its own, which takes until the payment ends or the SSE
+  idle timeout passes.
 
   Useful as a fallback when an SSE stream from `subscribe/2` disconnects before
   the payment reaches a terminal state — check the current status, then
@@ -131,6 +133,8 @@ defmodule Teya.POSLink.Payment do
   - `{:error, %Teya.Error{}}` — the API refused the request
   - `{:error, :timeout}` — no snapshot arrived before `:timeout` passed
   - `{:error, :no_event}` — the stream closed without sending one
+  - `{:error, :no_snapshot}` — the stream sent only partial updates and
+    closed; subscribe to it instead to follow them
   - `{:error, reason}` — the stream failed; `reason` is a transport exception
     or the exit reason of the task reading the stream
 
@@ -159,11 +163,13 @@ defmodule Teya.POSLink.Payment do
   # its own. Receiving them in the caller would take messages belonging to a
   # subscribe/2 stream the caller already had open for the same payment.
   #
-  # The stream task is linked here, not spawned through subscribe/2: killing
-  # the collector then takes the stream with it, and a stream that crashes
-  # brings the collector down so get/2 reports the reason instead of waiting
-  # out the timeout.
+  # The stream task is linked, not spawned through subscribe/2, so that a
+  # collector killed on timeout takes the stream with it instead of leaving it
+  # to hold a connection open. The collector traps exits so that a stream
+  # which crashes is reported rather than killing the collector on the spot,
+  # which could throw away a snapshot already received.
   defp await_snapshot(payment_request_id) do
+    Process.flag(:trap_exit, true)
     collector = self()
 
     stream =
@@ -171,29 +177,35 @@ defmodule Teya.POSLink.Payment do
         stream_payment(payment_request_id, collector)
       end)
 
-    ref = stream.ref
-
-    result =
-      receive do
-        # A snapshot is a "full" event, or an unnamed one: SSE calls a frame
-        # with no event line "message". A "diff" carries only the fields that
-        # changed, and a named keepalive is neither.
-        {:poslink_payment, ^payment_request_id, type, data}
-        when type in ["full", "message", nil] ->
-          {:ok, data}
-
-        {:poslink_payment_error, ^payment_request_id, reason} ->
-          {:error, reason}
-
-        {^ref, _} ->
-          {:error, :no_event}
-      end
+    result = receive_snapshot(payment_request_id, stream.ref, false)
 
     # A linked task only dies with its parent when the parent exits
-    # abnormally, so close the stream here rather than leaving it to hold a
-    # connection open until the payment ends or the SSE timeout passes.
+    # abnormally, and the collector returns normally with a snapshot.
     Task.shutdown(stream, :brutal_kill)
     result
+  end
+
+  defp receive_snapshot(payment_request_id, ref, diff_seen?) do
+    receive do
+      # A snapshot is a "full" event, or an unnamed one — a frame with no
+      # event line arrives with no name. A "diff" carries only the fields that
+      # changed, so it is not a snapshot; keep waiting, but remember it so the
+      # caller can be told a partial update was all the stream had.
+      {:poslink_payment, ^payment_request_id, type, data} when type in ["full", nil] ->
+        {:ok, data}
+
+      {:poslink_payment, ^payment_request_id, _diff, _data} ->
+        receive_snapshot(payment_request_id, ref, true)
+
+      {:poslink_payment_error, ^payment_request_id, reason} ->
+        {:error, reason}
+
+      {:EXIT, _pid, reason} when reason != :normal ->
+        {:error, reason}
+
+      {^ref, _} ->
+        if diff_seen?, do: {:error, :no_snapshot}, else: {:error, :no_event}
+    end
   end
 
   @doc """

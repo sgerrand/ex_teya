@@ -291,6 +291,7 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       assert {:ok, %{"status" => "NEW", "gateway_payment_id" => "gw-2"}} = Payment.get(payment_id)
     end
 
+    @tag :capture_log
     test "reports a crashed stream without waiting out the timeout" do
       payment_id = "pr-uuid-28"
 
@@ -300,6 +301,18 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
 
       assert {:error, _reason} = result
       assert elapsed_us < 5_000_000
+    end
+
+    test "returns :no_snapshot when the stream sends only partial updates" do
+      payment_id = "pr-uuid-31"
+
+      body =
+        sse_event("diff", %{"status" => "IN_PROGRESS"}) <>
+          sse_event("diff", %{"status" => "SUCCESSFUL"})
+
+      stub_payment_sse(body)
+
+      assert {:error, :no_snapshot} = Payment.get(payment_id)
     end
 
     test "treats an event with no name as a snapshot" do

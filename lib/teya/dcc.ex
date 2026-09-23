@@ -71,7 +71,13 @@ defmodule Teya.DCC do
   @spec quote(map()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def quote(params) do
     base_url = Application.get_env(:teya, :base_url, "https://api.teya.com")
-    req_opts = Application.get_env(:teya, :dcc_req_options, [])
+
+    req_opts =
+      Application.get_env(
+        :teya,
+        :dcc_req_options,
+        Application.get_env(:teya, :req_options, [])
+      )
 
     req =
       [

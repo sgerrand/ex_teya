@@ -21,17 +21,24 @@ defmodule Teya.Client do
   end
 
   defp normalise_headers(headers) when is_list(headers) do
-    Enum.map(headers, fn {name, value} -> {downcase(name), value} end)
+    Enum.map(headers, fn {name, value} -> {normalise_name(name), value} end)
   end
 
   defp normalise_headers(headers) when is_map(headers) do
     Enum.flat_map(headers, fn {name, value} ->
-      name = downcase(name)
+      name = normalise_name(name)
       value |> List.wrap() |> Enum.map(&{name, &1})
     end)
   end
 
-  defp downcase(name), do: name |> to_string() |> String.downcase()
+  # Match how Req names headers, or a caller's header would not line up with
+  # ours and both would be sent: an atom name has its underscores turned into
+  # dashes, so :user_agent is the "user-agent" header.
+  defp normalise_name(name) when is_atom(name) do
+    name |> Atom.to_string() |> String.replace("_", "-")
+  end
+
+  defp normalise_name(name), do: String.downcase(name)
 
   @doc """
   Makes an authenticated HTTP request to the Teya API.

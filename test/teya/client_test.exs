@@ -71,6 +71,21 @@ defmodule Teya.ClientTest do
       assert {:ok, _} = Teya.Client.request(:get, "/v1/test")
     end
 
+    test "lets a configured user-agent win when named with an atom" do
+      original = Application.get_env(:teya, :req_options)
+      Application.put_env(:teya, :req_options, original ++ [headers: [user_agent: "acme/1.0"]])
+      on_exit(fn -> Application.put_env(:teya, :req_options, original) end)
+
+      stub_api(fn conn ->
+        assert Plug.Conn.get_req_header(conn, "user-agent") == ["acme/1.0"]
+        assert Plug.Conn.get_req_header(conn, "user_agent") == []
+
+        json_response(conn, 200, %{"ok" => true})
+      end)
+
+      assert {:ok, _} = Teya.Client.request(:get, "/v1/test")
+    end
+
     test "returns error tuple on transport failure" do
       stub_api(fn conn ->
         Req.Test.transport_error(conn, :timeout)

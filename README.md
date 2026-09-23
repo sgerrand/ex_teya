@@ -416,6 +416,11 @@ config :teya, req_options: [headers: [{"user-agent", "acme-shop/1.0"}]]
 Headers set there are merged with the ones the library adds: yours wins by
 name, and the rest — including the generated `Idempotency-Key` — still go out.
 
+Token requests, SSE streams and DCC quotes fall back to `:req_options`, so the
+same setting covers them. If you set `:auth_req_options`, `:sse_req_options` or
+`:dcc_req_options`, that key is used on its own and `:req_options` is ignored
+for those requests — put your headers there too.
+
 ## Troubleshooting
 
 ### Rate limiting (`TOO_MANY_REQUESTS`)

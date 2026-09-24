@@ -73,8 +73,28 @@ defmodule Teya.WebhookTest do
       assert {:error, :malformed_signature} = Webhook.verify(@body, "not base64!", ctx.pem)
     end
 
+    test "rejects a missing signature", ctx do
+      assert {:error, :missing_signature} = Webhook.verify(@body, nil, ctx.pem)
+      assert {:error, :missing_signature} = Webhook.parse(@body, nil, ctx.pem)
+    end
+
     test "rejects an empty signature", ctx do
-      assert {:error, :invalid_signature} = Webhook.verify(@body, "", ctx.pem)
+      assert {:error, :missing_signature} = Webhook.verify(@body, "", ctx.pem)
+    end
+
+    test "rejects a signature that is not text", ctx do
+      assert {:error, :malformed_signature} = Webhook.verify(@body, 12_345, ctx.pem)
+    end
+
+    test "reports a bad key before looking at the signature" do
+      assert {:error, :malformed_key} = Webhook.verify(@body, "not base64!", "nope!")
+      assert {:error, :malformed_key} = Webhook.verify(@body, nil, "nope!")
+    end
+
+    test "accepts a key decode_key/1 has already read", ctx do
+      {:ok, key} = Webhook.decode_key(ctx.pem)
+
+      assert :ok = Webhook.verify(@body, sign(@body, ctx.private_key), key)
     end
 
     test "rejects a key that is not Base64", ctx do
@@ -107,6 +127,26 @@ defmodule Teya.WebhookTest do
         ])
 
       assert {:error, :malformed_key} = Webhook.verify(@body, sign(@body, ctx.private_key), pem)
+    end
+  end
+
+  describe "decode_key/1" do
+    test "reads a PEM key and a Base64 key to the same key", ctx do
+      assert {:ok, {:RSAPublicKey, _modulus, _exponent} = key} = Webhook.decode_key(ctx.pem)
+      assert {:ok, ^key} = Webhook.decode_key(ctx.base64_der)
+    end
+
+    test "rejects text that is not a key" do
+      assert {:error, :malformed_key} = Webhook.decode_key("nope!")
+    end
+
+    test "rejects a value that is not text" do
+      assert {:error, :malformed_key} = Webhook.decode_key(nil)
+    end
+
+    test "rejects a truncated PEM" do
+      assert {:error, :malformed_key} =
+               Webhook.decode_key("-----BEGIN PUBLIC KEY-----\nnot really\n")
     end
   end
 

@@ -4,30 +4,44 @@ defmodule Teya.Webhook do
 
   Teya signs every webhook with SHA256withRSA (RSASSA-PKCS1-v1_5 with SHA-256)
   and sends the signature, Base64 encoded, in the `x-teya-signature` header.
-  The public key comes from the webhook's settings in the Teya Business Portal.
+  The public key comes from the webhook's settings in the Teya Business Portal,
+  as PEM text or Base64. Both are accepted.
 
-  Check the signature before you trust anything in the body:
+  Decode the key once, when your application starts, so a bad key is found
+  then rather than when the first real webhook is turned away:
 
-      def handle(conn, raw_body) do
-        [signature] = Plug.Conn.get_req_header(conn, "x-teya-signature")
+      {:ok, key} = Teya.Webhook.decode_key(System.fetch_env!("TEYA_WEBHOOK_KEY"))
 
-        case Teya.Webhook.parse(raw_body, signature, public_key()) do
-          {:ok, event} -> handle_event(event)
-          {:error, reason} -> reject(reason)
-        end
+  Then check each webhook before you trust anything in it:
+
+      signature = conn |> Plug.Conn.get_req_header("x-teya-signature") |> List.first()
+
+      case Teya.Webhook.parse(conn.assigns.raw_body, signature, key) do
+        {:ok, %{"event" => "payment.succeeded.v1", "data" => data}} -> handle_payment(data)
+        {:ok, _other_event} -> :ok
+        {:error, reason} -> reject(reason)
       end
+
+  Answer an event you do not handle with a 2xx too. Anything else counts as a
+  failed delivery, and Teya sends the event again, up to six times over about
+  nine hours.
 
   ## Reading the raw body
 
-  The signature covers the bytes Teya sent, so a body that has been decoded
-  and encoded again will not match, even when the JSON means the same thing.
-  In a Plug application, keep the raw body while it is being read:
+  The signature covers the bytes Teya sent. A body that has been decoded and
+  encoded again will not match, even when the JSON means the same thing, so
+  keep the raw body while `Plug.Parsers` reads it. This reader keeps it only
+  for the webhook's path, so other requests do not carry a second copy:
 
       defmodule MyApp.RawBody do
-        def read_body(conn, opts) do
-          {:ok, body, conn} = Plug.Conn.read_body(conn, opts)
-          {:ok, body, Plug.Conn.assign(conn, :raw_body, body)}
+        def read_body(%Plug.Conn{request_path: "/webhooks/teya"} = conn, opts) do
+          case Plug.Conn.read_body(conn, opts) do
+            {:ok, body, conn} -> {:ok, body, Plug.Conn.assign(conn, :raw_body, body)}
+            other -> other
+          end
         end
+
+        def read_body(conn, opts), do: Plug.Conn.read_body(conn, opts)
       end
 
       plug Plug.Parsers,
@@ -35,45 +49,80 @@ defmodule Teya.Webhook do
         json_decoder: Jason,
         body_reader: {MyApp.RawBody, :read_body, []}
 
-  ## Keys
+  Handing anything else on, such as `{:more, ...}` for a body over the length
+  limit, leaves `Plug.Parsers` to answer it as usual.
 
-  Both the PEM text and the Base64 DER the portal shows are accepted:
+  ## Replayed webhooks
 
-      \"\"\"
-      -----BEGIN PUBLIC KEY-----
-      MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A...
-      -----END PUBLIC KEY-----
-      \"\"\"
-
-      "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A..."
+  A signature says Teya sent the body; it does not say when. Anyone who has
+  seen a signed webhook can send it again, and it will still verify. Teya
+  sends the same event more than once anyway when a delivery fails, so handle
+  each event once, keyed on `data.transaction_id`.
   """
 
   @typedoc """
   Why a webhook was not accepted.
 
+  - `:missing_signature` — there is no signature, such as when the request has
+    no `x-teya-signature` header
+  - `:malformed_signature` — the signature is not valid Base64
   - `:invalid_signature` — the signature does not match the body and key. The
     webhook did not come from Teya, or the body is not the one that was signed
-  - `:malformed_signature` — the header is not valid Base64
-  - `:malformed_key` — the key is not a public key in PEM or Base64 DER form
+  - `:malformed_key` — the key is not an RSA public key in PEM or Base64 form
   - `:malformed_body` — the body is signed by Teya but is not a JSON object
   """
-  @type error :: :invalid_signature | :malformed_signature | :malformed_key | :malformed_body
+  @type error ::
+          :missing_signature
+          | :malformed_signature
+          | :invalid_signature
+          | :malformed_key
+          | :malformed_body
+
+  @typedoc "A key as the portal shows it, or one `decode_key/1` has already read."
+  @type key :: binary() | :public_key.rsa_public_key()
+
+  @doc """
+  Reads a public key given as PEM text or Base64.
+
+  Returns `{:ok, key}` to pass to `verify/3` or `parse/3`, or
+  `{:error, :malformed_key}`. Doing this once at startup means a bad key is
+  found straight away, and the key is not read again for every webhook.
+  """
+  @spec decode_key(binary()) :: {:ok, :public_key.rsa_public_key()} | {:error, :malformed_key}
+  def decode_key(text) when is_binary(text) do
+    key =
+      if String.contains?(text, "-----BEGIN"),
+        do: from_pem(text),
+        else: from_base64(text)
+
+    case key do
+      {:RSAPublicKey, _modulus, _exponent} -> {:ok, key}
+      _ -> {:error, :malformed_key}
+    end
+  end
+
+  def decode_key(_text), do: {:error, :malformed_key}
 
   @doc """
   Checks a webhook's signature.
 
   Returns `:ok` when `signature` is Teya's signature over `raw_body`, and
   `{:error, reason}` otherwise. `raw_body` must be the bytes as received.
+  `signature` may be `nil`, as when the header is missing. The key is
+  checked first, so a bad key is reported as `:malformed_key` whatever the
+  signature holds.
+
+  A signature does not show when the webhook was sent; see
+  "Replayed webhooks" in the module docs.
 
   ## Examples
 
-      :ok = Teya.Webhook.verify(raw_body, signature, public_key)
+      :ok = Teya.Webhook.verify(raw_body, signature, key)
   """
-  @spec verify(binary(), binary(), binary()) :: :ok | {:error, error()}
-  def verify(raw_body, signature, public_key)
-      when is_binary(raw_body) and is_binary(signature) and is_binary(public_key) do
-    with {:ok, signature} <- decode_signature(signature),
-         {:ok, key} <- decode_key(public_key) do
+  @spec verify(binary(), binary() | nil, key()) :: :ok | {:error, error()}
+  def verify(raw_body, signature, key) when is_binary(raw_body) do
+    with {:ok, key} <- read_key(key),
+         {:ok, signature} <- decode_signature(signature) do
       if :public_key.verify(raw_body, :sha256, signature, key),
         do: :ok,
         else: {:error, :invalid_signature}
@@ -86,14 +135,17 @@ defmodule Teya.Webhook do
   Returns `{:ok, event}` with the decoded JSON, or `{:error, reason}`. The body
   is decoded only once the signature has been accepted.
 
+  A signature does not show when the webhook was sent; see
+  "Replayed webhooks" in the module docs.
+
   ## Examples
 
       {:ok, %{"event" => "payment.succeeded.v1", "data" => data}} =
-        Teya.Webhook.parse(raw_body, signature, public_key)
+        Teya.Webhook.parse(raw_body, signature, key)
   """
-  @spec parse(binary(), binary(), binary()) :: {:ok, map()} | {:error, error()}
-  def parse(raw_body, signature, public_key) do
-    with :ok <- verify(raw_body, signature, public_key) do
+  @spec parse(binary(), binary() | nil, key()) :: {:ok, map()} | {:error, error()}
+  def parse(raw_body, signature, key) do
+    with :ok <- verify(raw_body, signature, key) do
       case Jason.decode(raw_body) do
         {:ok, event} when is_map(event) -> {:ok, event}
         _ -> {:error, :malformed_body}
@@ -101,50 +153,50 @@ defmodule Teya.Webhook do
     end
   end
 
-  defp decode_signature(signature) do
+  defp read_key({:RSAPublicKey, _modulus, _exponent} = key), do: {:ok, key}
+  defp read_key(text), do: decode_key(text)
+
+  defp decode_signature(nil), do: {:error, :missing_signature}
+  defp decode_signature(""), do: {:error, :missing_signature}
+
+  defp decode_signature(signature) when is_binary(signature) do
     case Base.decode64(signature, ignore: :whitespace) do
       {:ok, decoded} -> {:ok, decoded}
       :error -> {:error, :malformed_signature}
     end
   end
 
-  defp decode_key(public_key) do
-    key =
-      if String.contains?(public_key, "-----BEGIN") do
-        from_pem(public_key)
-      else
-        from_base64_der(public_key)
-      end
+  defp decode_signature(_signature), do: {:error, :malformed_signature}
 
-    case key do
-      {:RSAPublicKey, _modulus, _exponent} = key -> {:ok, key}
-      _ -> {:error, :malformed_key}
-    end
-  rescue
-    # The key decoders raise on anything they cannot make sense of, and every
-    # such key is simply a key this cannot verify with.
-    _ -> {:error, :malformed_key}
-  end
-
-  defp from_pem(public_key) do
-    case :public_key.pem_decode(public_key) do
-      [entry | _] -> :public_key.pem_entry_decode(entry)
-      [] -> nil
-    end
-  end
-
-  defp from_base64_der(public_key) do
-    case Base.decode64(public_key, ignore: :whitespace) do
-      {:ok, der} -> from_der(der)
-      :error -> nil
+  defp from_pem(text) do
+    case attempt(fn -> :public_key.pem_decode(text) end) do
+      [entry | _] -> attempt(fn -> :public_key.pem_entry_decode(entry) end)
+      _ -> nil
     end
   end
 
   # The portal shows the SubjectPublicKeyInfo form, the same bytes a PEM
   # wraps. A plain RSA key is accepted too, since some tools hand that out.
-  defp from_der(der) do
-    :public_key.pem_entry_decode({:SubjectPublicKeyInfo, der, :not_encrypted})
+  defp from_base64(text) do
+    case Base.decode64(text, ignore: :whitespace) do
+      {:ok, der} ->
+        attempt(fn ->
+          :public_key.pem_entry_decode({:SubjectPublicKeyInfo, der, :not_encrypted})
+        end) ||
+          attempt(fn -> :public_key.der_decode(:RSAPublicKey, der) end)
+
+      :error ->
+        nil
+    end
+  end
+
+  # OTP's key decoders fail on input they cannot read by raising, not by
+  # returning an error, and the kind of exception depends on how the input is
+  # wrong. Only those kinds are caught; anything else is a bug, and is left
+  # to surface as one.
+  defp attempt(decode) do
+    decode.()
   rescue
-    _ -> :public_key.der_decode(:RSAPublicKey, der)
+    _error in [ArgumentError, ErlangError, FunctionClauseError, MatchError] -> nil
   end
 end

@@ -16,7 +16,7 @@ defmodule Teya.Webhook do
 
       signature = conn |> Plug.Conn.get_req_header("x-teya-signature") |> List.first()
 
-      case Teya.Webhook.parse(conn.assigns.raw_body, signature, key) do
+      case Teya.Webhook.parse(conn.assigns[:raw_body], signature, key) do
         {:ok, %{"event" => "payment.succeeded.v1", "data" => data}} -> handle_payment(data)
         {:ok, _other_event} -> :ok
         {:error, reason} -> reject(reason)
@@ -52,6 +52,10 @@ defmodule Teya.Webhook do
   Handing anything else on, such as `{:more, ...}` for a body over the length
   limit, leaves `Plug.Parsers` to answer it as usual.
 
+  Match the path your webhook really has, including any scope it is mounted
+  under. If the reader does not run for a request, there is no raw body, and
+  `parse/3` answers `{:error, :missing_body}`.
+
   ## Replayed webhooks
 
   A signature says Teya sent the body; it does not say when. Anyone who has
@@ -63,6 +67,8 @@ defmodule Teya.Webhook do
   @typedoc """
   Why a webhook was not accepted.
 
+  - `:missing_body` — there is no body to check, such as when the raw body was
+    not kept for this request
   - `:missing_signature` — there is no signature, such as when the request has
     no `x-teya-signature` header
   - `:malformed_signature` — the signature is not valid Base64
@@ -72,7 +78,8 @@ defmodule Teya.Webhook do
   - `:malformed_body` — the body is signed by Teya but is not a JSON object
   """
   @type error ::
-          :missing_signature
+          :missing_body
+          | :missing_signature
           | :malformed_signature
           | :invalid_signature
           | :malformed_key
@@ -87,6 +94,11 @@ defmodule Teya.Webhook do
   Returns `{:ok, key}` to pass to `verify/3` or `parse/3`, or
   `{:error, :malformed_key}`. Doing this once at startup means a bad key is
   found straight away, and the key is not read again for every webhook.
+
+  PEM text may hold other blocks, such as a certificate, before the key; the
+  first RSA public key is used. A PEM squashed onto one line with `\\n` in
+  place of its line breaks, as it often is in an environment variable, is read
+  too.
   """
   @spec decode_key(binary()) :: {:ok, :public_key.rsa_public_key()} | {:error, :malformed_key}
   def decode_key(text) when is_binary(text) do
@@ -95,10 +107,7 @@ defmodule Teya.Webhook do
         do: from_pem(text),
         else: from_base64(text)
 
-    case key do
-      {:RSAPublicKey, _modulus, _exponent} -> {:ok, key}
-      _ -> {:error, :malformed_key}
-    end
+    read_key(key)
   end
 
   def decode_key(_text), do: {:error, :malformed_key}
@@ -119,9 +128,10 @@ defmodule Teya.Webhook do
 
       :ok = Teya.Webhook.verify(raw_body, signature, key)
   """
-  @spec verify(binary(), binary() | nil, key()) :: :ok | {:error, error()}
-  def verify(raw_body, signature, key) when is_binary(raw_body) do
-    with {:ok, key} <- read_key(key),
+  @spec verify(binary() | nil, binary() | nil, key()) :: :ok | {:error, error()}
+  def verify(raw_body, signature, key) do
+    with {:ok, key} <- to_key(key),
+         {:ok, raw_body} <- check_body(raw_body),
          {:ok, signature} <- decode_signature(signature) do
       if :public_key.verify(raw_body, :sha256, signature, key),
         do: :ok,
@@ -143,7 +153,7 @@ defmodule Teya.Webhook do
       {:ok, %{"event" => "payment.succeeded.v1", "data" => data}} =
         Teya.Webhook.parse(raw_body, signature, key)
   """
-  @spec parse(binary(), binary() | nil, key()) :: {:ok, map()} | {:error, error()}
+  @spec parse(binary() | nil, binary() | nil, key()) :: {:ok, map()} | {:error, error()}
   def parse(raw_body, signature, key) do
     with :ok <- verify(raw_body, signature, key) do
       case Jason.decode(raw_body) do
@@ -153,25 +163,47 @@ defmodule Teya.Webhook do
     end
   end
 
-  defp read_key({:RSAPublicKey, _modulus, _exponent} = key), do: {:ok, key}
-  defp read_key(text), do: decode_key(text)
+  defp to_key(text) when is_binary(text), do: decode_key(text)
+  defp to_key(key), do: read_key(key)
+
+  # A key record built or stored by hand can hold anything, and :public_key
+  # raises on fields that are not integers rather than refusing the key.
+  defp read_key({:RSAPublicKey, modulus, exponent} = key)
+       when is_integer(modulus) and is_integer(exponent),
+       do: {:ok, key}
+
+  defp read_key(_key), do: {:error, :malformed_key}
+
+  defp check_body(raw_body) when is_binary(raw_body), do: {:ok, raw_body}
+  defp check_body(_raw_body), do: {:error, :missing_body}
 
   defp decode_signature(nil), do: {:error, :missing_signature}
   defp decode_signature(""), do: {:error, :missing_signature}
 
+  # Teya sends standard padded Base64. Unpadded or URL-safe text is read as
+  # well, since something in between may have changed it; the signature is
+  # still checked in full either way.
   defp decode_signature(signature) when is_binary(signature) do
-    case Base.decode64(signature, ignore: :whitespace) do
-      {:ok, decoded} -> {:ok, decoded}
-      :error -> {:error, :malformed_signature}
-    end
+    with :error <- Base.decode64(signature, ignore: :whitespace, padding: false),
+         :error <- Base.url_decode64(signature, ignore: :whitespace, padding: false),
+         do: {:error, :malformed_signature}
   end
 
   defp decode_signature(_signature), do: {:error, :malformed_signature}
 
   defp from_pem(text) do
+    text = String.replace(text, "\\n", "\n")
+
     case attempt(fn -> :public_key.pem_decode(text) end) do
-      [entry | _] -> attempt(fn -> :public_key.pem_entry_decode(entry) end)
-      _ -> nil
+      entries when is_list(entries) -> Enum.find_value(entries, &public_key_entry/1)
+      nil -> nil
+    end
+  end
+
+  defp public_key_entry(entry) do
+    case attempt(fn -> :public_key.pem_entry_decode(entry) end) do
+      {:RSAPublicKey, _modulus, _exponent} = key -> key
+      _other -> nil
     end
   end
 

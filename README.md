@@ -163,39 +163,24 @@ Generate a shareable payment link:
 
 ### Webhooks
 
-Teya calls your webhook URL after a successful payment and signs the request.
-Read the key once at startup, then check each webhook before you trust it:
+Teya signs every webhook it sends. Check the signature before you trust the
+body:
 
 ```elixir
 {:ok, key} = Teya.Webhook.decode_key(System.fetch_env!("TEYA_WEBHOOK_KEY"))
 
 signature = conn |> Plug.Conn.get_req_header("x-teya-signature") |> List.first()
 
-case Teya.Webhook.parse(conn.assigns.raw_body, signature, key) do
-  {:ok, %{"event" => "payment.succeeded.v1", "data" => data}} ->
-    fulfil_order(data["merchant_reference"], data["transaction_id"])
-
-  {:ok, _other_event} ->
-    :ok
-
-  {:error, reason} ->
-    Logger.warning("rejected a webhook: #{inspect(reason)}")
+case Teya.Webhook.parse(conn.assigns[:raw_body], signature, key) do
+  {:ok, %{"event" => "payment.succeeded.v1", "data" => data}} -> fulfil_order(data)
+  {:ok, _other_event} -> :ok
+  {:error, reason} -> Logger.warning("rejected a webhook: #{inspect(reason)}")
 end
 ```
 
-The key comes from the webhook's settings in the Teya Business Portal, as PEM
-text or Base64. Both are accepted.
-
-The signature covers the exact bytes Teya sent, so `raw_body` must be the body
-as received — decoding and encoding it again breaks the match. The
-`Teya.Webhook` docs show a body reader that keeps the raw body for the webhook
-route only.
-
-Answer an event you do not handle with a 2xx too. Teya treats anything else
-as a failed delivery and sends the event again, up to six times over about
-nine hours. The same event can therefore arrive more than once, and a signed
-webhook can also be replayed by anyone who has seen it, so handle each event
-once, keyed on `data.transaction_id`.
+The signature covers the exact bytes Teya sent, so the body must be kept as
+received. The `Teya.Webhook` docs show how to keep it, and cover retries and
+replayed webhooks.
 
 ### Card-Present (Direct Terminal Integration)
 

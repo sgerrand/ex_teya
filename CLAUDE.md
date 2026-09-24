@@ -19,7 +19,8 @@ mix docs              # generate ExDoc documentation
 
 Elixir client library for the [Teya Online Payments API](https://docs.teya.com/apis/online-payments/apis) and the [Teya POSLink API](https://docs.teya.com/apis/poslink/openapi.yaml), published as the `teya` Hex package. Targets Elixir `~> 1.17`.
 
-**Runtime dependencies:** `req` (HTTP + test stubs), `jason` (JSON).
+**Runtime dependencies:** `req` (HTTP + test stubs), `jason` (JSON), and OTP's
+`:public_key` (webhook signatures), listed in `extra_applications`.
 **Dev/test dependencies:** `ex_doc`, `plug` (required by `Req.Test` stubs).
 
 **Linting:** Credo (`~> 1.7`) is configured and runs on pre-push via lefthook (`mix credo --strict`). No Dialyzer. `mix format` is also enforced.

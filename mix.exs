@@ -30,7 +30,9 @@ defmodule Teya.MixProject do
 
   def application do
     [
-      extra_applications: [:logger],
+      # :public_key checks webhook signatures. It usually arrives with :ssl
+      # through the HTTP client, but that is not something to depend on.
+      extra_applications: [:logger, :public_key],
       mod: {Teya.Application, []}
     ]
   end

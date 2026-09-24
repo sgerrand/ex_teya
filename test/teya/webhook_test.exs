@@ -82,6 +82,31 @@ defmodule Teya.WebhookTest do
       assert {:error, :missing_signature} = Webhook.verify(@body, "", ctx.pem)
     end
 
+    test "rejects a missing body", ctx do
+      signature = sign(@body, ctx.private_key)
+
+      assert {:error, :missing_body} = Webhook.verify(nil, signature, ctx.pem)
+      assert {:error, :missing_body} = Webhook.parse(nil, signature, ctx.pem)
+    end
+
+    test "rejects a key record whose fields are not numbers", ctx do
+      key = {:RSAPublicKey, nil, "65537"}
+
+      assert {:error, :malformed_key} = Webhook.verify(@body, sign(@body, ctx.private_key), key)
+    end
+
+    test "accepts a signature with its padding removed", ctx do
+      signature = @body |> sign(ctx.private_key) |> String.trim_trailing("=")
+
+      assert :ok = Webhook.verify(@body, signature, ctx.pem)
+    end
+
+    test "accepts a signature in URL-safe Base64", ctx do
+      signature = @body |> :public_key.sign(:sha256, ctx.private_key) |> Base.url_encode64()
+
+      assert :ok = Webhook.verify(@body, signature, ctx.pem)
+    end
+
     test "rejects a signature that is not text", ctx do
       assert {:error, :malformed_signature} = Webhook.verify(@body, 12_345, ctx.pem)
     end
@@ -134,6 +159,22 @@ defmodule Teya.WebhookTest do
     test "reads a PEM key and a Base64 key to the same key", ctx do
       assert {:ok, {:RSAPublicKey, _modulus, _exponent} = key} = Webhook.decode_key(ctx.pem)
       assert {:ok, ^key} = Webhook.decode_key(ctx.base64_der)
+    end
+
+    test "reads a PEM squashed onto one line with escaped line breaks", ctx do
+      one_line = String.replace(ctx.pem, "\n", "\\n")
+
+      assert {:ok, {:RSAPublicKey, _modulus, _exponent}} = Webhook.decode_key(one_line)
+    end
+
+    test "finds the public key after another PEM block", ctx do
+      private =
+        :public_key.pem_encode([
+          :public_key.pem_entry_encode(:RSAPrivateKey, ctx.private_key)
+        ])
+
+      assert {:ok, {:RSAPublicKey, _modulus, _exponent}} =
+               Webhook.decode_key(private <> ctx.pem)
     end
 
     test "rejects text that is not a key" do

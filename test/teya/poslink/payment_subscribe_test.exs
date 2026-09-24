@@ -473,6 +473,23 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       assert {:ok, %{"status" => "NEW"}} = Payment.get("pr-uuid-27", timeout: :infinity)
     end
 
+    test "stops reading once the process waiting for the snapshot has died" do
+      owner = spawn(fn -> :ok end)
+      ref = Process.monitor(owner)
+      assert_receive {:DOWN, ^ref, :process, ^owner, _reason}
+
+      # With a live owner the read would carry on past the diff and return
+      # the snapshot. With nobody waiting, it stops at the diff.
+      stub_payment_sse(
+        sse_event("diff", %{"status" => "IN_PROGRESS"}) <>
+          sse_event("full", %{"status" => "SUCCESSFUL"})
+      )
+
+      url = "https://api.teya.test/poslink/v3/payment-requests/pr-uuid-37"
+
+      assert :none = Teya.SSE.first(url, "test_access_token", "full", owner)
+    end
+
     test "returns :timeout when no snapshot arrives in time" do
       stub_sse(fn conn ->
         Process.sleep(500)

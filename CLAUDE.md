@@ -44,6 +44,8 @@ lib/teya/
   refund.ex           — POST /v3/refunds
   receipt.ex          — POST /v1/transactions/{id}/receipts
   token.ex            — DELETE /v1/tokens/{id}
+  webhook.ex          — verifies the x-teya-signature on an incoming webhook
+                        (SHA256withRSA over the raw body); no HTTP of its own
   poslink/
     store.ex          — GET /poslink/v1/stores, GET /poslink/v1/stores/{id}/terminals
     payment.ex        — POST /poslink/v3/payment-requests, GET /poslink/v3/payment-requests/{id} (SSE),

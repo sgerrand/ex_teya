@@ -161,6 +161,48 @@ Generate a shareable payment link:
 {:ok, _} = Teya.Refund.create(%{"transaction_id" => transaction_id})
 ```
 
+### Webhooks
+
+Teya calls your webhook URL after a successful payment and signs the request.
+Check the signature before you trust the body:
+
+```elixir
+[signature] = Plug.Conn.get_req_header(conn, "x-teya-signature")
+
+case Teya.Webhook.parse(raw_body, signature, public_key) do
+  {:ok, %{"event" => "payment.succeeded.v1", "data" => data}} ->
+    fulfil_order(data["merchant_reference"], data["transaction_id"])
+
+  {:error, reason} ->
+    Logger.warning("rejected a webhook: #{inspect(reason)}")
+end
+```
+
+The public key comes from the webhook's settings in the Teya Business Portal,
+as PEM text or Base64. Both are accepted.
+
+`raw_body` must be the bytes Teya sent. A body that has been decoded and
+encoded again will not match, even when the JSON means the same thing, so keep
+the raw body while `Plug.Parsers` reads it:
+
+```elixir
+defmodule MyApp.RawBody do
+  def read_body(conn, opts) do
+    {:ok, body, conn} = Plug.Conn.read_body(conn, opts)
+    {:ok, body, Plug.Conn.assign(conn, :raw_body, body)}
+  end
+end
+
+plug Plug.Parsers,
+  parsers: [:json],
+  json_decoder: Jason,
+  body_reader: {MyApp.RawBody, :read_body, []}
+```
+
+Teya retries a webhook up to six times over about nine hours until your
+endpoint answers with a 2xx, so the same event can arrive more than once. Use
+`data.transaction_id` to skip an event you have already handled.
+
 ### Card-Present (Direct Terminal Integration)
 
 Process a payment where your software supplies the raw card data from a POS

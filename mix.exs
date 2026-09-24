@@ -71,7 +71,8 @@ defmodule Teya.MixProject do
           Teya.Capture,
           Teya.Refund,
           Teya.Receipt,
-          Teya.Token
+          Teya.Token,
+          Teya.Webhook
         ],
         "Payments Gateway": [
           Teya.CardPresent,

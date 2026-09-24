@@ -89,6 +89,17 @@ defmodule Teya.WebhookTest do
       assert {:error, :missing_body} = Webhook.parse(nil, signature, ctx.pem)
     end
 
+    test "accepts a body kept as a list of chunks", ctx do
+      [first, second] = [binary_part(@body, 0, 10), binary_part(@body, 10, byte_size(@body) - 10)]
+
+      assert :ok = Webhook.verify([first, second], sign(@body, ctx.private_key), ctx.pem)
+    end
+
+    test "rejects a list that is not a body", ctx do
+      assert {:error, :missing_body} =
+               Webhook.verify([:not, :bytes], sign(@body, ctx.private_key), ctx.pem)
+    end
+
     test "rejects a key record whose fields are not numbers", ctx do
       key = {:RSAPublicKey, nil, "65537"}
 
@@ -165,6 +176,28 @@ defmodule Teya.WebhookTest do
       one_line = String.replace(ctx.pem, "\n", "\\n")
 
       assert {:ok, {:RSAPublicKey, _modulus, _exponent}} = Webhook.decode_key(one_line)
+    end
+
+    test "reads a PEM squashed onto one line with escaped Windows line breaks", ctx do
+      one_line = String.replace(ctx.pem, "\n", "\\r\\n")
+
+      assert {:ok, {:RSAPublicKey, _modulus, _exponent}} = Webhook.decode_key(one_line)
+    end
+
+    test "reads a Base64 key that has lost its padding" do
+      # A 2048-bit key with the usual exponent encodes without padding, so use
+      # a size whose encoding needs it.
+      {:RSAPrivateKey, _v, modulus, exponent, _, _, _, _, _, _, _} =
+        :public_key.generate_key({:rsa, 1536, 65_537})
+
+      {:SubjectPublicKeyInfo, der, :not_encrypted} =
+        :public_key.pem_entry_encode(:SubjectPublicKeyInfo, {:RSAPublicKey, modulus, exponent})
+
+      padded = Base.encode64(der)
+      unpadded = String.trim_trailing(padded, "=")
+
+      assert unpadded != padded
+      assert {:ok, {:RSAPublicKey, ^modulus, ^exponent}} = Webhook.decode_key(unpadded)
     end
 
     test "finds the public key after another PEM block", ctx do

@@ -166,9 +166,21 @@ Generate a shareable payment link:
 Teya signs every webhook it sends. Check the signature before you trust the
 body:
 
-```elixir
-{:ok, key} = Teya.Webhook.decode_key(System.fetch_env!("TEYA_WEBHOOK_KEY"))
+Read the key once, when your application starts, so a bad key stops it there
+rather than turning away every webhook:
 
+```elixir
+# in MyApp.Application.start/2
+{:ok, key} = Teya.Webhook.decode_key(System.fetch_env!("TEYA_WEBHOOK_KEY"))
+:persistent_term.put(:teya_webhook_key, key)
+```
+
+Then check each webhook in its handler:
+
+```elixir
+require Logger
+
+key = :persistent_term.get(:teya_webhook_key)
 signature = conn |> Plug.Conn.get_req_header("x-teya-signature") |> List.first()
 
 case Teya.Webhook.parse(conn.assigns[:raw_body], signature, key) do

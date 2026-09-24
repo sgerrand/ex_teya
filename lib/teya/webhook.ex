@@ -61,7 +61,9 @@ defmodule Teya.Webhook do
   A signature says Teya sent the body; it does not say when. Anyone who has
   seen a signed webhook can send it again, and it will still verify. Teya
   sends the same event more than once anyway when a delivery fails, so handle
-  each event once, keyed on `data.transaction_id`.
+  each event once, keyed on its `event` name together with
+  `data.transaction_id`. The transaction id alone is not enough: one
+  transaction can lead to more than one kind of event.
   """
 
   @typedoc """
@@ -95,10 +97,11 @@ defmodule Teya.Webhook do
   `{:error, :malformed_key}`. Doing this once at startup means a bad key is
   found straight away, and the key is not read again for every webhook.
 
-  PEM text may hold other blocks, such as a certificate, before the key; the
-  first RSA public key is used. A PEM squashed onto one line with `\\n` in
-  place of its line breaks, as it often is in an environment variable, is read
-  too.
+  PEM text may hold other blocks before the key; the first RSA public key
+  block is used. A certificate is not read for the key inside it, so pass the
+  public key the portal shows. A PEM squashed onto one line with `\\n` or
+  `\\r\\n` in place of its line breaks, as it often is in an environment
+  variable, is read too, as is Base64 that has lost its padding.
   """
   @spec decode_key(binary()) :: {:ok, :public_key.rsa_public_key()} | {:error, :malformed_key}
   def decode_key(text) when is_binary(text) do
@@ -175,6 +178,14 @@ defmodule Teya.Webhook do
   defp read_key(_key), do: {:error, :malformed_key}
 
   defp check_body(raw_body) when is_binary(raw_body), do: {:ok, raw_body}
+
+  # A body reader that gathers chunks may keep them as a list.
+  defp check_body(raw_body) when is_list(raw_body) do
+    {:ok, IO.iodata_to_binary(raw_body)}
+  rescue
+    ArgumentError -> {:error, :missing_body}
+  end
+
   defp check_body(_raw_body), do: {:error, :missing_body}
 
   defp decode_signature(nil), do: {:error, :missing_signature}
@@ -192,7 +203,7 @@ defmodule Teya.Webhook do
   defp decode_signature(_signature), do: {:error, :malformed_signature}
 
   defp from_pem(text) do
-    text = String.replace(text, "\\n", "\n")
+    text = String.replace(text, ["\\r\\n", "\\n"], "\n")
 
     case attempt(fn -> :public_key.pem_decode(text) end) do
       entries when is_list(entries) -> Enum.find_value(entries, &public_key_entry/1)
@@ -210,7 +221,7 @@ defmodule Teya.Webhook do
   # The portal shows the SubjectPublicKeyInfo form, the same bytes a PEM
   # wraps. A plain RSA key is accepted too, since some tools hand that out.
   defp from_base64(text) do
-    case Base.decode64(text, ignore: :whitespace) do
+    case Base.decode64(text, ignore: :whitespace, padding: false) do
       {:ok, der} ->
         attempt(fn ->
           :public_key.pem_entry_decode({:SubjectPublicKeyInfo, der, :not_encrypted})
@@ -224,8 +235,10 @@ defmodule Teya.Webhook do
 
   # OTP's key decoders fail on input they cannot read by raising, not by
   # returning an error, and the kind of exception depends on how the input is
-  # wrong. Only those kinds are caught; anything else is a bug, and is left
-  # to surface as one.
+  # wrong. These are the kinds they raise. ErlangError is broad — it is what
+  # any Erlang error without a closer Elixir match becomes, which covers the
+  # decoders' own ASN.1 errors — so a bug that shows up as one is reported as
+  # a malformed key too. Anything outside these kinds surfaces as a bug.
   defp attempt(decode) do
     decode.()
   rescue

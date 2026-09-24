@@ -62,8 +62,8 @@ defmodule Teya.POSLink.Payment do
   ## Examples
 
       params = %{
-        "store_id"         => store_id,
-        "terminal_id"      => terminal_id,
+        "store_id"           => store_id,
+        "terminal_id"        => terminal_id,
         "requested_amount"   => %{"amount" => 1000, "currency" => "GBP"},
         "transaction_type"   => "SALE",
         "merchant_reference" => "order-1234"
@@ -110,8 +110,13 @@ defmodule Teya.POSLink.Payment do
   Fetches the current state of a single payment request or refund by its ID.
 
   The POSLink API has no plain JSON endpoint for a single payment request.
-  This function opens the status stream, returns the first snapshot, and then
-  closes the stream.
+  This function opens the status stream in a task of its own, reads it up to
+  the first full snapshot, and closes it there. The stream's events never
+  reach the calling process, so a `subscribe/2` stream it already has open for
+  the same payment is left alone.
+
+  If the calling process dies while waiting, the task stops reading at the
+  next event the stream sends.
 
   Useful as a fallback when an SSE stream from `subscribe/2` disconnects before
   the payment reaches a terminal state — check the current status, then
@@ -123,8 +128,20 @@ defmodule Teya.POSLink.Payment do
 
   ## Options
 
-  - `:timeout` — milliseconds to wait for the snapshot (default `30_000`);
-    returns `{:error, :timeout}` when it runs out
+  - `:timeout` — milliseconds to wait for the snapshot (default `30_000`).
+    `:infinity` waits for as long as the stream stays open without one, which
+    for a stream that sends only partial updates can be the life of the
+    payment
+
+  ## Errors
+
+  - `{:error, %Teya.Error{}}` — the API refused the request
+  - `{:error, :timeout}` — no snapshot arrived before `:timeout` passed
+  - `{:error, :no_snapshot}` — the stream closed without sending a full
+    snapshot, for example after only partial updates; subscribe to it instead
+  - `{:error, {:exit, reason}}` — the task reading the stream crashed
+  - `{:error, reason}` — any other failure, such as a `Req.TransportError` or
+    the token request failing
 
   ## Examples
 
@@ -134,29 +151,32 @@ defmodule Teya.POSLink.Payment do
   @spec get(String.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def get(payment_request_id, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 30_000)
-    {:ok, task} = subscribe(payment_request_id, self())
-    ref = task.ref
 
-    result =
-      receive do
-        {:poslink_payment, ^payment_request_id, _type, data} -> {:ok, data}
-        {:poslink_payment_error, ^payment_request_id, reason} -> {:error, reason}
-        {^ref, _} -> {:error, :no_event}
-      after
-        timeout -> {:error, :timeout}
-      end
+    caller = self()
 
-    Task.shutdown(task, :brutal_kill)
-    flush(payment_request_id)
-    result
+    task =
+      Task.Supervisor.async_nolink(Teya.TaskSupervisor, fn ->
+        fetch_snapshot(payment_request_id, caller)
+      end)
+
+    case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
+      {:ok, result} -> result
+      {:exit, reason} -> {:error, {:exit, reason}}
+      nil -> {:error, :timeout}
+    end
   end
 
-  defp flush(id) do
-    receive do
-      {:poslink_payment, ^id, _type, _data} -> flush(id)
-      {:poslink_payment_error, ^id, _reason} -> flush(id)
-    after
-      0 -> :ok
+  # The snapshot comes back as the task's result rather than as a message, so
+  # nothing from this stream can mix with a subscribe/2 stream's messages.
+  # Only a "full" event is a snapshot: a "diff" carries just the fields that
+  # changed, and returning one as the payment would leave out identifiers the
+  # caller needs, such as gateway_payment_id for a refund.
+  defp fetch_snapshot(id, caller) do
+    with {:ok, token} <- Auth.token() do
+      case SSE.first(stream_url(id), token, "full", caller) do
+        :none -> {:error, :no_snapshot}
+        result -> result
+      end
     end
   end
 
@@ -202,7 +222,9 @@ defmodule Teya.POSLink.Payment do
     - `event_type` is `"full"` (complete snapshot) or `"diff"` (partial update)
     - `data` is the decoded JSON map (e.g. `%{"status" => "SUCCESSFUL", ...}`)
   - `{:poslink_payment_error, id, reason}` — the stream ended with an error;
-    `reason` is a `%Teya.Error{}`, a transport exception, or `:stream_timeout`
+    `reason` is a `%Teya.Error{}`, a transport exception such as
+    `%Req.TransportError{reason: :timeout}` when no event arrives within
+    `:sse_stream_timeout_ms`, or the reason the token request failed
 
   The task exits normally when the server closes the stream (terminal payment
   state reached) or with an error tuple when the connection fails.
@@ -239,20 +261,15 @@ defmodule Teya.POSLink.Payment do
   defp stream_payment(id, pid) do
     case Auth.token() do
       {:ok, token} ->
-        base_url = Application.get_env(:teya, :base_url, "https://api.teya.com")
-        url = base_url <> "/poslink/v3/payment-requests/#{id}"
-
-        req_opts =
-          Application.get_env(
-            :teya,
-            :sse_req_options,
-            Application.get_env(:teya, :req_options, [])
-          )
-
-        SSE.stream(url, token, id, :poslink_payment, :poslink_payment_error, pid, req_opts)
+        SSE.stream(stream_url(id), token, id, :poslink_payment, :poslink_payment_error, pid)
 
       {:error, reason} ->
         send(pid, {:poslink_payment_error, id, reason})
     end
+  end
+
+  defp stream_url(id) do
+    Application.get_env(:teya, :base_url, "https://api.teya.com") <>
+      "/poslink/v3/payment-requests/#{id}"
   end
 end

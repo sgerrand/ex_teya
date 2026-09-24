@@ -36,7 +36,9 @@ lib/teya/
   auth.ex             — GenServer: lazy token fetch, cache, proactive refresh
   client.ex           — HTTP layer: calls Auth.token/0, adds Bearer header,
                         auto-generates Idempotency-Key on POST/PATCH
-  sse.ex              — SSE frame parser (parse/1) + shared stream helper (stream/7)
+  sse.ex              — SSE helpers: stream/6 sends each event to a process,
+                        first/4 returns the first event of a given name;
+                        frames are decoded by the req_server_sent_events plugin
   checkout.ex         — POST/GET /v2/checkout/sessions
   transaction.ex      — POST/GET /v3/transactions/online
   pay_by_link.ex      — POST/GET/PATCH /v2/payment-links
@@ -64,9 +66,16 @@ messages to the caller:
 - `{:poslink_payment, id, event_type, data}` / `{:poslink_payment_error, id, reason}`
 - `{:poslink_receipt, id, event_type, data}` / `{:poslink_receipt_error, id, reason}`
 
-SSE bytes are parsed by `Teya.SSE.parse/1`, which accumulates a buffer across
-chunks and emits complete events. `event_type` is `"full"` (complete snapshot)
-or `"diff"` (partial update). `data` is a decoded JSON map.
+SSE bytes are decoded by the `req_server_sent_events` plugin, which both
+`Teya.SSE.stream/6` and `Teya.SSE.first/4` attach. They read their request
+options from `:sse_req_options`, falling back to `:req_options`. `event_type` is `"full"` (complete snapshot) or
+`"diff"` (partial update), and is `nil` for a frame with no event line. `data`
+is a decoded JSON map.
+
+`Payment.get/2` does not use messages. It runs `Teya.SSE.first/4` in a task of
+its own, whose `into:` handler halts on the first `"full"` event and hands the
+data back as the task's result. Nothing reaches the caller's mailbox, so it
+cannot mix with a `subscribe/2` stream for the same payment.
 
 ## Testing
 
@@ -97,7 +106,16 @@ reporter (used in CI to produce the file uploaded to Coveralls) does not, so CI
 runs `mix coveralls` as a separate step to fail the build on a coverage drop.
 The same command runs on pre-push via lefthook.
 
-`Task.Supervisor.async_nolink` propagates `$callers` to spawned tasks, so `Req.Test` stubs set in the test process are automatically accessible from the task without explicit `allow` calls.
+`Task.Supervisor.async_nolink` propagates `$callers` to spawned tasks, so `Req.Test` stubs set in the test process are automatically accessible from the task without explicit `allow` calls. `Task.start/1` does too; plain `spawn/1` does not.
+
+`Req.Test` delivers the whole response only once the stub plug returns, even
+for `Plug.Conn.send_chunked/2` plus `Plug.Conn.chunk/2`. A stubbed SSE stream
+therefore cannot stay open while the test inspects state: every event arrives
+at once, and the stream task always ends on its own. Behaviour that depends on
+a still-open stream — such as `Teya.SSE.first/4` stopping the read once it has
+the event — cannot be observed through a stub. What can be observed is which
+event it returns, so test that instead: two `"full"` events, and the first one
+must win.
 
 ### Auth failure and retry behaviour
 

@@ -3,10 +3,17 @@ defmodule Teya.SSE do
   SSE streaming helper for Teya POSLink streaming endpoints.
 
   Wraps `Req` with the `req_server_sent_events` plugin to decode the byte
-  stream into events. JSON-decodes the `data` field of each event and forwards
-  decoded maps to the caller process as `{ok_tag, id, event_type, data}`
-  messages. Non-200 responses and transport errors are forwarded as
-  `{error_tag, id, reason}`.
+  stream into events, and JSON-decodes the `data` field of each one. There are
+  two ways to read a stream:
+
+  - `stream/6` follows it to the end and sends each event to a process as
+    `{ok_tag, id, event_type, data}`. Non-200 responses and transport errors
+    are sent as `{error_tag, id, reason}`.
+  - `first/4` sends nothing. It reads up to the first event with a given name,
+    closes the stream there, and returns that event's data.
+
+  Requests use `:sse_req_options` from the application config, falling back
+  to `:req_options`.
 
   An error response is not an event stream, so its body is collected as raw
   bytes and decoded here, which keeps the `code` and `message` the API sent in
@@ -23,32 +30,20 @@ defmodule Teya.SSE do
 
   @default_max_error_body_bytes 65_536
 
-  @doc false
-  def stream(url, token, id, ok_tag, error_tag, pid, req_opts \\ []) do
-    timeout_ms = Application.get_env(:teya, :sse_stream_timeout_ms, 60_000)
+  # Payment and receipt events are a few hundred bytes. A megabyte is far past
+  # anything real while still bounding what a runaway body can hold.
+  @max_frame_bytes 1_048_576
 
+  @doc false
+  def stream(url, token, id, ok_tag, error_tag, pid) do
+    # Only a 200 response reaches this handler: collect_error_body/1 keeps
+    # every other status's bytes for the error instead.
     handler = fn {:sse_event, %Frame{} = frame}, {req, resp} ->
-      if resp.status == 200, do: forward_frame(frame, id, ok_tag, pid)
+      with {event, data} <- decode_frame(frame), do: send(pid, {ok_tag, id, event, data})
       {:cont, {req, resp}}
     end
 
-    req =
-      req_opts
-      |> Keyword.merge(
-        url: url,
-        auth: {:bearer, token},
-        into: handler,
-        # An error body that ran past the cap is cut short, and Req's decoder
-        # answers broken JSON with an exception in place of the response,
-        # taking the status with it. Decode it here instead.
-        decode_body: false,
-        receive_timeout: timeout_ms
-      )
-      |> Req.new()
-      |> ReqServerSentEvents.attach()
-      |> collect_error_body()
-
-    case Req.get(req) do
+    case url |> request(token, handler) |> run() do
       {:ok, %{status: 200}} ->
         :ok
 
@@ -58,6 +53,88 @@ defmodule Teya.SSE do
       {:error, reason} ->
         send(pid, {error_tag, id, reason})
     end
+  end
+
+  @doc false
+  # Reads the stream until the first event named `event_type`, closes it
+  # there, and returns that event's data. Nothing is sent to any process, so
+  # no mailbox ever sees the stream.
+  #
+  # `owner` is the process waiting for the answer. Once it has died, the read
+  # stops at the next event rather than holding a connection open for nobody,
+  # which could otherwise last as long as the payment if no such event came.
+  #
+  # Returns `{:ok, data}`, `:none` when the stream closed without such an
+  # event, or `{:error, reason}`.
+  def first(url, token, event_type, owner) do
+    handler = fn {:sse_event, %Frame{} = frame}, acc ->
+      take_first(frame, event_type, owner, acc)
+    end
+
+    case url |> request(token, handler) |> run() do
+      {:ok, %{status: 200} = resp} ->
+        case Req.Response.get_private(resp, :sse_first) do
+          nil -> :none
+          data -> {:ok, data}
+        end
+
+      {:ok, resp} ->
+        {:error, resp |> decode_body() |> Error.from_response()}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  # Only a frame with the name asked for is decoded; the rest are passed over
+  # without the cost of reading their JSON.
+  defp take_first(%Frame{event: event_type} = frame, event_type, owner, {req, resp}) do
+    case decode_frame(frame) do
+      {_event, data} -> {:halt, {req, Req.Response.put_private(resp, :sse_first, data)}}
+      nil -> keep_reading?(owner, {req, resp})
+    end
+  end
+
+  defp take_first(_frame, _event_type, owner, acc), do: keep_reading?(owner, acc)
+
+  defp keep_reading?(owner, {req, resp}) do
+    if Process.alive?(owner), do: {:cont, {req, resp}}, else: {:halt, {req, resp}}
+  end
+
+  defp request(url, token, handler) do
+    configured =
+      Application.get_env(:teya, :sse_req_options, Application.get_env(:teya, :req_options, []))
+
+    # Req retries a failed GET by default, which for a stream means opening it
+    # again without a word: the reader never learns the connection dropped,
+    # and the new stream replays its snapshot. Readers are told of a dropped
+    # stream and reconnect themselves, so retrying is off unless configured.
+    [retry: false]
+    |> Keyword.merge(configured)
+    |> Keyword.merge(
+      url: url,
+      auth: {:bearer, token},
+      into: handler,
+      # An error body that ran past the cap is cut short, and Req's decoder
+      # answers broken JSON with an exception in place of the response,
+      # taking the status with it. Decode it here instead.
+      decode_body: false,
+      receive_timeout: Application.get_env(:teya, :sse_stream_timeout_ms, 60_000)
+    )
+    |> Req.new()
+    # A 200 body with no frame delimiter — a proxy's HTML page, say — would
+    # otherwise sit in the plugin's buffer and grow until the body ends.
+    |> ReqServerSentEvents.attach(max_frame_size: @max_frame_bytes)
+    |> collect_error_body()
+  end
+
+  # The plugin raises when a frame outgrows its buffer. Raised inside a stream
+  # task, that would end the task without telling the reader anything, so it
+  # is turned into an error like any other.
+  defp run(req) do
+    Req.get(req)
+  rescue
+    error in ReqServerSentEvents.FrameTooLargeError -> {:error, error}
   end
 
   # The SSE plugin decodes every chunk as event-stream bytes, which drops the
@@ -143,12 +220,14 @@ defmodule Teya.SSE do
     end
   end
 
-  defp forward_frame(%Frame{data: nil}, _id, _ok_tag, _pid), do: :ok
+  # A frame with no data, such as a keepalive, or data that is not a JSON
+  # object, carries nothing to pass on.
+  defp decode_frame(%Frame{data: nil}), do: nil
 
-  defp forward_frame(%Frame{data: data, event: event}, id, ok_tag, pid) do
+  defp decode_frame(%Frame{data: data, event: event}) do
     case Jason.decode(data) do
-      {:ok, decoded} when is_map(decoded) -> send(pid, {ok_tag, id, event, decoded})
-      _ -> :ok
+      {:ok, decoded} when is_map(decoded) -> {event, decoded}
+      _ -> nil
     end
   end
 end

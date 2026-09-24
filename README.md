@@ -262,8 +262,8 @@ Events arrive as messages to the calling process:
 
 ```elixir
 params = %{
-  "store_id"         => store_id,
-  "terminal_id"      => terminal_id,
+  "store_id"           => store_id,
+  "terminal_id"        => terminal_id,
   "requested_amount"   => %{"amount" => 1000, "currency" => "GBP"},
   "transaction_type"   => "SALE",
   "merchant_reference" => "order-1234"

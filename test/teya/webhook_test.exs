@@ -290,6 +290,34 @@ defmodule Teya.WebhookTest do
       assert {:ok, {:RSAPublicKey, _modulus, _exponent}} = Webhook.decode_key(ec_pem <> ctx.pem)
     end
 
+    test "rejects a key whose algorithm it does not know, without raising" do
+      # A SubjectPublicKeyInfo naming the made-up algorithm 1.2.3.4.
+      unknown = <<0x30, 0x0B, 0x30, 0x05, 0x06, 0x03, 0x2A, 0x03, 0x04, 0x03, 0x02, 0x00, 0x01>>
+
+      assert {:error, :malformed_key} = Webhook.decode_key(Base.encode64(unknown))
+    end
+
+    test "passes over a key block it cannot read to find the RSA key after it", ctx do
+      unknown = <<0x30, 0x0B, 0x30, 0x05, 0x06, 0x03, 0x2A, 0x03, 0x04, 0x03, 0x02, 0x00, 0x01>>
+      block = "-----BEGIN PUBLIC KEY-----\n#{Base.encode64(unknown)}\n-----END PUBLIC KEY-----\n"
+
+      assert {:ok, {:RSAPublicKey, _modulus, _exponent}} = Webhook.decode_key(block <> ctx.pem)
+    end
+
+    test "rejects an RSA-PSS key, which may not check these signatures", ctx do
+      {:ok, rsa_key} = Webhook.decode_key(ctx.pem)
+      key_der = :public_key.der_encode(:RSAPublicKey, rsa_key)
+      rsassa_pss = {1, 2, 840, 113_549, 1, 1, 10}
+
+      pss =
+        :public_key.der_encode(
+          :SubjectPublicKeyInfo,
+          {:SubjectPublicKeyInfo, {:AlgorithmIdentifier, rsassa_pss, :asn1_NOVALUE}, key_der}
+        )
+
+      assert {:error, :malformed_key} = Webhook.decode_key(Base.encode64(pss))
+    end
+
     test "reads a key in URL-safe Base64", ctx do
       url_safe = ctx.base64_der |> Base.decode64!() |> Base.url_encode64()
 

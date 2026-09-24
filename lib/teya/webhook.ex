@@ -65,6 +65,10 @@ defmodule Teya.Webhook do
   carries — `data.transaction_id` for `payment.succeeded.v1`. The id alone is
   not enough, since one transaction can lead to more than one kind of event,
   and check each new event type for which id it carries before relying on it.
+
+  Do not key on the signature header. The signature is read leniently —
+  with or without padding, standard or URL-safe — so many different strings
+  verify as the same signature, and a replayed webhook can carry any of them.
   """
 
   @typedoc """
@@ -218,9 +222,10 @@ defmodule Teya.Webhook do
     if String.trim(signature) == "" do
       {:error, :missing_signature}
     else
-      with :error <- Base.decode64(signature, ignore: :whitespace, padding: false),
-           :error <- Base.url_decode64(signature, ignore: :whitespace, padding: false),
-           do: {:error, :malformed_signature}
+      case base64(signature) do
+        nil -> {:error, :malformed_signature}
+        decoded -> {:ok, decoded}
+      end
     end
   end
 
@@ -240,7 +245,7 @@ defmodule Teya.Webhook do
 
   defp unquote_key(<<quote, rest::binary>> = text) when quote in [?", ?'] do
     if String.ends_with?(rest, <<quote>>),
-      do: String.slice(rest, 0..-2//1),
+      do: binary_part(rest, 0, byte_size(rest) - 1),
       else: text
   end
 
@@ -255,16 +260,11 @@ defmodule Teya.Webhook do
     @pem_block
     |> Regex.scan(text, capture: :all_but_first)
     |> Enum.find_value(fn
-      ["PUBLIC KEY", body] -> rsa_only(spki(base64(body)))
+      ["PUBLIC KEY", body] -> spki(base64(body))
       ["RSA PUBLIC KEY", body] -> pkcs1(base64(body))
       _other_block -> nil
     end)
   end
-
-  # A PUBLIC KEY block can hold any kind of key. Pass over one that is not RSA,
-  # such as an EC key, so an RSA key after it is still found.
-  defp rsa_only({:RSAPublicKey, _modulus, _exponent} = key), do: key
-  defp rsa_only(_other), do: nil
 
   # The portal shows the SubjectPublicKeyInfo form, the same bytes a PEM
   # wraps. A plain RSA key is accepted too, since some tools hand that out.
@@ -281,22 +281,38 @@ defmodule Teya.Webhook do
     end
   end
 
+  # A SubjectPublicKeyInfo can hold any kind of key. Read its outer layer as
+  # plain ASN.1 and decode the key inside only when the algorithm is plain RSA
+  # (rsaEncryption). Anything else is passed over: an EC key, so an RSA key
+  # after it is still found, and an RSA-PSS key, which may not be used for the
+  # PKCS#1 v1.5 signatures Teya sends. This also steers clear of the
+  # certificate-handling code in :public_key, which raises on an algorithm it
+  # does not know.
+  @rsa_encryption {1, 2, 840, 113_549, 1, 1, 1}
+
   defp spki(nil), do: nil
 
   defp spki(der) do
-    attempt(fn -> :public_key.pem_entry_decode({:SubjectPublicKeyInfo, der, :not_encrypted}) end)
+    case attempt(fn -> :public_key.der_decode(:SubjectPublicKeyInfo, der) end) do
+      {:SubjectPublicKeyInfo, {:AlgorithmIdentifier, @rsa_encryption, _params}, key_der} ->
+        pkcs1(key_der)
+
+      _other ->
+        nil
+    end
   end
 
   defp pkcs1(nil), do: nil
   defp pkcs1(der), do: attempt(fn -> :public_key.der_decode(:RSAPublicKey, der) end)
 
-  # OTP's DER decoders fail on bytes they cannot read by raising MatchError
-  # rather than returning an error. Only that is caught: anything else, such
-  # as :public_key being unavailable, surfaces as the fault it is instead of
-  # being reported as a bad key.
+  # :public_key.der_decode/2 fails on bytes it cannot read by raising rather
+  # than returning an error: MatchError for most damage, and FunctionClauseError
+  # from der_decode itself for some. Each call this wraps is a single
+  # der_decode, so these can only come from reading the bytes. Anything else,
+  # such as :public_key being unavailable, surfaces as the fault it is.
   defp attempt(decode) do
     decode.()
   rescue
-    MatchError -> nil
+    _error in [MatchError, FunctionClauseError] -> nil
   end
 end

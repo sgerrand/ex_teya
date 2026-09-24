@@ -80,6 +80,7 @@ defmodule Teya.WebhookTest do
 
     test "rejects an empty signature", ctx do
       assert {:error, :missing_signature} = Webhook.verify(@body, "", ctx.pem)
+      assert {:error, :missing_signature} = Webhook.verify(@body, "   ", ctx.pem)
     end
 
     test "rejects a missing body", ctx do
@@ -93,6 +94,14 @@ defmodule Teya.WebhookTest do
       [first, second] = [binary_part(@body, 0, 10), binary_part(@body, 10, byte_size(@body) - 10)]
 
       assert :ok = Webhook.verify([first, second], sign(@body, ctx.private_key), ctx.pem)
+    end
+
+    test "decodes a body kept as a list of chunks", ctx do
+      signature = sign(@body, ctx.private_key)
+      chunks = [binary_part(@body, 0, 10), binary_part(@body, 10, byte_size(@body) - 10)]
+
+      assert {:ok, %{"event" => "payment.succeeded.v1"}} =
+               Webhook.parse(chunks, signature, ctx.pem)
     end
 
     test "rejects a list that is not a body", ctx do
@@ -185,10 +194,10 @@ defmodule Teya.WebhookTest do
     end
 
     test "reads a Base64 key that has lost its padding" do
-      # A 2048-bit key with the usual exponent encodes without padding, so use
-      # a size whose encoding needs it.
+      # A 2048-bit key with the usual exponent encodes without padding. The
+      # smallest exponent makes the encoding one byte shorter, which needs it.
       {:RSAPrivateKey, _v, modulus, exponent, _, _, _, _, _, _, _} =
-        :public_key.generate_key({:rsa, 1536, 65_537})
+        :public_key.generate_key({:rsa, 2048, 3})
 
       {:SubjectPublicKeyInfo, der, :not_encrypted} =
         :public_key.pem_entry_encode(:SubjectPublicKeyInfo, {:RSAPublicKey, modulus, exponent})
@@ -208,6 +217,57 @@ defmodule Teya.WebhookTest do
 
       assert {:ok, {:RSAPublicKey, _modulus, _exponent}} =
                Webhook.decode_key(private <> ctx.pem)
+    end
+
+    test "reads a Base64 key squashed onto one line with escaped line breaks", ctx do
+      wrapped = ctx.base64_der |> String.graphemes() |> Enum.chunk_every(64) |> Enum.join("\\n")
+
+      assert {:ok, {:RSAPublicKey, _modulus, _exponent}} = Webhook.decode_key(wrapped)
+    end
+
+    test "reads a PEM still wrapped in its quotes", ctx do
+      assert {:ok, {:RSAPublicKey, _modulus, _exponent}} = Webhook.decode_key(~s("#{ctx.pem}"))
+      assert {:ok, {:RSAPublicKey, _modulus, _exponent}} = Webhook.decode_key("'#{ctx.pem}'")
+    end
+
+    test "leaves an unmatched quote alone and still finds the key", ctx do
+      assert {:ok, {:RSAPublicKey, _modulus, _exponent}} = Webhook.decode_key(~s("#{ctx.pem}))
+    end
+
+    test "reads a PEM whose line breaks were flattened to spaces", ctx do
+      flattened = String.replace(ctx.pem, "\n", " ")
+
+      assert {:ok, {:RSAPublicKey, _modulus, _exponent}} = Webhook.decode_key(flattened)
+    end
+
+    test "reads an RSA PUBLIC KEY block", ctx do
+      {:ok, key} = Webhook.decode_key(ctx.pem)
+      pem = :public_key.pem_encode([:public_key.pem_entry_encode(:RSAPublicKey, key)])
+
+      assert pem =~ "BEGIN RSA PUBLIC KEY"
+      assert {:ok, ^key} = Webhook.decode_key(pem)
+    end
+
+    test "rejects a key too small to be real" do
+      tiny = :public_key.der_encode(:RSAPublicKey, {:RSAPublicKey, 5, 3})
+
+      assert {:error, :malformed_key} = Webhook.decode_key(Base.encode64(tiny))
+    end
+
+    test "rejects a 1024-bit key" do
+      {:RSAPrivateKey, _v, modulus, exponent, _, _, _, _, _, _, _} =
+        :public_key.generate_key({:rsa, 1024, 65_537})
+
+      der = :public_key.der_encode(:RSAPublicKey, {:RSAPublicKey, modulus, exponent})
+
+      assert {:error, :malformed_key} = Webhook.decode_key(Base.encode64(der))
+    end
+
+    test "rejects a key with an even exponent", ctx do
+      {:ok, {:RSAPublicKey, modulus, _exponent}} = Webhook.decode_key(ctx.pem)
+
+      assert {:error, :malformed_key} =
+               Webhook.verify(@body, "AAAA", {:RSAPublicKey, modulus, 4})
     end
 
     test "rejects text that is not a key" do

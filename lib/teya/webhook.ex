@@ -61,9 +61,10 @@ defmodule Teya.Webhook do
   A signature says Teya sent the body; it does not say when. Anyone who has
   seen a signed webhook can send it again, and it will still verify. Teya
   sends the same event more than once anyway when a delivery fails, so handle
-  each event once, keyed on its `event` name together with
-  `data.transaction_id`. The transaction id alone is not enough: one
-  transaction can lead to more than one kind of event.
+  each event once, keyed on its `event` name together with the id the event
+  carries — `data.transaction_id` for `payment.succeeded.v1`. The id alone is
+  not enough, since one transaction can lead to more than one kind of event,
+  and check each new event type for which id it carries before relying on it.
   """
 
   @typedoc """
@@ -79,6 +80,8 @@ defmodule Teya.Webhook do
   - `:malformed_key` — the key is not an RSA public key in PEM or Base64 form
   - `:malformed_body` — the body is signed by Teya but is not a JSON object
   """
+  @min_key_bytes div(2048, 8)
+
   @type error ::
           :missing_body
           | :missing_signature
@@ -105,10 +108,12 @@ defmodule Teya.Webhook do
   """
   @spec decode_key(binary()) :: {:ok, :public_key.rsa_public_key()} | {:error, :malformed_key}
   def decode_key(text) when is_binary(text) do
+    text = tidy_key_text(text)
+
     key =
       if String.contains?(text, "-----BEGIN"),
         do: from_pem(text),
-        else: from_base64(text)
+        else: from_der(base64(text))
 
     read_key(key)
   end
@@ -131,7 +136,7 @@ defmodule Teya.Webhook do
 
       :ok = Teya.Webhook.verify(raw_body, signature, key)
   """
-  @spec verify(binary() | nil, binary() | nil, key()) :: :ok | {:error, error()}
+  @spec verify(iodata() | nil, binary() | nil, key()) :: :ok | {:error, error()}
   def verify(raw_body, signature, key) do
     with {:ok, key} <- to_key(key),
          {:ok, raw_body} <- check_body(raw_body),
@@ -156,9 +161,10 @@ defmodule Teya.Webhook do
       {:ok, %{"event" => "payment.succeeded.v1", "data" => data}} =
         Teya.Webhook.parse(raw_body, signature, key)
   """
-  @spec parse(binary() | nil, binary() | nil, key()) :: {:ok, map()} | {:error, error()}
+  @spec parse(iodata() | nil, binary() | nil, key()) :: {:ok, map()} | {:error, error()}
   def parse(raw_body, signature, key) do
-    with :ok <- verify(raw_body, signature, key) do
+    with {:ok, raw_body} <- check_body(raw_body),
+         :ok <- verify(raw_body, signature, key) do
       case Jason.decode(raw_body) do
         {:ok, event} when is_map(event) -> {:ok, event}
         _ -> {:error, :malformed_body}
@@ -170,10 +176,17 @@ defmodule Teya.Webhook do
   defp to_key(key), do: read_key(key)
 
   # A key record built or stored by hand can hold anything, and :public_key
-  # raises on fields that are not integers rather than refusing the key.
+  # raises on fields that are not integers rather than refusing the key. Any
+  # two integers also decode as an RSA key, so a key too small to be real is
+  # refused here, where it is found at startup, rather than left to turn away
+  # every webhook. Teya's keys are 2048 bits.
   defp read_key({:RSAPublicKey, modulus, exponent} = key)
-       when is_integer(modulus) and is_integer(exponent),
-       do: {:ok, key}
+       when is_integer(modulus) and modulus > 0 and is_integer(exponent) and exponent > 1 and
+              rem(exponent, 2) == 1 do
+    if byte_size(:binary.encode_unsigned(modulus)) >= @min_key_bytes,
+      do: {:ok, key},
+      else: {:error, :malformed_key}
+  end
 
   defp read_key(_key), do: {:error, :malformed_key}
 
@@ -189,59 +202,84 @@ defmodule Teya.Webhook do
   defp check_body(_raw_body), do: {:error, :missing_body}
 
   defp decode_signature(nil), do: {:error, :missing_signature}
-  defp decode_signature(""), do: {:error, :missing_signature}
 
   # Teya sends standard padded Base64. Unpadded or URL-safe text is read as
   # well, since something in between may have changed it; the signature is
   # still checked in full either way.
   defp decode_signature(signature) when is_binary(signature) do
-    with :error <- Base.decode64(signature, ignore: :whitespace, padding: false),
-         :error <- Base.url_decode64(signature, ignore: :whitespace, padding: false),
-         do: {:error, :malformed_signature}
+    if String.trim(signature) == "" do
+      {:error, :missing_signature}
+    else
+      with :error <- Base.decode64(signature, ignore: :whitespace, padding: false),
+           :error <- Base.url_decode64(signature, ignore: :whitespace, padding: false),
+           do: {:error, :malformed_signature}
+    end
   end
 
   defp decode_signature(_signature), do: {:error, :malformed_signature}
 
-  defp from_pem(text) do
-    text = String.replace(text, ["\\r\\n", "\\n"], "\n")
-
-    case attempt(fn -> :public_key.pem_decode(text) end) do
-      entries when is_list(entries) -> Enum.find_value(entries, &public_key_entry/1)
-      nil -> nil
-    end
+  # Keys stored in environment variables and secret stores arrive damaged in
+  # a few common ways: wrapped in the quotes they were written with, or with
+  # their line breaks written out as \\n or \\r\\n. Undo those. Line breaks
+  # flattened to spaces need nothing here, since Base64 is read ignoring
+  # whitespace.
+  defp tidy_key_text(text) do
+    text
+    |> String.trim()
+    |> String.replace(["\\r\\n", "\\n"], "\n")
+    |> unquote_key()
   end
 
-  defp public_key_entry(entry) do
-    case attempt(fn -> :public_key.pem_entry_decode(entry) end) do
-      {:RSAPublicKey, _modulus, _exponent} = key -> key
-      _other -> nil
-    end
+  defp unquote_key(<<quote, rest::binary>> = text) when quote in [?", ?'] do
+    if String.ends_with?(rest, <<quote>>),
+      do: String.slice(rest, 0..-2//1),
+      else: text
+  end
+
+  defp unquote_key(text), do: text
+
+  # Read PEM blocks directly rather than through :public_key.pem_decode/1,
+  # which needs each line exactly where it expects it. Only public key blocks
+  # are read; anything else, such as a certificate, is passed over.
+  @pem_block ~r/-----BEGIN ([A-Z ]+)-----(.*?)-----END \1-----/s
+
+  defp from_pem(text) do
+    @pem_block
+    |> Regex.scan(text, capture: :all_but_first)
+    |> Enum.find_value(fn
+      ["PUBLIC KEY", body] -> spki(base64(body))
+      ["RSA PUBLIC KEY", body] -> pkcs1(base64(body))
+      _other_block -> nil
+    end)
   end
 
   # The portal shows the SubjectPublicKeyInfo form, the same bytes a PEM
   # wraps. A plain RSA key is accepted too, since some tools hand that out.
-  defp from_base64(text) do
-    case Base.decode64(text, ignore: :whitespace, padding: false) do
-      {:ok, der} ->
-        attempt(fn ->
-          :public_key.pem_entry_decode({:SubjectPublicKeyInfo, der, :not_encrypted})
-        end) ||
-          attempt(fn -> :public_key.der_decode(:RSAPublicKey, der) end)
+  defp from_der(der), do: spki(der) || pkcs1(der)
 
-      :error ->
-        nil
+  defp base64(text) do
+    case Base.decode64(text, ignore: :whitespace, padding: false) do
+      {:ok, der} -> der
+      :error -> nil
     end
   end
 
-  # OTP's key decoders fail on input they cannot read by raising, not by
-  # returning an error, and the kind of exception depends on how the input is
-  # wrong. These are the kinds they raise. ErlangError is broad — it is what
-  # any Erlang error without a closer Elixir match becomes, which covers the
-  # decoders' own ASN.1 errors — so a bug that shows up as one is reported as
-  # a malformed key too. Anything outside these kinds surfaces as a bug.
+  defp spki(nil), do: nil
+
+  defp spki(der) do
+    attempt(fn -> :public_key.pem_entry_decode({:SubjectPublicKeyInfo, der, :not_encrypted}) end)
+  end
+
+  defp pkcs1(nil), do: nil
+  defp pkcs1(der), do: attempt(fn -> :public_key.der_decode(:RSAPublicKey, der) end)
+
+  # OTP's DER decoders fail on bytes they cannot read by raising MatchError
+  # rather than returning an error. Only that is caught: anything else, such
+  # as :public_key being unavailable, surfaces as the fault it is instead of
+  # being reported as a bad key.
   defp attempt(decode) do
     decode.()
   rescue
-    _error in [ArgumentError, ErlangError, FunctionClauseError, MatchError] -> nil
+    MatchError -> nil
   end
 end

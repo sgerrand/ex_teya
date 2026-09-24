@@ -170,7 +170,7 @@ defmodule Teya.POSLink.Payment do
   # which could throw away a snapshot already received.
   defp await_snapshot(payment_request_id, caller) do
     Process.flag(:trap_exit, true)
-    Process.monitor(caller)
+    caller_ref = Process.monitor(caller)
     collector = self()
 
     stream =
@@ -178,7 +178,7 @@ defmodule Teya.POSLink.Payment do
         stream_payment(payment_request_id, collector)
       end)
 
-    result = receive_snapshot(payment_request_id, stream, false)
+    result = receive_snapshot(payment_request_id, stream, caller_ref, false)
 
     # A linked task only dies with its parent when the parent exits
     # abnormally, and the collector returns normally with a snapshot.
@@ -186,8 +186,8 @@ defmodule Teya.POSLink.Payment do
     result
   end
 
-  defp receive_snapshot(payment_request_id, stream, diff_seen?) do
-    %{ref: ref, pid: stream_pid} = stream
+  defp receive_snapshot(payment_request_id, stream, caller_ref, diff_seen?) do
+    %{ref: ref} = stream
 
     receive do
       # Only a "full" event is a snapshot of the whole payment request.
@@ -199,17 +199,23 @@ defmodule Teya.POSLink.Payment do
       # stream had. Any other event, such as a keepalive, says nothing about
       # the payment and is ignored.
       {:poslink_payment, ^payment_request_id, type, _data} ->
-        receive_snapshot(payment_request_id, stream, diff_seen? or type == "diff")
+        receive_snapshot(payment_request_id, stream, caller_ref, diff_seen? or type == "diff")
 
       {:poslink_payment_error, ^payment_request_id, reason} ->
         {:error, reason}
 
-      {:EXIT, ^stream_pid, reason} when reason != :normal ->
+      # The stream dying, or the task supervisor shutting down: either way the
+      # reason is what the caller wants to hear, rather than a wait that runs
+      # to the timeout.
+      {:EXIT, _pid, reason} when reason != :normal ->
         {:error, reason}
 
-      # Nobody is waiting for the answer any more.
-      {:DOWN, _ref, :process, _pid, _reason} ->
-        {:error, :caller_down}
+      # Nobody is waiting for the answer any more. Nothing reads what this
+      # returns, so it is not one of the errors get/2 documents. The monitor
+      # is pinned: an unpinned clause would also catch the stream task's own
+      # :DOWN and report a crash as the caller going away.
+      {:DOWN, ^caller_ref, :process, _pid, _reason} ->
+        :caller_down
 
       {^ref, _} ->
         if diff_seen?, do: {:error, :no_snapshot}, else: {:error, :no_event}

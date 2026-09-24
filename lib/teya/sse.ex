@@ -30,6 +30,10 @@ defmodule Teya.SSE do
 
   @default_max_error_body_bytes 65_536
 
+  # Payment and receipt events are a few hundred bytes. A megabyte is far past
+  # anything real while still bounding what a runaway body can hold.
+  @max_frame_bytes 1_048_576
+
   @doc false
   def stream(url, token, id, ok_tag, error_tag, pid) do
     # Only a 200 response reaches this handler: collect_error_body/1 keeps
@@ -39,7 +43,7 @@ defmodule Teya.SSE do
       {:cont, {req, resp}}
     end
 
-    case url |> request(token, handler) |> Req.get() do
+    case url |> request(token, handler) |> run() do
       {:ok, %{status: 200}} ->
         :ok
 
@@ -64,10 +68,10 @@ defmodule Teya.SSE do
   # event, or `{:error, reason}`.
   def first(url, token, event_type, owner) do
     handler = fn {:sse_event, %Frame{} = frame}, acc ->
-      take_first(decode_frame(frame), event_type, owner, acc)
+      take_first(frame, event_type, owner, acc)
     end
 
-    case url |> request(token, handler) |> Req.get() do
+    case url |> request(token, handler) |> run() do
       {:ok, %{status: 200} = resp} ->
         case Req.Response.get_private(resp, :sse_first) do
           nil -> :none
@@ -82,16 +86,31 @@ defmodule Teya.SSE do
     end
   end
 
-  defp take_first({event_type, data}, event_type, _owner, {req, resp}) do
-    {:halt, {req, Req.Response.put_private(resp, :sse_first, data)}}
+  # Only a frame with the name asked for is decoded; the rest are passed over
+  # without the cost of reading their JSON.
+  defp take_first(%Frame{event: event_type} = frame, event_type, owner, {req, resp}) do
+    case decode_frame(frame) do
+      {_event, data} -> {:halt, {req, Req.Response.put_private(resp, :sse_first, data)}}
+      nil -> keep_reading?(owner, {req, resp})
+    end
   end
 
-  defp take_first(_other, _event_type, owner, {req, resp}) do
+  defp take_first(_frame, _event_type, owner, acc), do: keep_reading?(owner, acc)
+
+  defp keep_reading?(owner, {req, resp}) do
     if Process.alive?(owner), do: {:cont, {req, resp}}, else: {:halt, {req, resp}}
   end
 
   defp request(url, token, handler) do
-    Application.get_env(:teya, :sse_req_options, Application.get_env(:teya, :req_options, []))
+    configured =
+      Application.get_env(:teya, :sse_req_options, Application.get_env(:teya, :req_options, []))
+
+    # Req retries a failed GET by default, which for a stream means opening it
+    # again without a word: the reader never learns the connection dropped,
+    # and the new stream replays its snapshot. Readers are told of a dropped
+    # stream and reconnect themselves, so retrying is off unless configured.
+    [retry: false]
+    |> Keyword.merge(configured)
     |> Keyword.merge(
       url: url,
       auth: {:bearer, token},
@@ -103,8 +122,19 @@ defmodule Teya.SSE do
       receive_timeout: Application.get_env(:teya, :sse_stream_timeout_ms, 60_000)
     )
     |> Req.new()
-    |> ReqServerSentEvents.attach()
+    # A 200 body with no frame delimiter — a proxy's HTML page, say — would
+    # otherwise sit in the plugin's buffer and grow until the body ends.
+    |> ReqServerSentEvents.attach(max_frame_size: @max_frame_bytes)
     |> collect_error_body()
+  end
+
+  # The plugin raises when a frame outgrows its buffer. Raised inside a stream
+  # task, that would end the task without telling the reader anything, so it
+  # is turned into an error like any other.
+  defp run(req) do
+    Req.get(req)
+  rescue
+    error in ReqServerSentEvents.FrameTooLargeError -> {:error, error}
   end
 
   # The SSE plugin decodes every chunk as event-stream bytes, which drops the

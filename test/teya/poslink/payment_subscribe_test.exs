@@ -271,6 +271,46 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       refute error.message =~ "<<"
     end
 
+    test "reports a dropped stream instead of reopening it" do
+      payment_id = "pr-uuid-38"
+      test_pid = self()
+
+      # Leave :retry unset, as in production, where Req would otherwise retry.
+      original = Application.get_env(:teya, :sse_req_options)
+
+      Application.put_env(:teya, :sse_req_options, plug: {Req.Test, Teya.POSLink.Subscriber})
+      on_exit(fn -> Application.put_env(:teya, :sse_req_options, original) end)
+
+      stub_sse(fn conn ->
+        send(test_pid, :request_made)
+        Req.Test.transport_error(conn, :closed)
+      end)
+
+      {:ok, _task} = Payment.subscribe(payment_id, self())
+
+      assert_receive {:poslink_payment_error, ^payment_id, %Req.TransportError{reason: :closed}},
+                     2_000
+
+      assert_received :request_made
+      refute_received :request_made
+    end
+
+    test "reports a body that never forms an event, rather than holding all of it" do
+      payment_id = "pr-uuid-39"
+
+      stub_sse(fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("text/html")
+        |> Plug.Conn.send_resp(200, String.duplicate("x", 2_000_000))
+      end)
+
+      {:ok, _task} = Payment.subscribe(payment_id, self())
+
+      assert_receive {:poslink_payment_error, ^payment_id,
+                      %ReqServerSentEvents.FrameTooLargeError{}},
+                     2_000
+    end
+
     test "sends poslink_payment_error on transport failure" do
       payment_id = "pr-uuid-5"
 
@@ -394,6 +434,18 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
                Payment.get(payment_id)
     end
 
+    test "skips a snapshot whose data is not a JSON object" do
+      payment_id = "pr-uuid-40"
+
+      body =
+        "event: full\ndata: not-json\n\n" <>
+          sse_event("full", %{"status" => "NEW", "gateway_payment_id" => "gw-3"})
+
+      stub_payment_sse(body)
+
+      assert {:ok, %{"status" => "NEW", "gateway_payment_id" => "gw-3"}} = Payment.get(payment_id)
+    end
+
     test "skips a keepalive before the snapshot" do
       payment_id = "pr-uuid-26"
 
@@ -485,7 +537,7 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
           sse_event("full", %{"status" => "SUCCESSFUL"})
       )
 
-      url = "https://api.teya.test/poslink/v3/payment-requests/pr-uuid-37"
+      url = Application.get_env(:teya, :base_url) <> "/poslink/v3/payment-requests/pr-uuid-37"
 
       assert :none = Teya.SSE.first(url, "test_access_token", "full", owner)
     end

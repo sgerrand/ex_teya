@@ -8,26 +8,6 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
     "event: #{type}\ndata: #{Jason.encode!(data)}\n\n"
   end
 
-  defp eventually(check, attempts \\ 200) do
-    cond do
-      check.() -> true
-      attempts > 0 -> Process.sleep(10) && eventually(check, attempts - 1)
-      true -> false
-    end
-  end
-
-  # Kills the tasks get/2 started, identified as the ones that were not
-  # running before the call.
-  defp kill_new_tasks(before, attempts \\ 100) do
-    started = Task.Supervisor.children(Teya.TaskSupervisor) -- before
-
-    cond do
-      started != [] -> Enum.each(started, &Process.exit(&1, :kill))
-      attempts > 0 -> Process.sleep(10) && kill_new_tasks(before, attempts - 1)
-      true -> flunk("get/2 started no task under Teya.TaskSupervisor")
-    end
-  end
-
   # Restores the setting by removing it, since it has no value by default and
   # putting nil back would be read as a cap of nil.
   defp put_error_body_cap(bytes) do
@@ -351,7 +331,7 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
   end
 
   describe "get/2" do
-    test "returns the first snapshot and closes the stream" do
+    test "returns the first snapshot" do
       payment_id = "pr-uuid-20"
 
       body =
@@ -361,7 +341,30 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       stub_payment_sse(body)
 
       assert {:ok, %{"status" => "IN_PROGRESS"}} = Payment.get(payment_id)
+    end
+
+    test "stops at the first snapshot when the stream sends another" do
+      payment_id = "pr-uuid-36"
+
+      body =
+        sse_event("full", %{"status" => "IN_PROGRESS"}) <>
+          sse_event("full", %{"status" => "SUCCESSFUL"})
+
+      stub_payment_sse(body)
+
+      assert {:ok, %{"status" => "IN_PROGRESS"}} = Payment.get(payment_id)
+    end
+
+    test "sends nothing to the calling process" do
+      payment_id = "pr-uuid-21"
+
+      stub_payment_sse(
+        sse_event("full", %{"status" => "NEW"}) <> sse_event("diff", %{"status" => "SUCCESSFUL"})
+      )
+
+      assert {:ok, _snapshot} = Payment.get(payment_id)
       refute_received {:poslink_payment, ^payment_id, _type, _data}
+      refute_received {:poslink_payment_error, ^payment_id, _reason}
     end
 
     test "leaves messages belonging to another subscription alone" do
@@ -391,43 +394,7 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
                Payment.get(payment_id)
     end
 
-    test "returns Teya.Error when the payment is not found" do
-      stub_sse(fn conn ->
-        error_response(conn, 404, "NOT_FOUND", "Payment request not found")
-      end)
-
-      assert {:error,
-              %Error{code: "NOT_FOUND", message: "Payment request not found", status: 404}} =
-               Payment.get("nonexistent")
-    end
-
-    test "returns :no_event when the stream closes without an event" do
-      stub_payment_sse("")
-
-      assert {:error, :no_event} = Payment.get("pr-uuid-21")
-    end
-
-    test "reports the reason when the task waiting for the snapshot is killed" do
-      payment_id = "pr-uuid-25"
-
-      stub_sse(fn conn ->
-        Process.sleep(1_000)
-        Plug.Conn.send_resp(conn, 200, "")
-      end)
-
-      caller = self()
-      before = Task.Supervisor.children(Teya.TaskSupervisor)
-
-      # Task.start keeps $callers, so the stream task still finds the stub.
-      {:ok, _pid} =
-        Task.start(fn -> send(caller, {:got, Payment.get(payment_id, timeout: 5_000)}) end)
-
-      kill_new_tasks(before)
-
-      assert_receive {:got, {:error, :killed}}, 2_000
-    end
-
-    test "returns a keepalive-free snapshot" do
+    test "skips a keepalive before the snapshot" do
       payment_id = "pr-uuid-26"
 
       body =
@@ -437,18 +404,6 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       stub_payment_sse(body)
 
       assert {:ok, %{"status" => "NEW", "gateway_payment_id" => "gw-2"}} = Payment.get(payment_id)
-    end
-
-    @tag :capture_log
-    test "reports a crashed stream without waiting out the timeout" do
-      payment_id = "pr-uuid-28"
-
-      stub_sse(fn _conn -> raise "boom" end)
-
-      {elapsed_us, result} = :timer.tc(fn -> Payment.get(payment_id, timeout: 10_000) end)
-
-      assert {:error, _reason} = result
-      assert elapsed_us < 5_000_000
     end
 
     test "returns :no_snapshot when the stream sends only partial updates" do
@@ -463,51 +418,68 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       assert {:error, :no_snapshot} = Payment.get(payment_id)
     end
 
+    test "returns :no_snapshot when the stream closes without an event" do
+      stub_payment_sse("")
+
+      assert {:error, :no_snapshot} = Payment.get("pr-uuid-22")
+    end
+
     test "does not take an event with no name as a snapshot" do
       payment_id = "pr-uuid-30"
       stub_payment_sse("data: #{Jason.encode!(%{"status" => "NEW"})}\n\n")
 
-      assert {:error, :no_event} = Payment.get(payment_id)
+      assert {:error, :no_snapshot} = Payment.get(payment_id)
     end
 
-    test "does not call a keepalive a partial update" do
-      payment_id = "pr-uuid-32"
-      stub_payment_sse("event: ping\ndata: {\"keepalive\":true}\n\n")
-
-      assert {:error, :no_event} = Payment.get(payment_id)
-    end
-
-    test "stops waiting when the calling process dies" do
-      payment_id = "pr-uuid-33"
-      before = Task.Supervisor.children(Teya.TaskSupervisor)
-
+    test "returns Teya.Error when the payment is not found" do
       stub_sse(fn conn ->
-        Process.sleep(2_000)
-        Plug.Conn.send_resp(conn, 200, "")
+        error_response(conn, 404, "NOT_FOUND", "Payment request not found")
       end)
 
-      {:ok, caller} = Task.start(fn -> Payment.get(payment_id, timeout: :infinity) end)
+      assert {:error,
+              %Error{code: "NOT_FOUND", message: "Payment request not found", status: 404}} =
+               Payment.get("nonexistent")
+    end
 
-      assert eventually(fn -> Task.Supervisor.children(Teya.TaskSupervisor) -- before != [] end)
-      Process.exit(caller, :kill)
+    test "returns a transport failure as it is" do
+      stub_sse(fn conn -> Req.Test.transport_error(conn, :econnrefused) end)
 
-      assert eventually(fn -> Task.Supervisor.children(Teya.TaskSupervisor) -- before == [] end)
+      assert {:error, %Req.TransportError{reason: :econnrefused}} = Payment.get("pr-uuid-34")
+    end
+
+    test "returns a token failure as it is" do
+      stub_auth(fn conn ->
+        conn
+        |> Plug.Conn.put_status(401)
+        |> Req.Test.json(%{"error" => "invalid_client"})
+      end)
+
+      assert {:error, %Req.Response{status: 401}} = Payment.get("pr-uuid-35")
+    end
+
+    @tag :capture_log
+    test "reports a crashed stream as an exit, without waiting out the timeout" do
+      stub_sse(fn _conn -> raise "boom" end)
+
+      {elapsed_us, result} = :timer.tc(fn -> Payment.get("pr-uuid-28", timeout: 10_000) end)
+
+      assert {:error, {:exit, {%RuntimeError{message: "boom"}, _stacktrace}}} = result
+      assert elapsed_us < 5_000_000
     end
 
     test "accepts :infinity as the timeout" do
-      payment_id = "pr-uuid-27"
       stub_payment_sse(sse_event("full", %{"status" => "NEW"}))
 
-      assert {:ok, %{"status" => "NEW"}} = Payment.get(payment_id, timeout: :infinity)
+      assert {:ok, %{"status" => "NEW"}} = Payment.get("pr-uuid-27", timeout: :infinity)
     end
 
-    test "returns :timeout when no event arrives in time" do
+    test "returns :timeout when no snapshot arrives in time" do
       stub_sse(fn conn ->
         Process.sleep(500)
         Plug.Conn.send_resp(conn, 200, "")
       end)
 
-      assert {:error, :timeout} = Payment.get("pr-uuid-22", timeout: 50)
+      assert {:error, :timeout} = Payment.get("pr-uuid-29", timeout: 50)
     end
   end
 end

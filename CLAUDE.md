@@ -70,6 +70,11 @@ SSE bytes are decoded by the `req_server_sent_events` plugin, which
 `"diff"` (partial update), and is `nil` for a frame with no event line. `data`
 is a decoded JSON map.
 
+`Payment.get/2` does not use messages. It runs `Teya.SSE.first/4` in a task of
+its own, whose `into:` handler halts on the first `"full"` event and hands the
+data back as the task's result. Nothing reaches the caller's mailbox, so it
+cannot mix with a `subscribe/2` stream for the same payment.
+
 ## Testing
 
 Tests use `Req.Test` to stub HTTP. Three separate stub names are used to cleanly separate concerns:
@@ -105,8 +110,10 @@ The same command runs on pre-push via lefthook.
 for `Plug.Conn.send_chunked/2` plus `Plug.Conn.chunk/2`. A stubbed SSE stream
 therefore cannot stay open while the test inspects state: every event arrives
 at once, and the stream task always ends on its own. Behaviour that depends on
-a still-open stream — such as `Payment.get/2` shutting its stream task down
-once it has the snapshot — cannot be observed through a stub.
+a still-open stream — such as `Teya.SSE.first/4` stopping the read once it has
+the event — cannot be observed through a stub. What can be observed is which
+event it returns, so test that instead: two `"full"` events, and the first one
+must win.
 
 ### Auth failure and retry behaviour
 

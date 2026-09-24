@@ -9,14 +9,19 @@ defmodule Teya.SSE do
   `{error_tag, id, reason}`.
 
   An error response is not an event stream, so its body is collected as raw
-  bytes and left to Req to decode. That keeps the `code` and `message` the API
-  sent in the resulting `%Teya.Error{}`.
+  bytes and decoded here, which keeps the `code` and `message` the API sent in
+  the resulting `%Teya.Error{}`.
+
+  Only the first `:sse_max_error_body_bytes` of that body are kept (64 KB by
+  default), so a large error page cannot fill memory. A JSON body past that
+  size is cut and can no longer be decoded: the `%Teya.Error{}` then carries
+  the status and the raw text, but no `code`.
   """
 
   alias ReqServerSentEvents.Frame
   alias Teya.Error
 
-  @max_error_body_bytes 8_192
+  @default_max_error_body_bytes 65_536
 
   @doc false
   def stream(url, token, id, ok_tag, error_tag, pid, req_opts \\ []) do
@@ -33,6 +38,10 @@ defmodule Teya.SSE do
         url: url,
         auth: {:bearer, token},
         into: handler,
+        # An error body that ran past the cap is cut short, and Req's decoder
+        # answers broken JSON with an exception in place of the response,
+        # taking the status with it. Decode it here instead.
+        decode_body: false,
         receive_timeout: timeout_ms
       )
       |> Req.new()
@@ -44,7 +53,7 @@ defmodule Teya.SSE do
         :ok
 
       {:ok, resp} ->
-        send(pid, {error_tag, id, Error.from_response(resp)})
+        send(pid, {error_tag, id, resp |> decode_body() |> Error.from_response()})
 
       {:error, reason} ->
         send(pid, {error_tag, id, reason})
@@ -58,25 +67,80 @@ defmodule Teya.SSE do
   # other than 200.
   defp collect_error_body(%Req.Request{into: sse_into} = req) do
     collector = fn {:data, chunk}, {req, resp} ->
-      if resp.status == 200 do
-        sse_into.({:data, chunk}, {req, resp})
-      else
-        {:cont, {req, %{resp | body: take_error_body(resp.body, chunk)}}}
-      end
+      if resp.status == 200,
+        do: sse_into.({:data, chunk}, {req, resp}),
+        else: keep_error_chunk(chunk, {req, resp})
     end
 
     %{req | into: collector}
   end
 
-  # An error body is not streamed, so it could be any size — a gateway error
-  # page, say. Teya.Error keeps only the first 500 characters, so stop
-  # accumulating once there is more than enough to decode or quote.
-  defp take_error_body(body, chunk) do
-    body = body || ""
+  defp keep_error_chunk(chunk, {req, resp}) do
+    {body, cut?} = take_error_body(resp.body, chunk, max_error_body_bytes())
+    resp = %{resp | body: body}
 
-    if byte_size(body) >= @max_error_body_bytes,
-      do: body,
-      else: body <> chunk
+    # Once a chunk has been cut, nothing more will be kept, so stop reading
+    # rather than pulling a whole error page off the wire to throw it away.
+    # The kept body can end up shorter than the cap, so its size cannot be
+    # what decides this.
+    if cut?,
+      do: {:halt, {req, resp}},
+      else: {:cont, {req, resp}}
+  end
+
+  defp max_error_body_bytes do
+    case Application.get_env(:teya, :sse_max_error_body_bytes, @default_max_error_body_bytes) do
+      bytes when is_integer(bytes) and bytes > 0 -> bytes
+      _ -> @default_max_error_body_bytes
+    end
+  end
+
+  # An error body is not streamed, so it could be any size — a gateway error
+  # page, say. The default budget is generous because a cut body is no longer
+  # valid JSON, and a JSON error loses its code and description when it cannot
+  # be decoded; an API error listing many invalid parameters still fits well
+  # inside it. A whole response often arrives as one chunk, so the chunk
+  # itself is cut to what is left of the budget rather than copied first and
+  # cut later.
+  defp take_error_body(body, chunk, limit) do
+    body = body || ""
+    budget = max(limit - byte_size(body), 0)
+
+    if byte_size(chunk) <= budget do
+      {body <> chunk, false}
+    else
+      # Trim what the body becomes, not the piece taken from this chunk: a
+      # character can start in one chunk and finish in the next, so a piece
+      # can read as broken text on its own while the whole body is fine, and
+      # the other way round.
+      {whole_characters(body <> binary_part(chunk, 0, budget)), true}
+    end
+  end
+
+  # Cutting at a byte boundary can split a character in two, leaving text that
+  # no longer prints as text. A character is at most four bytes, so drop up to
+  # three trailing bytes to end on a whole one. Anything still not text was
+  # never text — a compressed or mis-encoded error page — and is handed back
+  # whole rather than walked back byte by byte to the first bad one.
+  defp whole_characters(text), do: whole_characters(text, text, 3)
+
+  defp whole_characters(original, _trimmed, 0), do: original
+
+  defp whole_characters(original, trimmed, attempts) do
+    if String.valid?(trimmed) do
+      trimmed
+    else
+      whole_characters(original, binary_part(trimmed, 0, byte_size(trimmed) - 1), attempts - 1)
+    end
+  end
+
+  defp decode_body(resp) do
+    with body when is_binary(body) <- resp.body,
+         {:ok, decoded} when is_map(decoded) <- Jason.decode(body) do
+      %{resp | body: decoded}
+    else
+      _ -> resp
+    end
   end
 
   defp forward_frame(%Frame{data: nil}, _id, _ok_tag, _pid), do: :ok

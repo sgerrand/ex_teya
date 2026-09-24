@@ -70,8 +70,9 @@ defmodule Teya.Webhook do
   @typedoc """
   Why a webhook was not accepted.
 
-  - `:missing_body` — there is no body to check, such as when the raw body was
-    not kept for this request
+  - `:missing_body` — there is no body to check: it is `nil`, such as when the
+    raw body was not kept for this request, or it is not bytes or a list of
+    them
   - `:missing_signature` — there is no signature, such as when the request has
     no `x-teya-signature` header
   - `:malformed_signature` — the signature is not valid Base64
@@ -80,8 +81,6 @@ defmodule Teya.Webhook do
   - `:malformed_key` — the key is not an RSA public key in PEM or Base64 form
   - `:malformed_body` — the body is signed by Teya but is not a JSON object
   """
-  @min_key_bytes div(2048, 8)
-
   @type error ::
           :missing_body
           | :missing_signature
@@ -138,13 +137,7 @@ defmodule Teya.Webhook do
   """
   @spec verify(iodata() | nil, binary() | nil, key()) :: :ok | {:error, error()}
   def verify(raw_body, signature, key) do
-    with {:ok, key} <- to_key(key),
-         {:ok, raw_body} <- check_body(raw_body),
-         {:ok, signature} <- decode_signature(signature) do
-      if :public_key.verify(raw_body, :sha256, signature, key),
-        do: :ok,
-        else: {:error, :invalid_signature}
-    end
+    with {:ok, _body} <- check(raw_body, signature, key), do: :ok
   end
 
   @doc """
@@ -163,17 +156,32 @@ defmodule Teya.Webhook do
   """
   @spec parse(iodata() | nil, binary() | nil, key()) :: {:ok, map()} | {:error, error()}
   def parse(raw_body, signature, key) do
-    with {:ok, raw_body} <- check_body(raw_body),
-         :ok <- verify(raw_body, signature, key) do
-      case Jason.decode(raw_body) do
+    with {:ok, body} <- check(raw_body, signature, key) do
+      case Jason.decode(body) do
         {:ok, event} when is_map(event) -> {:ok, event}
         _ -> {:error, :malformed_body}
       end
     end
   end
 
+  # Both public functions check in the same order — key, then body, then
+  # signature — so a bad key is reported the same way by each, and a bad key
+  # is what gets reported when more than one thing is wrong. Returns the body
+  # as one binary, joined once.
+  defp check(raw_body, signature, key) do
+    with {:ok, key} <- to_key(key),
+         {:ok, body} <- check_body(raw_body),
+         {:ok, signature} <- decode_signature(signature) do
+      if :public_key.verify(body, :sha256, signature, key),
+        do: {:ok, body},
+        else: {:error, :invalid_signature}
+    end
+  end
+
   defp to_key(text) when is_binary(text), do: decode_key(text)
   defp to_key(key), do: read_key(key)
+
+  @min_key_bytes div(2048, 8)
 
   # A key record built or stored by hand can hold anything, and :public_key
   # raises on fields that are not integers rather than refusing the key. Any
@@ -247,20 +255,29 @@ defmodule Teya.Webhook do
     @pem_block
     |> Regex.scan(text, capture: :all_but_first)
     |> Enum.find_value(fn
-      ["PUBLIC KEY", body] -> spki(base64(body))
+      ["PUBLIC KEY", body] -> rsa_only(spki(base64(body)))
       ["RSA PUBLIC KEY", body] -> pkcs1(base64(body))
       _other_block -> nil
     end)
   end
 
+  # A PUBLIC KEY block can hold any kind of key. Pass over one that is not RSA,
+  # such as an EC key, so an RSA key after it is still found.
+  defp rsa_only({:RSAPublicKey, _modulus, _exponent} = key), do: key
+  defp rsa_only(_other), do: nil
+
   # The portal shows the SubjectPublicKeyInfo form, the same bytes a PEM
   # wraps. A plain RSA key is accepted too, since some tools hand that out.
   defp from_der(der), do: spki(der) || pkcs1(der)
 
+  # Read as leniently as the signature is: standard or URL-safe, with or
+  # without padding.
   defp base64(text) do
-    case Base.decode64(text, ignore: :whitespace, padding: false) do
+    with :error <- Base.decode64(text, ignore: :whitespace, padding: false),
+         :error <- Base.url_decode64(text, ignore: :whitespace, padding: false) do
+      nil
+    else
       {:ok, der} -> der
-      :error -> nil
     end
   end
 

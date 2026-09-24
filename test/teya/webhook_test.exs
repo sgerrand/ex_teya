@@ -96,6 +96,13 @@ defmodule Teya.WebhookTest do
       assert :ok = Webhook.verify([first, second], sign(@body, ctx.private_key), ctx.pem)
     end
 
+    test "reports a bad key the same way whichever function is called", ctx do
+      signature = sign(@body, ctx.private_key)
+
+      assert {:error, :malformed_key} = Webhook.verify(nil, signature, "nope!")
+      assert {:error, :malformed_key} = Webhook.parse(nil, signature, "nope!")
+    end
+
     test "decodes a body kept as a list of chunks", ctx do
       signature = sign(@body, ctx.private_key)
       chunks = [binary_part(@body, 0, 10), binary_part(@body, 10, byte_size(@body) - 10)]
@@ -268,6 +275,26 @@ defmodule Teya.WebhookTest do
 
       assert {:error, :malformed_key} =
                Webhook.verify(@body, "AAAA", {:RSAPublicKey, modulus, 4})
+    end
+
+    test "passes over a non-RSA key block to find the RSA key after it", ctx do
+      {:ECPrivateKey, _v, _private, params, public, _attrs} =
+        :public_key.generate_key({:namedCurve, :secp256r1})
+
+      ec_pem =
+        :public_key.pem_encode([
+          :public_key.pem_entry_encode(:SubjectPublicKeyInfo, {{:ECPoint, public}, params})
+        ])
+
+      assert {:error, :malformed_key} = Webhook.decode_key(ec_pem)
+      assert {:ok, {:RSAPublicKey, _modulus, _exponent}} = Webhook.decode_key(ec_pem <> ctx.pem)
+    end
+
+    test "reads a key in URL-safe Base64", ctx do
+      url_safe = ctx.base64_der |> Base.decode64!() |> Base.url_encode64()
+
+      assert url_safe != ctx.base64_der
+      assert {:ok, {:RSAPublicKey, _modulus, _exponent}} = Webhook.decode_key(url_safe)
     end
 
     test "rejects text that is not a key" do

@@ -109,24 +109,28 @@ defmodule Teya.SSE do
     if byte_size(chunk) <= budget do
       {body <> chunk, false}
     else
-      {body <> whole_characters(binary_part(chunk, 0, budget)), true}
+      # Trim what the body becomes, not the piece taken from this chunk: a
+      # character can start in one chunk and finish in the next, so a piece
+      # can read as broken text on its own while the whole body is fine, and
+      # the other way round.
+      {whole_characters(body <> binary_part(chunk, 0, budget)), true}
     end
   end
 
   # Cutting at a byte boundary can split a character in two, leaving text that
   # no longer prints as text. A character is at most four bytes, so drop up to
   # three trailing bytes to end on a whole one. Anything still not text was
-  # never text — a compressed or mis-encoded error page — and is kept as it
-  # is rather than walked back byte by byte to the first bad one.
-  defp whole_characters(text, attempts \\ 3)
+  # never text — a compressed or mis-encoded error page — and is handed back
+  # whole rather than walked back byte by byte to the first bad one.
+  defp whole_characters(text), do: whole_characters(text, text, 3)
 
-  defp whole_characters(text, 0), do: text
+  defp whole_characters(original, _trimmed, 0), do: original
 
-  defp whole_characters(text, attempts) do
-    if String.valid?(text) or text == "" do
-      text
+  defp whole_characters(original, trimmed, attempts) do
+    if String.valid?(trimmed) do
+      trimmed
     else
-      text |> binary_part(0, byte_size(text) - 1) |> whole_characters(attempts - 1)
+      whole_characters(original, binary_part(trimmed, 0, byte_size(trimmed) - 1), attempts - 1)
     end
   end
 

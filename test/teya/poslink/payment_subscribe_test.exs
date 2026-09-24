@@ -250,6 +250,27 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       assert byte_size(error.message) > 100
     end
 
+    test "cuts a character that starts in one chunk and ends in the next" do
+      payment_id = "pr-uuid-18"
+      put_error_body_cap(10)
+
+      stub_sse(fn conn ->
+        conn = Plug.Conn.send_chunked(conn, 500)
+
+        # Fills the cap exactly, ending on the first byte of an "e" with an
+        # acute accent; the rest of that character is in the next chunk.
+        {_result, conn} = Plug.Conn.chunk(conn, "aaaaaaaaa" <> <<0xC3>>)
+        {_result, conn} = Plug.Conn.chunk(conn, <<0xA9>> <> "bbb")
+        conn
+      end)
+
+      {:ok, _task} = Payment.subscribe(payment_id, self())
+
+      assert_receive {:poslink_payment_error, ^payment_id, error}, 500
+      assert error.message =~ "aaaaaaaaa"
+      refute error.message =~ "<<"
+    end
+
     test "sends poslink_payment_error on transport failure" do
       payment_id = "pr-uuid-5"
 

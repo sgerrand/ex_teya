@@ -110,28 +110,14 @@ defmodule Teya.DCCTest do
   end
 
   describe "request options" do
-    test "falls back to :req_options when :dcc_req_options is unset" do
-      dcc_options = Application.get_env(:teya, :dcc_req_options)
-      req_options = Application.get_env(:teya, :req_options)
-      Application.delete_env(:teya, :dcc_req_options)
-
-      Application.put_env(
-        :teya,
-        :req_options,
-        [plug: {Req.Test, Teya.DCC}, retry: false] ++ [headers: [{"user-agent", "acme/1.0"}]]
-      )
-
-      on_exit(fn ->
-        Application.put_env(:teya, :dcc_req_options, dcc_options)
-        Application.put_env(:teya, :req_options, req_options)
-      end)
+    test "lets a user-agent set in :dcc_req_options win" do
+      original = Application.get_env(:teya, :dcc_req_options)
+      Application.put_env(:teya, :dcc_req_options, original ++ [user_agent: "acme/1.0"])
+      on_exit(fn -> Application.put_env(:teya, :dcc_req_options, original) end)
 
       Req.Test.stub(Teya.DCC, fn conn ->
         assert Plug.Conn.get_req_header(conn, "user-agent") == ["acme/1.0"]
-
-        conn
-        |> Plug.Conn.put_status(200)
-        |> Req.Test.json(%{"quote_id" => "q-1"})
+        Req.Test.json(conn, %{"quote_id" => "q-1"})
       end)
 
       assert {:ok, %{"quote_id" => "q-1"}} = Teya.DCC.quote(%{"store_id" => "s-1"})

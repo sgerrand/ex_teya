@@ -106,6 +106,19 @@ defmodule Teya.ClientTest do
                Teya.Client.request(:post, "/v1/test", body: %{}, idempotency_key: "order-42")
     end
 
+    test "lets a user_agent option in :req_options win" do
+      original = Application.get_env(:teya, :req_options)
+      Application.put_env(:teya, :req_options, original ++ [user_agent: "acme/option"])
+      on_exit(fn -> Application.put_env(:teya, :req_options, original) end)
+
+      stub_api(fn conn ->
+        assert Plug.Conn.get_req_header(conn, "user-agent") == ["acme/option"]
+        json_response(conn, 200, %{"ok" => true})
+      end)
+
+      assert {:ok, _} = Teya.Client.request(:get, "/v1/test")
+    end
+
     test "returns error tuple on transport failure" do
       stub_api(fn conn ->
         Req.Test.transport_error(conn, :timeout)

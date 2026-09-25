@@ -3,42 +3,9 @@ defmodule Teya.Client do
 
   alias Teya.{Auth, Error}
 
-  @version Mix.Project.config()[:version]
-  @user_agent "teya-elixir/#{@version}"
-
   @doc false
-  def user_agent, do: @user_agent
-
-  @doc false
-  # Req options are merged last, so headers set there replace the list built
-  # here outright. Fold them together first: a caller's header wins by name,
-  # and the rest of ours survive.
-  def merge_headers(req_opts, defaults) do
-    configured = req_opts |> Keyword.get(:headers, []) |> normalise_headers()
-    names = MapSet.new(configured, fn {name, _value} -> name end)
-
-    Enum.reject(defaults, fn {name, _value} -> MapSet.member?(names, name) end) ++ configured
-  end
-
-  defp normalise_headers(headers) when is_list(headers) do
-    Enum.map(headers, fn {name, value} -> {normalise_name(name), value} end)
-  end
-
-  defp normalise_headers(headers) when is_map(headers) do
-    Enum.flat_map(headers, fn {name, value} ->
-      name = normalise_name(name)
-      value |> List.wrap() |> Enum.map(&{name, &1})
-    end)
-  end
-
-  # Match how Req names headers, or a caller's header would not line up with
-  # ours and both would be sent: an atom name has its underscores turned into
-  # dashes, so :user_agent is the "user-agent" header.
-  defp normalise_name(name) when is_atom(name) do
-    name |> Atom.to_string() |> String.replace("_", "-")
-  end
-
-  defp normalise_name(name), do: String.downcase(name)
+  # Read from the running application, so it always names the version in use.
+  def user_agent, do: "teya-elixir/#{Application.spec(:teya, :vsn)}"
 
   @doc """
   Makes an authenticated HTTP request to the Teya API.
@@ -64,12 +31,19 @@ defmodule Teya.Client do
           method: method,
           url: base_url <> path,
           auth: {:bearer, token},
+          # Req's own option, which gives way to a user-agent set in
+          # :req_options, as an option or a header.
+          user_agent: user_agent(),
           receive_timeout: 30_000
         ]
         |> put_if_present(:json, Keyword.get(opts, :body))
         |> put_if_present(:params, Keyword.get(opts, :params))
         |> Keyword.merge(req_opts)
-        |> Keyword.put(:headers, request_headers(method, opts, req_opts))
+        |> Req.new()
+        # Merged last so it replaces any idempotency-key set in config: one
+        # key there would mark every POST as a retry of the first, and the API
+        # would answer them all with that first response.
+        |> Req.merge(headers: idempotency_headers(method, opts))
 
       case Req.request(req) do
         {:ok, %{status: status} = resp} when status in 200..299 -> {:ok, resp.body}
@@ -77,22 +51,6 @@ defmodule Teya.Client do
         {:error, reason} -> {:error, reason}
       end
     end
-  end
-
-  # One idempotency key in config would mark every POST as a retry of the
-  # first, and the API would answer them all with that first response, so the
-  # generated or per-call key wins over a configured one.
-  defp request_headers(method, opts, req_opts) do
-    configured =
-      req_opts
-      |> Keyword.get(:headers, [])
-      |> normalise_headers()
-      |> Enum.reject(fn {name, _value} -> name == "idempotency-key" end)
-
-    merge_headers(
-      [headers: configured],
-      [{"user-agent", @user_agent} | idempotency_headers(method, opts)]
-    )
   end
 
   defp put_if_present(opts, _key, nil), do: opts

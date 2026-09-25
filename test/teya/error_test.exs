@@ -51,6 +51,38 @@ defmodule Teya.ErrorTest do
                Teya.Error.from_response(response)
     end
 
+    test "keeps the code and rejected fields when there is no description" do
+      response = %{
+        status: 400,
+        body: %{
+          "code" => "BAD_REQUEST",
+          "invalid_parameters" => [%{"name" => "amount", "reason" => "must be positive"}]
+        }
+      }
+
+      assert %Teya.Error{
+               code: "BAD_REQUEST",
+               message: nil,
+               status: 400,
+               invalid_parameters: [%{"name" => "amount"}]
+             } = Teya.Error.from_response(response)
+    end
+
+    test "keeps only a list of maps as the rejected fields" do
+      not_a_list = %{
+        status: 400,
+        body: %{"code" => "BAD_REQUEST", "invalid_parameters" => "amount"}
+      }
+
+      mixed = %{
+        status: 400,
+        body: %{"code" => "BAD_REQUEST", "invalid_parameters" => [%{"name" => "a"}, "b", 3]}
+      }
+
+      assert %Teya.Error{invalid_parameters: nil} = Teya.Error.from_response(not_a_list)
+      assert %Teya.Error{invalid_parameters: [%{"name" => "a"}]} = Teya.Error.from_response(mixed)
+    end
+
     test "builds error from response without body" do
       assert %Teya.Error{code: nil, message: nil, status: 500} =
                Teya.Error.from_response(%{status: 500})

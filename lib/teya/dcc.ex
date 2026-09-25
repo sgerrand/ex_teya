@@ -72,25 +72,20 @@ defmodule Teya.DCC do
   def quote(params) do
     base_url = Application.get_env(:teya, :base_url, "https://api.teya.com")
 
-    req_opts =
-      Application.get_env(
-        :teya,
-        :dcc_req_options,
-        Application.get_env(:teya, :req_options, [])
-      )
+    # Not :req_options: those are built for authenticated API calls, and this
+    # endpoint takes no token, so their auth, test stubs and the rest do not
+    # belong here.
+    req_opts = Application.get_env(:teya, :dcc_req_options, [])
 
     req =
       [
         method: :post,
         url: base_url <> "/fx/v3/dcc",
         json: params,
+        user_agent: Client.user_agent(),
         receive_timeout: 30_000
       ]
       |> Keyword.merge(req_opts)
-      |> Keyword.put(
-        :headers,
-        Client.merge_headers(req_opts, [{"user-agent", Client.user_agent()}])
-      )
 
     case Req.request(req) do
       {:ok, %{status: status} = resp} when status in 200..299 -> {:ok, resp.body}

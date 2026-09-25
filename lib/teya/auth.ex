@@ -109,17 +109,21 @@ defmodule Teya.Auth do
         Application.get_env(:teya, :req_options, [])
       )
 
-    defaults = [
-      {"content-type", "application/x-www-form-urlencoded"},
-      {"user-agent", Client.user_agent()}
-    ]
-
-    opts =
-      [body: body, receive_timeout: 10_000]
+    req =
+      [
+        method: :post,
+        url: config.token_url,
+        body: body,
+        user_agent: Client.user_agent(),
+        receive_timeout: 10_000
+      ]
       |> Keyword.merge(req_opts)
-      |> Keyword.put(:headers, Client.merge_headers(req_opts, defaults))
+      |> Req.new()
+      # The body is a form whatever the options say about content types. They
+      # fall back to :req_options, which are meant for JSON API calls.
+      |> Req.merge(headers: [{"content-type", "application/x-www-form-urlencoded"}])
 
-    case Req.post(config.token_url, opts) do
+    case Req.request(req) do
       {:ok, %{status: 200, body: %{"access_token" => token, "expires_in" => expires_in}}} ->
         {:ok, token, System.monotonic_time(:second) + expires_in}
 

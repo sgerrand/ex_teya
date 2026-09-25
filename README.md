@@ -406,20 +406,22 @@ such as `"invalid_client"` and `"invalid_scope"`.
 ### User agent
 
 Every request sends `User-Agent: teya-elixir/<version>`, which Teya recommends
-so they can identify your integration. Set your own `user-agent` in
-`:req_options` to replace it:
+so they can identify your integration. To send your own, use Req's
+`:user_agent` option, or a `user-agent` header:
 
 ```elixir
-config :teya, req_options: [headers: [{"user-agent", "acme-shop/1.0"}]]
+config :teya, req_options: [user_agent: "acme-shop/1.0"]
 ```
 
-Headers set there are merged with the ones the library adds: yours wins by
-name, and the rest — including the generated `Idempotency-Key` — still go out.
+Other headers you set there are sent too, with two exceptions the library
+always sets itself. API calls carry their own `Idempotency-Key`, since one key
+shared by every request would make each POST look like a retry of the first.
+Token requests are always sent as a form, whatever content type is set.
 
-Token requests, SSE streams and DCC quotes fall back to `:req_options`, so the
-same setting covers them. If you set `:auth_req_options`, `:sse_req_options` or
-`:dcc_req_options`, that key is used on its own and `:req_options` is ignored
-for those requests — put your headers there too.
+Token requests and SSE streams use `:auth_req_options` and `:sse_req_options`
+when you set them, and `:req_options` when you do not. DCC quotes use only
+`:dcc_req_options`: the endpoint takes no token, so the options for
+authenticated API calls do not apply to it.
 
 ## Troubleshooting
 

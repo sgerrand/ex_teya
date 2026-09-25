@@ -31,6 +31,30 @@ defmodule Teya.AuthTest do
       assert {:ok, "fresh_token"} = Teya.Auth.token()
     end
 
+    test "sends the token request as a form whatever content-type is configured", %{
+      auth_pid: auth_pid
+    } do
+      original = Application.get_env(:teya, :auth_req_options)
+
+      Application.put_env(
+        :teya,
+        :auth_req_options,
+        original ++ [headers: [{"content-type", "application/json"}]]
+      )
+
+      on_exit(fn -> Application.put_env(:teya, :auth_req_options, original) end)
+
+      stub_auth(auth_pid, fn conn ->
+        assert Plug.Conn.get_req_header(conn, "content-type") == [
+                 "application/x-www-form-urlencoded"
+               ]
+
+        Req.Test.json(conn, %{"access_token" => "form_token", "expires_in" => 3600})
+      end)
+
+      assert {:ok, "form_token"} = Teya.Auth.token()
+    end
+
     test "caches the token on subsequent calls", %{auth_pid: auth_pid} do
       call_count = :counters.new(1, [])
 

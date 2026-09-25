@@ -28,12 +28,14 @@ defmodule Teya.Error do
   defstruct [:code, :message, :status, :invalid_parameters]
 
   @doc false
-  def from_response(%{status: status, body: %{"code" => code, "description" => message} = body}) do
+  # A Teya error names a code; the description and the list of rejected fields
+  # are each there only sometimes.
+  def from_response(%{status: status, body: %{"code" => code} = body}) when is_binary(code) do
     %__MODULE__{
       code: code,
-      message: message,
+      message: body["description"],
       status: status,
-      invalid_parameters: body["invalid_parameters"]
+      invalid_parameters: invalid_parameters(body["invalid_parameters"])
     }
   end
 
@@ -44,6 +46,10 @@ defmodule Teya.Error do
   def from_response(%{status: status}) do
     %__MODULE__{status: status}
   end
+
+  # Keep only what the docs promise, a list of maps, whatever arrived.
+  defp invalid_parameters(params) when is_list(params), do: Enum.filter(params, &is_map/1)
+  defp invalid_parameters(_params), do: nil
 
   @doc false
   # The token endpoint answers in the OAuth 2.0 error format, which RFC 6749

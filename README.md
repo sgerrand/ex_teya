@@ -164,8 +164,10 @@ Generate a shareable payment link:
 ### Webhooks
 
 Teya signs every webhook it sends, and you should check the signature before
-you trust the body. Read the key once, when your application starts, so a bad
-key stops it there rather than turning away every webhook:
+you trust the body. `Teya.Webhook.parse/3` takes only a key read by
+`Teya.Webhook.decode_key/1`, so read it once, when your application starts. A
+bad key then stops the application there rather than turning away every
+webhook:
 
 ```elixir
 # in MyApp.Application.start/2

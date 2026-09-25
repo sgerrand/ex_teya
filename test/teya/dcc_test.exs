@@ -1,10 +1,13 @@
 defmodule Teya.DCCTest do
   use Teya.APICase, async: false
 
+  alias Teya.TestEnv
+
   describe "quote/1" do
     test "returns an exchange rate offer for an eligible card" do
       stub_dcc(fn conn ->
         assert conn.method == "POST"
+        assert Plug.Conn.get_req_header(conn, "user-agent") == [Teya.HTTP.user_agent()]
         assert conn.request_path == "/fx/v3/dcc"
         assert Plug.Conn.get_req_header(conn, "authorization") == []
 
@@ -105,6 +108,19 @@ defmodule Teya.DCCTest do
                  "base_amount" => 1000,
                  "base_currency" => "GBP"
                })
+    end
+  end
+
+  describe "request options" do
+    test "lets a user-agent set in :dcc_req_options win" do
+      TestEnv.add(:dcc_req_options, user_agent: "acme/1.0")
+
+      Req.Test.stub(Teya.DCC, fn conn ->
+        assert Plug.Conn.get_req_header(conn, "user-agent") == ["acme/1.0"]
+        Req.Test.json(conn, %{"quote_id" => "q-1"})
+      end)
+
+      assert {:ok, %{"quote_id" => "q-1"}} = Teya.DCC.quote(%{"store_id" => "s-1"})
     end
   end
 end

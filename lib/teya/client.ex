@@ -1,7 +1,7 @@
 defmodule Teya.Client do
   @moduledoc false
 
-  alias Teya.{Auth, Error}
+  alias Teya.{Auth, Error, HTTP}
 
   @doc """
   Makes an authenticated HTTP request to the Teya API.
@@ -15,7 +15,8 @@ defmodule Teya.Client do
   - `:params` — query parameters map or keyword list
   - `:idempotency_key` — custom idempotency key for POST/PATCH (auto-generated if omitted)
 
-  All other options are merged into the underlying `Req` request.
+  Nothing else is read from `opts`. Settings for the underlying `Req`
+  request, such as timeouts or extra headers, come from `:req_options`.
   """
   def request(method, path, opts \\ []) do
     with {:ok, token} <- Auth.token() do
@@ -27,12 +28,20 @@ defmodule Teya.Client do
           method: method,
           url: base_url <> path,
           auth: {:bearer, token},
-          headers: idempotency_headers(method, opts),
+          # Req's own option, which gives way to a user-agent set in
+          # :req_options, as an option or a header.
+          user_agent: HTTP.user_agent(),
           receive_timeout: 30_000
         ]
         |> put_if_present(:json, Keyword.get(opts, :body))
         |> put_if_present(:params, Keyword.get(opts, :params))
         |> Keyword.merge(req_opts)
+        |> Req.new()
+        # Any idempotency-key set in config is dropped, whatever the method:
+        # one key there would mark every POST as a retry of the first, and it
+        # means nothing on other methods. POST and PATCH get their own.
+        |> Req.Request.delete_header("idempotency-key")
+        |> Req.merge(headers: idempotency_headers(method, opts))
 
       case Req.request(req) do
         {:ok, %{status: status} = resp} when status in 200..299 -> {:ok, resp.body}

@@ -43,6 +43,7 @@ These settings are optional:
 
 | Setting | Default | What it does |
 |---|---|---|
+| `:token_timeout_ms` | `15_000` | How long a request waits for an access token before it returns an error, or `:infinity`. A token request still running then carries on, and caches its token for the next request |
 | `:sse_stream_timeout_ms` | `60_000` | How long a POSLink stream waits for the next event before it gives up |
 | `:sse_max_error_body_bytes` | `65_536` | How much of a failed stream's error body is kept. A JSON error larger than this is cut and can no longer be read, so the error keeps its status and raw text but no code |
 
@@ -389,6 +390,39 @@ case Teya.Checkout.create_session(params) do
   {:error, %Teya.Error{status: status}} -> {:error, status}
 end
 ```
+
+When the API says which request fields it rejected, they are kept in
+`invalid_parameters`:
+
+```elixir
+{:error, %Teya.Error{code: "BAD_REQUEST", invalid_parameters: params}} =
+  Teya.Checkout.create_session(bad_params)
+
+# [%{"name" => "amount", "reason" => "must be positive"}]
+```
+
+Token endpoint failures use the OAuth 2.0 error format, so `code` holds values
+such as `"invalid_client"` and `"invalid_scope"`.
+
+### User agent
+
+Every request sends `User-Agent: teya-elixir/<version>`, which Teya recommends
+so they can identify your integration. To send your own, use Req's
+`:user_agent` option, or a `user-agent` header:
+
+```elixir
+config :teya, req_options: [user_agent: "acme-shop/1.0"]
+```
+
+Other headers you set there are sent too, with two exceptions the library
+always sets itself. API calls carry their own `Idempotency-Key`, since one key
+shared by every request would make each POST look like a retry of the first.
+Token requests are always sent as a form, whatever content type is set.
+
+Token requests and SSE streams use `:auth_req_options` and `:sse_req_options`
+when you set them, and `:req_options` when you do not. DCC quotes use only
+`:dcc_req_options`: the endpoint takes no token, so the options for
+authenticated API calls do not apply to it.
 
 ## Troubleshooting
 

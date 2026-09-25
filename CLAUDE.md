@@ -33,10 +33,14 @@ The library is an OTP application (`Teya.Application`) that starts a `Task.Super
 lib/teya/
   application.ex      — starts Teya.TaskSupervisor (always) and Teya.Auth (if :client_id set)
   config.ex           — %Teya.Config{} struct + Config.from_env/0
-  error.ex            — %Teya.Error{code, message, status} returned on failures
+  error.ex            — %Teya.Error{code, message, status, invalid_parameters} returned
+                        on failures, including token endpoint (OAuth) failures
   auth.ex             — GenServer: lazy token fetch, cache, proactive refresh
   client.ex           — HTTP layer: calls Auth.token/0, adds Bearer header,
                         auto-generates Idempotency-Key on POST/PATCH
+  http.ex             — shared by every module that makes a request: the user
+                        agent, and each request kind's options with their
+                        fallback to :req_options
   sse.ex              — SSE helpers: stream/6 sends each event to a process,
                         first/4 returns the first event of a given name;
                         frames are decoded by the req_server_sent_events plugin
@@ -122,15 +126,26 @@ must win.
 
 ### Auth failure and retry behaviour
 
-`Teya.Auth` refreshes tokens proactively `@refresh_margin_seconds` (30s) before
-expiry. If `fetch_token` fails during a proactive background refresh
-(`handle_info(:refresh, state)`), the GenServer schedules a retry after 10
-seconds — it does **not** crash. The cached token remains valid until it
-expires; only after expiry will `Auth.token/0` return `{:error, reason}`.
+`Teya.Auth` refreshes tokens in the background `@refresh_margin_seconds` (30s)
+before expiry, or halfway through the life of a token that lives less than a
+minute. A token that lives a second or less gets no background refresh; a new
+one is fetched when the next caller needs it.
 
-If `fetch_token` fails during a synchronous `Auth.token/0` call (e.g. on first
-use when no token is cached), the call returns `{:error, reason}` immediately
-and no token is cached.
+If a background refresh (`handle_info(:refresh, state)`) fails, the GenServer
+retries after 1 second, doubling each time up to 1 minute — it does **not**
+crash. `Auth.token/0` keeps returning the cached token, even while refreshes
+fail, until 5 seconds before it expires, and only then fetches synchronously.
+The gap keeps a request from reaching Teya with a token that has just run out.
+
+If that synchronous fetch fails (for example on first use, when no token is
+cached), the call returns `{:error, reason}` and nothing is cached. For the
+next second, callers are given that same failure rather than each sending
+another request. A caller waits at most `:token_timeout_ms` (15s) for a token,
+then gets `{:error, %Teya.Error{}}`.
+
+Every fetch, the background refresh included, runs inside the GenServer, so
+callers wait behind it. A slow token server can make them time out even while
+a usable token is cached.
 
 ## Documentation conventions
 

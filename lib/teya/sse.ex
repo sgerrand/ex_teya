@@ -26,7 +26,7 @@ defmodule Teya.SSE do
   """
 
   alias ReqServerSentEvents.Frame
-  alias Teya.Error
+  alias Teya.{Error, HTTP}
 
   @default_max_error_body_bytes 65_536
 
@@ -102,14 +102,15 @@ defmodule Teya.SSE do
   end
 
   defp request(url, token, handler) do
-    configured =
-      Application.get_env(:teya, :sse_req_options, Application.get_env(:teya, :req_options, []))
+    configured = HTTP.options(:sse_req_options)
 
     # Req retries a failed GET by default, which for a stream means opening it
     # again without a word: the reader never learns the connection dropped,
     # and the new stream replays its snapshot. Readers are told of a dropped
     # stream and reconnect themselves, so retrying is off unless configured.
-    [retry: false]
+    # The user agent is Req's own option, which gives way to one configured
+    # as an option or a header.
+    [retry: false, user_agent: HTTP.user_agent()]
     |> Keyword.merge(configured)
     |> Keyword.merge(
       url: url,
@@ -122,6 +123,9 @@ defmodule Teya.SSE do
       receive_timeout: Application.get_env(:teya, :sse_stream_timeout_ms, 60_000)
     )
     |> Req.new()
+    # The library sets Idempotency-Key itself, on API calls that need one. A
+    # key in config that the options fall back to means nothing on a stream.
+    |> Req.Request.delete_header("idempotency-key")
     # A 200 body with no frame delimiter — a proxy's HTML page, say — would
     # otherwise sit in the plugin's buffer and grow until the body ends.
     |> ReqServerSentEvents.attach(max_frame_size: @max_frame_bytes)

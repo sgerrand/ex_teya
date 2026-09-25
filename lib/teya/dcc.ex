@@ -11,7 +11,7 @@ defmodule Teya.DCC do
   This endpoint does not require OAuth authentication.
   """
 
-  alias Teya.Error
+  alias Teya.{Error, HTTP}
 
   @doc """
   Checks DCC eligibility and returns an exchange rate quote.
@@ -71,6 +71,10 @@ defmodule Teya.DCC do
   @spec quote(map()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def quote(params) do
     base_url = Application.get_env(:teya, :base_url, "https://api.teya.com")
+
+    # Not :req_options: those are built for authenticated API calls, and this
+    # endpoint takes no token, so their auth, test stubs and the rest do not
+    # belong here.
     req_opts = Application.get_env(:teya, :dcc_req_options, [])
 
     req =
@@ -78,6 +82,7 @@ defmodule Teya.DCC do
         method: :post,
         url: base_url <> "/fx/v3/dcc",
         json: params,
+        user_agent: HTTP.user_agent(),
         receive_timeout: 30_000
       ]
       |> Keyword.merge(req_opts)

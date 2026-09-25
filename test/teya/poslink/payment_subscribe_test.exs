@@ -1,6 +1,8 @@
 defmodule Teya.POSLink.PaymentSubscribeTest do
   use Teya.POSLink.SubscribeCase, async: false
 
+  alias Teya.TestEnv
+
   alias Teya.Error
   alias Teya.POSLink.Payment
 
@@ -8,25 +10,14 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
     "event: #{type}\ndata: #{Jason.encode!(data)}\n\n"
   end
 
-  # Restores the setting by removing it, since it has no value by default and
-  # putting nil back would be read as a cap of nil.
-  defp put_error_body_cap(bytes) do
-    original = Application.fetch_env(:teya, :sse_max_error_body_bytes)
-    Application.put_env(:teya, :sse_max_error_body_bytes, bytes)
-
-    on_exit(fn ->
-      case original do
-        {:ok, value} -> Application.put_env(:teya, :sse_max_error_body_bytes, value)
-        :error -> Application.delete_env(:teya, :sse_max_error_body_bytes)
-      end
-    end)
-  end
+  defp put_error_body_cap(bytes), do: TestEnv.put(:sse_max_error_body_bytes, bytes)
 
   defp stub_payment_sse(body) do
     stub_sse(fn conn ->
       assert conn.method == "GET"
       assert String.starts_with?(conn.request_path, "/poslink/v3/payment-requests/")
       assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer test_access_token"]
+      assert Plug.Conn.get_req_header(conn, "user-agent") == [Teya.HTTP.user_agent()]
 
       conn
       |> Plug.Conn.put_resp_content_type("text/event-stream")
@@ -276,10 +267,7 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       test_pid = self()
 
       # Leave :retry unset, as in production, where Req would otherwise retry.
-      original = Application.get_env(:teya, :sse_req_options)
-
-      Application.put_env(:teya, :sse_req_options, plug: {Req.Test, Teya.POSLink.Subscriber})
-      on_exit(fn -> Application.put_env(:teya, :sse_req_options, original) end)
+      TestEnv.put(:sse_req_options, plug: {Req.Test, Teya.POSLink.Subscriber})
 
       stub_sse(fn conn ->
         send(test_pid, :request_made)
@@ -309,6 +297,40 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       assert_receive {:poslink_payment_error, ^payment_id,
                       %ReqServerSentEvents.FrameTooLargeError{}},
                      2_000
+    end
+
+    test "keeps headers configured for the stream" do
+      payment_id = "pr-uuid-12"
+      TestEnv.add(:sse_req_options, headers: [{"x-trace-id", "abc"}])
+
+      stub_sse(fn conn ->
+        assert Plug.Conn.get_req_header(conn, "x-trace-id") == ["abc"]
+        assert Plug.Conn.get_req_header(conn, "user-agent") == [Teya.HTTP.user_agent()]
+
+        conn
+        |> Plug.Conn.put_resp_content_type("text/event-stream")
+        |> Plug.Conn.send_resp(200, sse_event("full", %{"status" => "NEW"}))
+      end)
+
+      {:ok, _task} = Payment.subscribe(payment_id, self())
+
+      assert_receive {:poslink_payment, ^payment_id, "full", _data}, 500
+    end
+
+    test "sends no idempotency key configured for API calls" do
+      payment_id = "pr-uuid-41"
+      TestEnv.add(:sse_req_options, headers: [{"idempotency-key", "from-config"}])
+
+      stub_sse(fn conn ->
+        assert Plug.Conn.get_req_header(conn, "idempotency-key") == []
+
+        conn
+        |> Plug.Conn.put_resp_content_type("text/event-stream")
+        |> Plug.Conn.send_resp(200, sse_event("full", %{"status" => "NEW"}))
+      end)
+
+      {:ok, _task} = Payment.subscribe(payment_id, self())
+      assert_receive {:poslink_payment, ^payment_id, "full", _data}, 500
     end
 
     test "sends poslink_payment_error on transport failure" do
@@ -366,7 +388,8 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
 
       {:ok, _task} = Payment.subscribe(payment_id, self())
 
-      assert_receive {:poslink_payment_error, ^payment_id, %Req.Response{status: 401}}, 500
+      assert_receive {:poslink_payment_error, ^payment_id, error}, 500
+      assert %Error{code: "invalid_client", status: 401} = error
     end
   end
 
@@ -499,14 +522,14 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       assert {:error, %Req.TransportError{reason: :econnrefused}} = Payment.get("pr-uuid-34")
     end
 
-    test "returns a token failure as it is" do
+    test "returns a token failure as a Teya.Error" do
       stub_auth(fn conn ->
         conn
         |> Plug.Conn.put_status(401)
         |> Req.Test.json(%{"error" => "invalid_client"})
       end)
 
-      assert {:error, %Req.Response{status: 401}} = Payment.get("pr-uuid-35")
+      assert {:error, %Error{code: "invalid_client", status: 401}} = Payment.get("pr-uuid-35")
     end
 
     @tag :capture_log

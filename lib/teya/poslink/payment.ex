@@ -135,13 +135,14 @@ defmodule Teya.POSLink.Payment do
 
   ## Errors
 
-  - `{:error, %Teya.Error{}}` — the API refused the request
+  - `{:error, %Teya.Error{}}` — the API refused the request, or the token
+    endpoint did; a token failure carries an OAuth code such as
+    `"invalid_client"`
   - `{:error, :timeout}` — no snapshot arrived before `:timeout` passed
   - `{:error, :no_snapshot}` — the stream closed without sending a full
     snapshot, for example after only partial updates; subscribe to it instead
   - `{:error, {:exit, reason}}` — the task reading the stream crashed
-  - `{:error, reason}` — any other failure, such as a `Req.TransportError` or
-    the token request failing
+  - `{:error, reason}` — any other failure, such as a `Req.TransportError`
 
   ## Examples
 
@@ -222,9 +223,10 @@ defmodule Teya.POSLink.Payment do
     - `event_type` is `"full"` (complete snapshot) or `"diff"` (partial update)
     - `data` is the decoded JSON map (e.g. `%{"status" => "SUCCESSFUL", ...}`)
   - `{:poslink_payment_error, id, reason}` — the stream ended with an error;
-    `reason` is a `%Teya.Error{}`, a transport exception such as
+    `reason` is a `%Teya.Error{}` when the API or the token endpoint refused
+    the request, or a transport exception such as
     `%Req.TransportError{reason: :timeout}` when no event arrives within
-    `:sse_stream_timeout_ms`, or the reason the token request failed
+    `:sse_stream_timeout_ms`
 
   The task exits normally when the server closes the stream (terminal payment
   state reached) or with an error tuple when the connection fails.

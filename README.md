@@ -161,6 +161,39 @@ Generate a shareable payment link:
 {:ok, _} = Teya.Refund.create(%{"transaction_id" => transaction_id})
 ```
 
+### Webhooks
+
+Teya signs every webhook it sends, and you should check the signature before
+you trust the body. `Teya.Webhook.parse/3` takes only a key read by
+`Teya.Webhook.decode_key/1`, so read it once, when your application starts. A
+bad key then stops the application there rather than turning away every
+webhook:
+
+```elixir
+# in MyApp.Application.start/2
+{:ok, key} = Teya.Webhook.decode_key(System.fetch_env!("TEYA_WEBHOOK_KEY"))
+:persistent_term.put(:teya_webhook_key, key)
+```
+
+Then check each webhook in its handler:
+
+```elixir
+require Logger
+
+key = :persistent_term.get(:teya_webhook_key)
+signature = conn |> Plug.Conn.get_req_header("x-teya-signature") |> List.first()
+
+case Teya.Webhook.parse(conn.assigns[:raw_body], signature, key) do
+  {:ok, %{"event" => "payment.succeeded.v1", "data" => data}} -> fulfil_order(data)
+  {:ok, _other_event} -> :ok
+  {:error, reason} -> Logger.warning("rejected a webhook: #{inspect(reason)}")
+end
+```
+
+The signature covers the exact bytes Teya sent, so the body must be kept as
+received. The `Teya.Webhook` docs show how to keep it, and cover retries and
+replayed webhooks.
+
 ### Card-Present (Direct Terminal Integration)
 
 Process a payment where your software supplies the raw card data from a POS

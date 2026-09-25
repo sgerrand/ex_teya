@@ -1,0 +1,393 @@
+defmodule Teya.WebhookTest do
+  use ExUnit.Case, async: true
+
+  alias Teya.Webhook
+
+  @body ~s({"event":"payment.succeeded.v1","data":{"transaction_id":"tr_1"}})
+
+  setup_all do
+    private_key = :public_key.generate_key({:rsa, 2048, 65_537})
+    {:RSAPrivateKey, _v, modulus, exponent, _, _, _, _, _, _, _} = private_key
+    public_key = {:RSAPublicKey, modulus, exponent}
+
+    # What the Business Portal shows: the SubjectPublicKeyInfo DER, Base64
+    # encoded, which is the same bytes the PEM wraps.
+    {:SubjectPublicKeyInfo, der, :not_encrypted} =
+      entry = :public_key.pem_entry_encode(:SubjectPublicKeyInfo, public_key)
+
+    pkcs1_der = :public_key.der_encode(:RSAPublicKey, public_key)
+
+    %{
+      private_key: private_key,
+      key: public_key,
+      base64_der: Base.encode64(der),
+      base64_pkcs1_der: Base.encode64(pkcs1_der),
+      pem: :public_key.pem_encode([entry])
+    }
+  end
+
+  defp sign(body, private_key) do
+    body |> :public_key.sign(:sha256, private_key) |> Base.encode64()
+  end
+
+  describe "verify/3" do
+    test "accepts a signature Teya made", ctx do
+      assert :ok = Webhook.verify(@body, sign(@body, ctx.private_key), ctx.key)
+    end
+
+    test "raises when given the key text instead of a decoded key", ctx do
+      signature = sign(@body, ctx.private_key)
+
+      for text <- [ctx.pem, ctx.base64_der, "nope!"] do
+        assert_raise ArgumentError, ~r/decode_key/, fn ->
+          Webhook.verify(@body, signature, text)
+        end
+
+        assert_raise ArgumentError, ~r/decode_key/, fn ->
+          Webhook.parse(@body, signature, text)
+        end
+      end
+    end
+
+    test "rejects a body changed after signing", ctx do
+      signature = sign(@body, ctx.private_key)
+      tampered = String.replace(@body, "tr_1", "tr_2")
+
+      assert {:error, :invalid_signature} = Webhook.verify(tampered, signature, ctx.key)
+    end
+
+    test "rejects a body signed by someone else", ctx do
+      other_key = :public_key.generate_key({:rsa, 2048, 65_537})
+
+      assert {:error, :invalid_signature} = Webhook.verify(@body, sign(@body, other_key), ctx.key)
+    end
+
+    test "rejects a re-encoded body", ctx do
+      signature = sign(@body, ctx.private_key)
+      re_encoded = @body |> Jason.decode!() |> Jason.encode!()
+
+      assert re_encoded != @body
+      assert {:error, :invalid_signature} = Webhook.verify(re_encoded, signature, ctx.key)
+    end
+
+    test "rejects a signature that is not Base64", ctx do
+      assert {:error, :malformed_signature} = Webhook.verify(@body, "not base64!", ctx.key)
+    end
+
+    test "rejects a missing signature", ctx do
+      assert {:error, :missing_signature} = Webhook.verify(@body, nil, ctx.key)
+      assert {:error, :missing_signature} = Webhook.parse(@body, nil, ctx.key)
+    end
+
+    test "rejects an empty signature", ctx do
+      assert {:error, :missing_signature} = Webhook.verify(@body, "", ctx.key)
+      assert {:error, :missing_signature} = Webhook.verify(@body, "   ", ctx.key)
+    end
+
+    test "rejects a missing body", ctx do
+      signature = sign(@body, ctx.private_key)
+
+      assert {:error, :missing_body} = Webhook.verify(nil, signature, ctx.key)
+      assert {:error, :missing_body} = Webhook.parse(nil, signature, ctx.key)
+    end
+
+    test "accepts a body kept as a list of chunks", ctx do
+      [first, second] = [binary_part(@body, 0, 10), binary_part(@body, 10, byte_size(@body) - 10)]
+
+      assert :ok = Webhook.verify([first, second], sign(@body, ctx.private_key), ctx.key)
+    end
+
+    test "reports a bad key the same way whichever function is called", ctx do
+      signature = sign(@body, ctx.private_key)
+      tiny = {:RSAPublicKey, 5, 3}
+
+      assert {:error, :malformed_key} = Webhook.verify(nil, signature, tiny)
+      assert {:error, :malformed_key} = Webhook.parse(nil, signature, tiny)
+    end
+
+    test "decodes a body kept as a list of chunks", ctx do
+      signature = sign(@body, ctx.private_key)
+      chunks = [binary_part(@body, 0, 10), binary_part(@body, 10, byte_size(@body) - 10)]
+
+      assert {:ok, %{"event" => "payment.succeeded.v1"}} =
+               Webhook.parse(chunks, signature, ctx.key)
+    end
+
+    test "rejects a list that is not a body", ctx do
+      assert {:error, :missing_body} =
+               Webhook.verify([:not, :bytes], sign(@body, ctx.private_key), ctx.key)
+    end
+
+    test "rejects a key record whose fields are not numbers", ctx do
+      key = {:RSAPublicKey, nil, "65537"}
+
+      assert {:error, :malformed_key} = Webhook.verify(@body, sign(@body, ctx.private_key), key)
+    end
+
+    test "rejects a value that is not a key at all", ctx do
+      signature = sign(@body, ctx.private_key)
+
+      assert {:error, :malformed_key} = Webhook.verify(@body, signature, nil)
+      assert {:error, :malformed_key} = Webhook.verify(@body, signature, %{})
+    end
+
+    test "accepts a signature with its padding removed", ctx do
+      signature = @body |> sign(ctx.private_key) |> String.trim_trailing("=")
+
+      assert :ok = Webhook.verify(@body, signature, ctx.key)
+    end
+
+    test "accepts a signature in URL-safe Base64", ctx do
+      signature = @body |> :public_key.sign(:sha256, ctx.private_key) |> Base.url_encode64()
+
+      assert :ok = Webhook.verify(@body, signature, ctx.key)
+    end
+
+    test "rejects a signature that is not text", ctx do
+      assert {:error, :malformed_signature} = Webhook.verify(@body, 12_345, ctx.key)
+    end
+
+    test "reports a bad key before looking at the signature" do
+      tiny = {:RSAPublicKey, 5, 3}
+
+      assert {:error, :malformed_key} = Webhook.verify(@body, "not base64!", tiny)
+      assert {:error, :malformed_key} = Webhook.verify(@body, nil, tiny)
+    end
+  end
+
+  describe "decode_key/1" do
+    test "reads a PEM key and a Base64 key to the same key", ctx do
+      assert {:ok, {:RSAPublicKey, _modulus, _exponent} = key} = Webhook.decode_key(ctx.pem)
+      assert {:ok, ^key} = Webhook.decode_key(ctx.base64_der)
+    end
+
+    test "reads a PEM squashed onto one line with escaped line breaks", ctx do
+      one_line = String.replace(ctx.pem, "\n", "\\n")
+
+      assert {:ok, {:RSAPublicKey, _modulus, _exponent}} = Webhook.decode_key(one_line)
+    end
+
+    test "reads a PEM squashed onto one line with escaped Windows line breaks", ctx do
+      one_line = String.replace(ctx.pem, "\n", "\\r\\n")
+
+      assert {:ok, {:RSAPublicKey, _modulus, _exponent}} = Webhook.decode_key(one_line)
+    end
+
+    test "reads a PEM squashed onto one line with escaped old Mac line breaks", ctx do
+      one_line = String.replace(ctx.pem, "\n", "\\r")
+
+      assert {:ok, {:RSAPublicKey, _modulus, _exponent}} = Webhook.decode_key(one_line)
+    end
+
+    test "reads a PEM whose line breaks were escaped twice", ctx do
+      for escape <- ["\\\\n", "\\\\r\\\\n", "\\\\r"] do
+        one_line = String.replace(ctx.pem, "\n", escape)
+
+        assert {:ok, {:RSAPublicKey, _modulus, _exponent}} = Webhook.decode_key(one_line),
+               "escape #{inspect(escape)}"
+      end
+    end
+
+    test "refuses a key record too large to check quickly" do
+      huge = Integer.pow(2, 20_000) + 1
+
+      assert {:error, :malformed_key} =
+               Webhook.verify("{}", "AAAA", {:RSAPublicKey, huge, 65_537})
+    end
+
+    test "reads a Base64 key that has lost its padding" do
+      # A 2048-bit key with the usual exponent encodes without padding. The
+      # smallest exponent makes the encoding one byte shorter, which needs it.
+      {:RSAPrivateKey, _v, modulus, exponent, _, _, _, _, _, _, _} =
+        :public_key.generate_key({:rsa, 2048, 3})
+
+      {:SubjectPublicKeyInfo, der, :not_encrypted} =
+        :public_key.pem_entry_encode(:SubjectPublicKeyInfo, {:RSAPublicKey, modulus, exponent})
+
+      padded = Base.encode64(der)
+      unpadded = String.trim_trailing(padded, "=")
+
+      assert unpadded != padded
+      assert {:ok, {:RSAPublicKey, ^modulus, ^exponent}} = Webhook.decode_key(unpadded)
+    end
+
+    test "finds the public key after another PEM block", ctx do
+      private =
+        :public_key.pem_encode([
+          :public_key.pem_entry_encode(:RSAPrivateKey, ctx.private_key)
+        ])
+
+      assert {:ok, {:RSAPublicKey, _modulus, _exponent}} =
+               Webhook.decode_key(private <> ctx.pem)
+    end
+
+    test "reads a Base64 key squashed onto one line with escaped line breaks", ctx do
+      wrapped = ctx.base64_der |> String.graphemes() |> Enum.chunk_every(64) |> Enum.join("\\n")
+
+      assert {:ok, {:RSAPublicKey, _modulus, _exponent}} = Webhook.decode_key(wrapped)
+    end
+
+    test "reads a PEM still wrapped in its quotes", ctx do
+      assert {:ok, {:RSAPublicKey, _modulus, _exponent}} = Webhook.decode_key(~s("#{ctx.pem}"))
+      assert {:ok, {:RSAPublicKey, _modulus, _exponent}} = Webhook.decode_key("'#{ctx.pem}'")
+    end
+
+    test "leaves an unmatched quote alone and still finds the key", ctx do
+      assert {:ok, {:RSAPublicKey, _modulus, _exponent}} = Webhook.decode_key(~s("#{ctx.pem}))
+    end
+
+    test "reads a PEM whose line breaks were flattened to spaces", ctx do
+      flattened = String.replace(ctx.pem, "\n", " ")
+
+      assert {:ok, {:RSAPublicKey, _modulus, _exponent}} = Webhook.decode_key(flattened)
+    end
+
+    test "reads an RSA PUBLIC KEY block", ctx do
+      {:ok, key} = Webhook.decode_key(ctx.pem)
+      pem = :public_key.pem_encode([:public_key.pem_entry_encode(:RSAPublicKey, key)])
+
+      assert pem =~ "BEGIN RSA PUBLIC KEY"
+      assert {:ok, ^key} = Webhook.decode_key(pem)
+    end
+
+    test "rejects a key too small to be real" do
+      tiny = :public_key.der_encode(:RSAPublicKey, {:RSAPublicKey, 5, 3})
+
+      assert {:error, :malformed_key} = Webhook.decode_key(Base.encode64(tiny))
+    end
+
+    test "rejects a 1024-bit key" do
+      {:RSAPrivateKey, _v, modulus, exponent, _, _, _, _, _, _, _} =
+        :public_key.generate_key({:rsa, 1024, 65_537})
+
+      der = :public_key.der_encode(:RSAPublicKey, {:RSAPublicKey, modulus, exponent})
+
+      assert {:error, :malformed_key} = Webhook.decode_key(Base.encode64(der))
+    end
+
+    test "rejects a key with an even exponent", ctx do
+      {:ok, {:RSAPublicKey, modulus, _exponent}} = Webhook.decode_key(ctx.pem)
+
+      assert {:error, :malformed_key} =
+               Webhook.verify(@body, "AAAA", {:RSAPublicKey, modulus, 4})
+    end
+
+    test "passes over a non-RSA key block to find the RSA key after it", ctx do
+      {:ECPrivateKey, _v, _private, params, public, _attrs} =
+        :public_key.generate_key({:namedCurve, :secp256r1})
+
+      ec_pem =
+        :public_key.pem_encode([
+          :public_key.pem_entry_encode(:SubjectPublicKeyInfo, {{:ECPoint, public}, params})
+        ])
+
+      assert {:error, :malformed_key} = Webhook.decode_key(ec_pem)
+      assert {:ok, {:RSAPublicKey, _modulus, _exponent}} = Webhook.decode_key(ec_pem <> ctx.pem)
+    end
+
+    test "rejects a key whose algorithm it does not know, without raising" do
+      # A SubjectPublicKeyInfo naming the made-up algorithm 1.2.3.4.
+      unknown = <<0x30, 0x0B, 0x30, 0x05, 0x06, 0x03, 0x2A, 0x03, 0x04, 0x03, 0x02, 0x00, 0x01>>
+
+      assert {:error, :malformed_key} = Webhook.decode_key(Base.encode64(unknown))
+    end
+
+    test "passes over a key block it cannot read to find the RSA key after it", ctx do
+      unknown = <<0x30, 0x0B, 0x30, 0x05, 0x06, 0x03, 0x2A, 0x03, 0x04, 0x03, 0x02, 0x00, 0x01>>
+      block = "-----BEGIN PUBLIC KEY-----\n#{Base.encode64(unknown)}\n-----END PUBLIC KEY-----\n"
+
+      assert {:ok, {:RSAPublicKey, _modulus, _exponent}} = Webhook.decode_key(block <> ctx.pem)
+    end
+
+    test "rejects an RSA-PSS key, which may not check these signatures", ctx do
+      {:ok, rsa_key} = Webhook.decode_key(ctx.pem)
+      key_der = :public_key.der_encode(:RSAPublicKey, rsa_key)
+      rsassa_pss = {1, 2, 840, 113_549, 1, 1, 10}
+
+      pss =
+        :public_key.der_encode(
+          :SubjectPublicKeyInfo,
+          {:SubjectPublicKeyInfo, {:AlgorithmIdentifier, rsassa_pss, :asn1_NOVALUE}, key_der}
+        )
+
+      assert {:error, :malformed_key} = Webhook.decode_key(Base.encode64(pss))
+    end
+
+    test "reads a key in URL-safe Base64", ctx do
+      url_safe = ctx.base64_der |> Base.decode64!() |> Base.url_encode64()
+
+      assert url_safe != ctx.base64_der
+      assert {:ok, {:RSAPublicKey, _modulus, _exponent}} = Webhook.decode_key(url_safe)
+    end
+
+    test "reads the older RSA form in Base64", ctx do
+      assert {:ok, key} = Webhook.decode_key(ctx.base64_pkcs1_der)
+      assert key == ctx.key
+    end
+
+    test "reads a key with surrounding whitespace", ctx do
+      assert {:ok, key} = Webhook.decode_key("\n  " <> ctx.base64_der <> "  \n")
+      assert key == ctx.key
+    end
+
+    test "gives the key verify/3 checks signatures with", ctx do
+      {:ok, key} = Webhook.decode_key(ctx.pem)
+
+      assert :ok = Webhook.verify(@body, sign(@body, ctx.private_key), key)
+    end
+
+    test "rejects text that is not a key" do
+      assert {:error, :malformed_key} = Webhook.decode_key("nope!")
+    end
+
+    test "rejects Base64 that is not a key" do
+      assert {:error, :malformed_key} = Webhook.decode_key(Base.encode64("hello there"))
+    end
+
+    test "rejects PEM that holds no entry" do
+      assert {:error, :malformed_key} = Webhook.decode_key("-----BEGIN")
+    end
+
+    test "rejects an empty PEM block" do
+      assert {:error, :malformed_key} =
+               Webhook.decode_key("-----BEGIN PUBLIC KEY-----\n-----END PUBLIC KEY-----\n")
+    end
+
+    test "rejects a private key in place of the public one", ctx do
+      pem =
+        :public_key.pem_encode([
+          :public_key.pem_entry_encode(:RSAPrivateKey, ctx.private_key)
+        ])
+
+      assert {:error, :malformed_key} = Webhook.decode_key(pem)
+    end
+
+    test "rejects a value that is not text" do
+      assert {:error, :malformed_key} = Webhook.decode_key(nil)
+    end
+
+    test "rejects a truncated PEM" do
+      assert {:error, :malformed_key} =
+               Webhook.decode_key("-----BEGIN PUBLIC KEY-----\nnot really\n")
+    end
+  end
+
+  describe "parse/3" do
+    test "returns the decoded event", ctx do
+      assert {:ok, event} = Webhook.parse(@body, sign(@body, ctx.private_key), ctx.key)
+      assert event["event"] == "payment.succeeded.v1"
+      assert event["data"]["transaction_id"] == "tr_1"
+    end
+
+    test "does not decode a body it cannot verify", ctx do
+      assert {:error, :invalid_signature} = Webhook.parse(@body, "AAAA", ctx.key)
+    end
+
+    test "rejects a signed body that is not a JSON object", ctx do
+      body = "[1, 2, 3]"
+
+      assert {:error, :malformed_body} =
+               Webhook.parse(body, sign(body, ctx.private_key), ctx.key)
+    end
+  end
+end

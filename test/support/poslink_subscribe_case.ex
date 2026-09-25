@@ -24,7 +24,7 @@ defmodule Teya.POSLink.SubscribeCase do
           state
           | token: "test_access_token",
             expires_at: System.monotonic_time(:second) + 3600,
-            usable_until: nil,
+            usable_until: System.monotonic_time(:second) + 3600,
             refresh_timer_ref: nil,
             failed_at: nil,
             failure: nil

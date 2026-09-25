@@ -317,6 +317,22 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       assert_receive {:poslink_payment, ^payment_id, "full", _data}, 500
     end
 
+    test "sends no idempotency key configured for API calls" do
+      payment_id = "pr-uuid-41"
+      TestEnv.add(:sse_req_options, headers: [{"idempotency-key", "from-config"}])
+
+      stub_sse(fn conn ->
+        assert Plug.Conn.get_req_header(conn, "idempotency-key") == []
+
+        conn
+        |> Plug.Conn.put_resp_content_type("text/event-stream")
+        |> Plug.Conn.send_resp(200, sse_event("full", %{"status" => "NEW"}))
+      end)
+
+      {:ok, _task} = Payment.subscribe(payment_id, self())
+      assert_receive {:poslink_payment, ^payment_id, "full", _data}, 500
+    end
+
     test "sends poslink_payment_error on transport failure" do
       payment_id = "pr-uuid-5"
 

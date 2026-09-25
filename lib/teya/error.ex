@@ -31,9 +31,11 @@ defmodule Teya.Error do
   @doc false
   # A Teya error names a code; the description and the list of rejected fields
   # are each there only sometimes.
-  def from_response(%{status: status, body: %{"code" => code} = body}) when is_binary(code) do
+  def from_response(%{status: status, body: %{"code" => code} = body})
+      when is_binary(code) or is_integer(code) do
     %__MODULE__{
-      code: code,
+      # A gateway in front may number its codes; code is text either way.
+      code: to_string(code),
       # Teya names it "description". A gateway in front may say "message".
       message: text(body["description"]) || text(body["message"]),
       status: status,
@@ -72,8 +74,9 @@ defmodule Teya.Error do
   #
   # A body that also names a Teya "code" is read as a Teya error, which keeps
   # both that code and its message.
-  def from_oauth_response(%{body: %{"code" => code}} = resp) when is_binary(code),
-    do: from_response(resp)
+  def from_oauth_response(%{body: %{"code" => code}} = resp)
+      when is_binary(code) or is_integer(code),
+      do: from_response(resp)
 
   def from_oauth_response(%{status: status, body: %{"error" => error} = body})
       when is_binary(error) do

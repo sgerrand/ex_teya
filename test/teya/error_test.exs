@@ -75,6 +75,13 @@ defmodule Teya.ErrorTest do
                Teya.Error.from_response(response)
     end
 
+    test "keeps a numeric code, as text" do
+      response = %{status: 429, body: %{"code" => 429_001, "message" => "rate limited"}}
+
+      assert %Teya.Error{code: "429001", message: "rate limited", status: 429} =
+               Teya.Error.from_response(response)
+    end
+
     test "keeps a gateway's bare message as text" do
       response = %{status: 403, body: %{"message" => "Forbidden"}}
 

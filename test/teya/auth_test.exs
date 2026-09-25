@@ -119,7 +119,7 @@ defmodule Teya.AuthTest do
                Teya.Auth.token()
     end
 
-    test "does not fetch for callers that gave up while a failing fetch ran", %{
+    test "shares a failed fetch with callers queued behind it", %{
       auth_pid: auth_pid
     } do
       TestEnv.put(:token_timeout_ms, 100)
@@ -222,6 +222,59 @@ defmodule Teya.AuthTest do
       assert Process.read_timer(:sys.get_state(auth_pid).refresh_timer_ref) <= 4_294_967_295
     end
 
+    test "keeps using a cached token that has not expired while the token server is down", %{
+      auth_pid: auth_pid
+    } do
+      :sys.replace_state(auth_pid, fn state ->
+        now = System.monotonic_time(:second)
+        %{state | token: "still-good", expires_at: now + 10, usable_until: now + 5}
+      end)
+
+      stub_auth(auth_pid, fn conn ->
+        conn |> Plug.Conn.put_status(503) |> Req.Test.json(%{"error" => "down"})
+      end)
+
+      assert {:ok, "still-good"} = Teya.Auth.token()
+    end
+
+    test "fetches a new token for each caller when told not to reuse one", %{
+      auth_pid: auth_pid
+    } do
+      fetches = :counters.new(1, [])
+
+      stub_auth(auth_pid, fn conn ->
+        :counters.add(fetches, 1, 1)
+        Req.Test.json(conn, %{"access_token" => "once", "expires_in" => 0})
+      end)
+
+      assert {:ok, "once"} = Teya.Auth.token()
+      assert {:ok, "once"} = Teya.Auth.token()
+      assert :counters.get(fetches, 1) == 2
+
+      # Refreshing ahead of time would loop, so there is no refresh timer.
+      assert :sys.get_state(auth_pid).refresh_timer_ref == nil
+    end
+
+    test "reads a lifetime given as a decimal number", %{auth_pid: auth_pid} do
+      stub_auth(auth_pid, fn conn ->
+        Req.Test.json(conn, %{"access_token" => "decimal", "expires_in" => 60.0})
+      end)
+
+      assert {:ok, "decimal"} = Teya.Auth.token()
+      remaining = :sys.get_state(auth_pid).expires_at - System.monotonic_time(:second)
+      assert remaining in 55..60
+    end
+
+    test "fetches when a cached token has no time it may be used until", %{auth_pid: auth_pid} do
+      stub_auth(auth_pid, fn conn ->
+        Req.Test.json(conn, %{"access_token" => "replacement", "expires_in" => 3600})
+      end)
+
+      :sys.replace_state(auth_pid, &%{&1 | token: "stale", expires_at: nil, usable_until: nil})
+
+      assert {:ok, "replacement"} = Teya.Auth.token()
+    end
+
     test "takes a token from any 2xx reply", %{auth_pid: auth_pid} do
       stub_auth(auth_pid, fn conn ->
         conn
@@ -277,6 +330,19 @@ defmodule Teya.AuthTest do
   end
 
   describe "proactive refresh" do
+    test "cancels a live refresh before scheduling a retry", %{auth_pid: auth_pid} do
+      stub_auth(auth_pid, fn conn ->
+        conn |> Plug.Conn.put_status(503) |> Req.Test.json(%{"error" => "down"})
+      end)
+
+      live = Process.send_after(auth_pid, :never_sent, 60_000)
+      :sys.replace_state(auth_pid, &%{&1 | refresh_timer_ref: live})
+      send(auth_pid, :refresh)
+      :sys.get_state(auth_pid)
+
+      assert Process.read_timer(live) == false
+    end
+
     test "waits a minute at most between retries, however many have failed", %{
       auth_pid: auth_pid
     } do

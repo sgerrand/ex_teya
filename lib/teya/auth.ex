@@ -57,16 +57,12 @@ defmodule Teya.Auth do
   than `:token_timeout_ms`.
   """
   def token do
-    timeout = token_timeout()
-    GenServer.call(__MODULE__, {:token, deadline(timeout)}, timeout)
+    GenServer.call(__MODULE__, :token, token_timeout())
   catch
     # A fetch already under way carries on and caches its token for the next
     # caller.
     :exit, {:timeout, _call} -> {:error, timed_out()}
   end
-
-  defp deadline(:infinity), do: :infinity
-  defp deadline(timeout), do: System.monotonic_time(:millisecond) + timeout
 
   defp timed_out, do: %Error{message: "timed out waiting for an access token"}
 
@@ -82,19 +78,11 @@ defmodule Teya.Auth do
     {:ok, %__MODULE__{config: config}}
   end
 
-  # A request reached only after its caller has given up is answered without
-  # fetching. Otherwise, while a fetch is failing, every caller queued behind
-  # it would set off another fetch, one after another, for nobody. An
-  # :infinity deadline is never passed: any number is less than any atom.
   @impl true
-  def handle_call({:token, deadline}, _from, state) do
-    if System.monotonic_time(:millisecond) >= deadline do
-      {:reply, {:error, timed_out()}, state}
-    else
-      case ensure_valid_token(state) do
-        {:ok, state} -> {:reply, {:ok, state.token}, state}
-        {:error, reason, state} -> {:reply, {:error, reason}, state}
-      end
+  def handle_call(:token, _from, state) do
+    case ensure_valid_token(state) do
+      {:ok, state} -> {:reply, {:ok, state.token}, state}
+      {:error, reason, state} -> {:reply, {:error, reason}, state}
     end
   end
 
@@ -115,6 +103,9 @@ defmodule Teya.Auth do
           "Teya.Auth: token refresh failed (#{inspect(reason)}), retrying in #{delay_ms}ms"
         )
 
+        # A synchronous fetch may have scheduled a refresh while this one was
+        # queued. Cancel it, or the two would run as separate loops for good.
+        if state.refresh_timer_ref, do: Process.cancel_timer(state.refresh_timer_ref)
         ref = Process.send_after(self(), :refresh, delay_ms)
 
         {:noreply,
@@ -131,11 +122,12 @@ defmodule Teya.Auth do
   # when it fails. Fetching here any sooner would make every caller in the last
   # seconds of a token's life wait on a fetch of its own, and, while the token
   # server was down, hand them an error in place of a token that still worked.
-  defp ensure_valid_token(state) do
-    if state.token && System.monotonic_time(:second) < (state.usable_until || state.expires_at),
-      do: {:ok, state},
-      else: fetch(state)
+  defp ensure_valid_token(%{token: token, usable_until: until} = state)
+       when is_binary(token) and is_integer(until) do
+    if System.monotonic_time(:second) < until, do: {:ok, state}, else: fetch(state)
   end
+
+  defp ensure_valid_token(state), do: fetch(state)
 
   defp fetch(state) do
     if recently_failed?(state) do
@@ -221,6 +213,7 @@ defmodule Teya.Auth do
   # kept as 0 rather than read as missing: the caller gets this token, and the
   # next one fetches a new one.
   defp lifetime(seconds) when is_integer(seconds) and seconds >= 0, do: seconds
+  defp lifetime(seconds) when is_float(seconds) and seconds >= 0, do: trunc(seconds)
 
   defp lifetime(seconds) when is_binary(seconds) do
     case Integer.parse(seconds) do

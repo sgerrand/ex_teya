@@ -141,8 +141,11 @@ If that synchronous fetch fails (for example on first use, when no token is
 cached), the call returns `{:error, reason}` and nothing is cached. For the
 next second, callers are given that same failure rather than each sending
 another request. A caller waits at most `:token_timeout_ms` (15s) for a token,
-then gets `{:error, %Teya.Error{}}`; a request reached only after its caller
-gave up is answered without fetching.
+then gets `{:error, %Teya.Error{}}`.
+
+Every fetch, the background refresh included, runs inside the GenServer, so
+callers wait behind it. A slow token server can make them time out even while
+a usable token is cached.
 
 ## Documentation conventions
 

@@ -1,7 +1,7 @@
 defmodule Teya.ClientTest do
   use Teya.APICase, async: false
 
-  import ExUnit.Callbacks, only: [on_exit: 1]
+  alias Teya.TestEnv
 
   describe "request/3" do
     test "sends a library user-agent" do
@@ -16,9 +16,7 @@ defmodule Teya.ClientTest do
     end
 
     test "keeps configured headers and the idempotency key together" do
-      original = Application.get_env(:teya, :req_options)
-      Application.put_env(:teya, :req_options, original ++ [headers: [{"x-trace-id", "abc"}]])
-      on_exit(fn -> Application.put_env(:teya, :req_options, original) end)
+      TestEnv.add(:req_options, headers: [{"x-trace-id", "abc"}])
 
       stub_api(fn conn ->
         assert Plug.Conn.get_req_header(conn, "x-trace-id") == ["abc"]
@@ -32,15 +30,7 @@ defmodule Teya.ClientTest do
     end
 
     test "lets a configured user-agent win" do
-      original = Application.get_env(:teya, :req_options)
-
-      Application.put_env(
-        :teya,
-        :req_options,
-        original ++ [headers: [{"User-Agent", "acme/1.0"}]]
-      )
-
-      on_exit(fn -> Application.put_env(:teya, :req_options, original) end)
+      TestEnv.add(:req_options, headers: [{"User-Agent", "acme/1.0"}])
 
       stub_api(fn conn ->
         assert Plug.Conn.get_req_header(conn, "user-agent") == ["acme/1.0"]
@@ -51,15 +41,7 @@ defmodule Teya.ClientTest do
     end
 
     test "accepts configured headers given as a map" do
-      original = Application.get_env(:teya, :req_options)
-
-      Application.put_env(
-        :teya,
-        :req_options,
-        original ++ [headers: %{"x-trace-id" => "abc", "user-agent" => ["acme/1.0"]}]
-      )
-
-      on_exit(fn -> Application.put_env(:teya, :req_options, original) end)
+      TestEnv.add(:req_options, headers: %{"x-trace-id" => "abc", "user-agent" => ["acme/1.0"]})
 
       stub_api(fn conn ->
         assert Plug.Conn.get_req_header(conn, "x-trace-id") == ["abc"]
@@ -72,9 +54,7 @@ defmodule Teya.ClientTest do
     end
 
     test "lets a configured user-agent win when named with an atom" do
-      original = Application.get_env(:teya, :req_options)
-      Application.put_env(:teya, :req_options, original ++ [headers: [user_agent: "acme/1.0"]])
-      on_exit(fn -> Application.put_env(:teya, :req_options, original) end)
+      TestEnv.add(:req_options, headers: [user_agent: "acme/1.0"])
 
       stub_api(fn conn ->
         assert Plug.Conn.get_req_header(conn, "user-agent") == ["acme/1.0"]
@@ -87,15 +67,7 @@ defmodule Teya.ClientTest do
     end
 
     test "ignores an idempotency key set in configured headers" do
-      original = Application.get_env(:teya, :req_options)
-
-      Application.put_env(
-        :teya,
-        :req_options,
-        original ++ [headers: [{"idempotency-key", "from-config"}]]
-      )
-
-      on_exit(fn -> Application.put_env(:teya, :req_options, original) end)
+      TestEnv.add(:req_options, headers: [{"idempotency-key", "from-config"}])
 
       stub_api(fn conn ->
         assert Plug.Conn.get_req_header(conn, "idempotency-key") == ["order-42"]
@@ -107,9 +79,7 @@ defmodule Teya.ClientTest do
     end
 
     test "lets a user_agent option in :req_options win" do
-      original = Application.get_env(:teya, :req_options)
-      Application.put_env(:teya, :req_options, original ++ [user_agent: "acme/option"])
-      on_exit(fn -> Application.put_env(:teya, :req_options, original) end)
+      TestEnv.add(:req_options, user_agent: "acme/option")
 
       stub_api(fn conn ->
         assert Plug.Conn.get_req_header(conn, "user-agent") == ["acme/option"]

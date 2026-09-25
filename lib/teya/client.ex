@@ -5,7 +5,9 @@ defmodule Teya.Client do
 
   @doc false
   # Read from the running application, so it always names the version in use.
-  def user_agent, do: "teya-elixir/#{Application.spec(:teya, :vsn)}"
+  # Where the application is not loaded there is no version, and the slash
+  # that would stand before it is left off.
+  def user_agent, do: String.trim_trailing("teya-elixir/#{Application.spec(:teya, :vsn)}", "/")
 
   @doc """
   Makes an authenticated HTTP request to the Teya API.
@@ -19,7 +21,8 @@ defmodule Teya.Client do
   - `:params` — query parameters map or keyword list
   - `:idempotency_key` — custom idempotency key for POST/PATCH (auto-generated if omitted)
 
-  All other options are merged into the underlying `Req` request.
+  Nothing else is read from `opts`. Settings for the underlying `Req`
+  request, such as timeouts or extra headers, come from `:req_options`.
   """
   def request(method, path, opts \\ []) do
     with {:ok, token} <- Auth.token() do

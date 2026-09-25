@@ -1,6 +1,8 @@
 defmodule Teya.AuthTest do
   use ExUnit.Case, async: false
 
+  alias Teya.TestEnv
+
   setup do
     auth_pid = Process.whereis(Teya.Auth)
     # Reset cached token to force a fresh fetch on each test
@@ -34,15 +36,7 @@ defmodule Teya.AuthTest do
     test "sends the token request as a form whatever content-type is configured", %{
       auth_pid: auth_pid
     } do
-      original = Application.get_env(:teya, :auth_req_options)
-
-      Application.put_env(
-        :teya,
-        :auth_req_options,
-        original ++ [headers: [{"content-type", "application/json"}]]
-      )
-
-      on_exit(fn -> Application.put_env(:teya, :auth_req_options, original) end)
+      TestEnv.add(:auth_req_options, headers: [{"content-type", "application/json"}])
 
       stub_auth(auth_pid, fn conn ->
         assert Plug.Conn.get_req_header(conn, "content-type") == [
@@ -53,6 +47,22 @@ defmodule Teya.AuthTest do
       end)
 
       assert {:ok, "form_token"} = Teya.Auth.token()
+    end
+
+    test "keeps a token out of the error when the reply cannot be read", %{
+      auth_pid: auth_pid
+    } do
+      for body <- [
+            %{"access_token" => "secret-token-1"},
+            %{"access_token" => "secret-token-1", "expires_in" => "3600"}
+          ] do
+        :sys.replace_state(auth_pid, &%{&1 | token: nil, expires_at: nil})
+        stub_auth(auth_pid, fn conn -> Req.Test.json(conn, body) end)
+
+        assert {:error, %Teya.Error{status: 200} = error} = Teya.Auth.token()
+        refute inspect(error) =~ "secret-token-1"
+        assert Process.alive?(auth_pid)
+      end
     end
 
     test "caches the token on subsequent calls", %{auth_pid: auth_pid} do

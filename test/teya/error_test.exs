@@ -68,6 +68,19 @@ defmodule Teya.ErrorTest do
              } = Teya.Error.from_response(response)
     end
 
+    test "reads the message from a message field when there is no description" do
+      response = %{status: 429, body: %{"code" => "RATE_LIMITED", "message" => "retry in 30s"}}
+
+      assert %Teya.Error{code: "RATE_LIMITED", message: "retry in 30s", status: 429} =
+               Teya.Error.from_response(response)
+    end
+
+    test "keeps the message as text or nothing" do
+      response = %{status: 400, body: %{"code" => "BAD_REQUEST", "description" => %{"en" => "x"}}}
+
+      assert %Teya.Error{code: "BAD_REQUEST", message: nil} = Teya.Error.from_response(response)
+    end
+
     test "keeps only a list of maps as the rejected fields" do
       not_a_list = %{
         status: 400,
@@ -114,6 +127,15 @@ defmodule Teya.ErrorTest do
                Teya.Error.from_oauth_response(response)
 
       assert message =~ "service_unavailable"
+    end
+
+    test "reads an OAuth error sent with another 4xx status" do
+      for status <- [403, 429] do
+        response = %{status: status, body: %{"error" => "slow_down"}}
+
+        assert %Teya.Error{code: "slow_down", status: ^status} =
+                 Teya.Error.from_oauth_response(response)
+      end
     end
 
     test "falls back to the standard shape for a non-OAuth body" do

@@ -124,8 +124,14 @@ defmodule Teya.Auth do
       |> Req.merge(headers: [{"content-type", "application/x-www-form-urlencoded"}])
 
     case Req.request(req) do
-      {:ok, %{status: 200, body: %{"access_token" => token, "expires_in" => expires_in}}} ->
+      {:ok, %{status: 200, body: %{"access_token" => token, "expires_in" => expires_in}}}
+      when is_binary(token) and is_integer(expires_in) ->
         {:ok, token, System.monotonic_time(:second) + expires_in}
+
+      # A success whose reply cannot be read may still hold a live token, and
+      # a failed refresh is logged, so none of the body goes into the error.
+      {:ok, %{status: status}} when status in 200..299 ->
+        {:error, %Error{status: status, message: "the token endpoint's reply could not be read"}}
 
       {:ok, resp} ->
         {:error, Error.from_oauth_response(resp)}

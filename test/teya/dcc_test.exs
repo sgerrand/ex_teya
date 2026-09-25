@@ -1,6 +1,8 @@
 defmodule Teya.DCCTest do
   use Teya.APICase, async: false
 
+  alias Teya.TestEnv
+
   describe "quote/1" do
     test "returns an exchange rate offer for an eligible card" do
       stub_dcc(fn conn ->
@@ -111,9 +113,7 @@ defmodule Teya.DCCTest do
 
   describe "request options" do
     test "lets a user-agent set in :dcc_req_options win" do
-      original = Application.get_env(:teya, :dcc_req_options)
-      Application.put_env(:teya, :dcc_req_options, original ++ [user_agent: "acme/1.0"])
-      on_exit(fn -> Application.put_env(:teya, :dcc_req_options, original) end)
+      TestEnv.add(:dcc_req_options, user_agent: "acme/1.0")
 
       Req.Test.stub(Teya.DCC, fn conn ->
         assert Plug.Conn.get_req_header(conn, "user-agent") == ["acme/1.0"]

@@ -33,7 +33,8 @@ defmodule Teya.Error do
   def from_response(%{status: status, body: %{"code" => code} = body}) when is_binary(code) do
     %__MODULE__{
       code: code,
-      message: body["description"],
+      # Teya names it "description". A gateway in front may say "message".
+      message: text(body["description"]) || text(body["message"]),
       status: status,
       invalid_parameters: invalid_parameters(body["invalid_parameters"])
     }
@@ -47,18 +48,22 @@ defmodule Teya.Error do
     %__MODULE__{status: status}
   end
 
+  # The message is text, as the type says, whatever arrived.
+  defp text(value) when is_binary(value), do: value
+  defp text(_value), do: nil
+
   # Keep only what the docs promise, a list of maps, whatever arrived.
   defp invalid_parameters(params) when is_list(params), do: Enum.filter(params, &is_map/1)
   defp invalid_parameters(_params), do: nil
 
   @doc false
-  # The token endpoint answers in the OAuth 2.0 error format, which RFC 6749
-  # sends as 400, or 401 for a bad client. Any other status in front of that
-  # endpoint is a gateway or proxy page, so keep its body as the message
-  # rather than reading a non-OAuth string as a code.
+  # The token endpoint answers in the OAuth 2.0 error format. RFC 6749 sends
+  # it as 400, or 401 for a bad client, but servers use other 4xx statuses too,
+  # such as 403 or 429. A 5xx in front of that endpoint is a gateway or proxy
+  # page, so its body is kept as the message rather than read as a code.
   def from_oauth_response(%{status: status, body: %{"error" => code} = body})
-      when is_binary(code) and status in [400, 401] do
-    %__MODULE__{code: code, message: body["error_description"], status: status}
+      when is_binary(code) and status in 400..499 do
+    %__MODULE__{code: code, message: text(body["error_description"]), status: status}
   end
 
   def from_oauth_response(resp), do: from_response(resp)

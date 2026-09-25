@@ -1,6 +1,8 @@
 defmodule Teya.POSLink.PaymentSubscribeTest do
   use Teya.POSLink.SubscribeCase, async: false
 
+  alias Teya.TestEnv
+
   alias Teya.Error
   alias Teya.POSLink.Payment
 
@@ -8,19 +10,7 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
     "event: #{type}\ndata: #{Jason.encode!(data)}\n\n"
   end
 
-  # Restores the setting by removing it, since it has no value by default and
-  # putting nil back would be read as a cap of nil.
-  defp put_error_body_cap(bytes) do
-    original = Application.fetch_env(:teya, :sse_max_error_body_bytes)
-    Application.put_env(:teya, :sse_max_error_body_bytes, bytes)
-
-    on_exit(fn ->
-      case original do
-        {:ok, value} -> Application.put_env(:teya, :sse_max_error_body_bytes, value)
-        :error -> Application.delete_env(:teya, :sse_max_error_body_bytes)
-      end
-    end)
-  end
+  defp put_error_body_cap(bytes), do: TestEnv.put(:sse_max_error_body_bytes, bytes)
 
   defp stub_payment_sse(body) do
     stub_sse(fn conn ->
@@ -277,10 +267,7 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       test_pid = self()
 
       # Leave :retry unset, as in production, where Req would otherwise retry.
-      original = Application.get_env(:teya, :sse_req_options)
-
-      Application.put_env(:teya, :sse_req_options, plug: {Req.Test, Teya.POSLink.Subscriber})
-      on_exit(fn -> Application.put_env(:teya, :sse_req_options, original) end)
+      TestEnv.put(:sse_req_options, plug: {Req.Test, Teya.POSLink.Subscriber})
 
       stub_sse(fn conn ->
         send(test_pid, :request_made)
@@ -314,15 +301,7 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
 
     test "keeps headers configured for the stream" do
       payment_id = "pr-uuid-12"
-      original = Application.get_env(:teya, :sse_req_options)
-
-      Application.put_env(
-        :teya,
-        :sse_req_options,
-        original ++ [headers: [{"x-trace-id", "abc"}]]
-      )
-
-      on_exit(fn -> Application.put_env(:teya, :sse_req_options, original) end)
+      TestEnv.add(:sse_req_options, headers: [{"x-trace-id", "abc"}])
 
       stub_sse(fn conn ->
         assert Plug.Conn.get_req_header(conn, "x-trace-id") == ["abc"]

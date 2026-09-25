@@ -39,8 +39,27 @@ defmodule Teya.POSLink.EposTest do
     end
 
     test "raises without the user's token" do
+      assert_raise ArgumentError, ~r/:user_token/, fn -> Epos.register(@params) end
+
       for opts <- [[], [user_token: ""], [user_token: nil]] do
         assert_raise ArgumentError, ~r/:user_token/, fn -> Epos.register(@params, opts) end
+      end
+    end
+
+    test "registers before there is any auth process to ask" do
+      auth_pid = Process.whereis(Teya.Auth)
+      Process.unregister(Teya.Auth)
+
+      stub_api(fn conn ->
+        assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer user-jwt"]
+        json_response(conn, 200, %{"client_id" => "m2m-client"})
+      end)
+
+      try do
+        assert {:ok, %{"client_id" => "m2m-client"}} =
+                 Epos.register(@params, user_token: "user-jwt")
+      after
+        Process.register(auth_pid, Teya.Auth)
       end
     end
   end

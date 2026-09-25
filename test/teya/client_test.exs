@@ -100,6 +100,26 @@ defmodule Teya.ClientTest do
       assert {:ok, _} = Teya.Client.request(:get, "/v1/test")
     end
 
+    test "ignores a :token among the options every resource function passes on" do
+      stub_api(fn conn ->
+        assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer test_access_token"]
+        json_response(conn, 200, %{"ok" => true})
+      end)
+
+      assert {:ok, _} = Teya.Client.request(:get, "/v1/test", token: "tok_card_1234")
+    end
+
+    test "sends its own token even when :req_options sets :auth" do
+      TestEnv.add(:req_options, auth: {:bearer, "proxy-token"})
+
+      stub_api(fn conn ->
+        assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer test_access_token"]
+        json_response(conn, 200, %{"ok" => true})
+      end)
+
+      assert {:ok, _} = Teya.Client.request(:get, "/v1/test")
+    end
+
     test "returns error tuple on transport failure" do
       stub_api(fn conn ->
         Req.Test.transport_error(conn, :timeout)

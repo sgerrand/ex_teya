@@ -106,6 +106,25 @@ defmodule Teya.POSLink.StoreTest do
       assert {:ok, %{"value" => "true"}} = Store.put_config("store-uuid-1", "PAT_ENABLED", "true")
     end
 
+    test "sends a boolean or a number as the string the API takes" do
+      stub_api(fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        json_response(conn, 200, Jason.decode!(body))
+      end)
+
+      assert {:ok, %{"value" => "true"}} = Store.put_config("store-uuid-1", "PAT_ENABLED", true)
+      assert {:ok, %{"value" => "30"}} = Store.put_config("store-uuid-1", "TIMEOUT", 30)
+    end
+
+    test "encodes a key so it cannot change which endpoint is called" do
+      stub_api(fn conn ->
+        assert conn.request_path == "/poslink/v1/stores/store-uuid-1/configs/A%2FB%3Fx"
+        json_response(conn, 200, %{"config_key" => "A/B?x", "value" => "on"})
+      end)
+
+      assert {:ok, _} = Store.put_config("store-uuid-1", "A/B?x", "on")
+    end
+
     test "returns Teya.Error for a value the key does not accept" do
       stub_api(fn conn ->
         error_response(conn, 400, "BAD_REQUEST", "PAT_ENABLED accepts true or false")

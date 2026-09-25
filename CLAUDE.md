@@ -60,7 +60,7 @@ lib/teya/
                         GET /poslink/v1/stores/{id}/terminals/{tid}/configs,
                         PUT /poslink/v1/stores/{id}/configs/{key}
     epos.ex           — POST /poslink/v1/epos/register; takes a user's token
-                        (Client's :token option), not the auth process's
+                        (Client.request_with_token/4), not the auth process's
     payment.ex        — POST /poslink/v3/payment-requests, GET /poslink/v3/payment-requests/{id} (SSE),
                         PATCH /poslink/v2/payment-requests/{id}, GET /poslink/v2/payment-requests,
                         GET /poslink/v3/payment-requests/{id}/receipt-text

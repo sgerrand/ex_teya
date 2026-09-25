@@ -10,6 +10,8 @@ defmodule Teya.Moto do
 
   For payments on a Teya terminal, see `Teya.POSLink.Payment`. For card data
   read from your own terminal hardware, see `Teya.CardPresent`.
+
+  Teya's specification names no OAuth scope for this endpoint.
   """
 
   alias Teya.Client

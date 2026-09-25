@@ -6,6 +6,7 @@ defmodule Teya.POSLink.Store do
   and `terminal_id` to use when creating payment requests.
 
   Required OAuth scopes: `poslink/stores/get`, `poslink/stores/id/terminals/get`.
+  Teya's specification names no scope for the configuration endpoints.
   """
 
   alias Teya.Client
@@ -68,15 +69,21 @@ defmodule Teya.POSLink.Store do
   @spec terminal_configs(String.t(), String.t(), keyword()) ::
           {:ok, map()} | {:error, Teya.Error.t()}
   def terminal_configs(store_id, terminal_id, opts \\ []) do
-    Client.request(:get, "/poslink/v1/stores/#{store_id}/terminals/#{terminal_id}/configs", opts)
+    path =
+      "/poslink/v1/stores/#{Client.segment(store_id)}" <>
+        "/terminals/#{Client.segment(terminal_id)}/configs"
+
+    Client.request(:get, path, opts)
   end
 
   @doc """
   Sets a configuration value for every terminal in a store.
 
-  Values are strings, and which ones are accepted depends on the key: for
+  The API takes values as strings, and which ones depends on the key: for
   example, `"PAT_ENABLED"` takes `"true"` or `"false"`, and anything else is
-  refused with a 400. Setting the value it already has changes nothing.
+  refused with a 400. A boolean or a number is sent as its string, so `true`
+  and `"true"` are the same. Setting the value it already has changes
+  nothing.
 
   Returns `{:ok, response}` with `config_key`, `value` and `updated_at`.
 
@@ -84,20 +91,21 @@ defmodule Teya.POSLink.Store do
 
   - `store_id` — UUID of the store
   - `config_key` — the setting to change, such as `"PAT_ENABLED"`
-  - `value` — the new value, as a string
+  - `value` — the new value: a string, boolean or number
 
   ## Examples
 
       {:ok, %{"value" => "true"}} =
         Teya.POSLink.Store.put_config(store_id, "PAT_ENABLED", "true")
   """
-  @spec put_config(String.t(), String.t(), String.t(), keyword()) ::
+  @spec put_config(String.t(), String.t(), String.t() | boolean() | number(), keyword()) ::
           {:ok, map()} | {:error, Teya.Error.t()}
-  def put_config(store_id, config_key, value, opts \\ []) do
+  def put_config(store_id, config_key, value, opts \\ [])
+      when is_binary(value) or is_boolean(value) or is_number(value) do
     Client.request(
       :put,
-      "/poslink/v1/stores/#{store_id}/configs/#{config_key}",
-      Keyword.put(opts, :body, %{"value" => value})
+      "/poslink/v1/stores/#{Client.segment(store_id)}/configs/#{Client.segment(config_key)}",
+      Keyword.put(opts, :body, %{"value" => to_string(value)})
     )
   end
 end

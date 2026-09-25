@@ -189,6 +189,11 @@ defmodule Teya.POSLink.Payment do
   details, and the references a receipt needs. Lines with nothing to show are
   left out. Only a payment request whose status is `"SUCCESSFUL"` has one.
 
+  A refund has a receipt here when it was made as a payment request, with
+  `create/2` and `"transaction_type" => "REFUND"`. One made with
+  `Teya.POSLink.Refund.create/2` has no payment request id, so it cannot be
+  looked up this way.
+
   ## Parameters
 
   - `payment_request_id` — UUID returned from `create/2`
@@ -201,7 +206,7 @@ defmodule Teya.POSLink.Payment do
   def receipt_text(payment_request_id, opts \\ []) do
     Client.request(
       :get,
-      "/poslink/v3/payment-requests/#{payment_request_id}/receipt-text",
+      "/poslink/v3/payment-requests/#{Client.segment(payment_request_id)}/receipt-text",
       opts
     )
   end

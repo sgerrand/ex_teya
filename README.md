@@ -301,8 +301,10 @@ status in real time.
 #### Register an ePOS application
 
 Registering once per store turns a signed-in user's token into credentials for
-the library. Configure it with the `client_id`, `client_secret` and `scopes`
-that come back:
+the library. It is a setup step: store the `client_id`, `client_secret` and
+`scopes` that come back in your configuration, then restart the application,
+which reads them only when it starts. Registering needs no `:client_id` of
+its own.
 
 ```elixir
 {:ok, %{"client_id" => id, "client_secret" => secret, "scopes" => scopes}} =

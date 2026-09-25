@@ -147,8 +147,9 @@ then gets `{:error, %Teya.Error{}}`.
 Every fetch, the background refresh included, runs in a task under
 `Teya.TaskSupervisor`, never inside the GenServer. A caller with a usable token
 cached is answered at once, whatever a fetch is doing. Callers who need a new
-token join a list of waiters, and the one fetch under way answers them all
-with `GenServer.reply/2`. There is only ever one fetch at a time. A fetch that
+token join a list of waiters, each with the time it gives up, and the one fetch
+under way answers them all with `GenServer.reply/2`. Each new caller clears out
+waiters that have given up, so the list holds only callers still waiting. There is only ever one fetch at a time. A fetch that
 runs a second past `:token_timeout_ms` (or 60s when that is `:infinity`) is
 killed and
 reported as a failure, so one that hangs cannot hold every later caller. The

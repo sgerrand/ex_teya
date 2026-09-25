@@ -14,8 +14,8 @@ defmodule Teya.Auth do
   #
   # fetch is the task under way, if any: its monitor, its pid, whether it is a
   # background refresh, and the timer that ends it if it runs too long.
-  # waiters are the callers who need a token that is not cached; the one
-  # fetch answers them all. usable_until is when the cached token stops being
+  # waiters are the callers who need a token that is not cached, each with
+  # the time it stops waiting; the one fetch answers them all. usable_until is when the cached token stops being
   # handed out, a little before expires_at. refresh_tag marks the refresh
   # timer that is current, so a stale one that already fired is ignored.
   # failed_at and failure hold the last failed fetch, which callers share for
@@ -77,7 +77,8 @@ defmodule Teya.Auth do
   longer than `:token_timeout_ms`, or the auth process is not running.
   """
   def token do
-    GenServer.call(__MODULE__, :token, token_timeout())
+    timeout = token_timeout()
+    GenServer.call(__MODULE__, {:token, gives_up_at(timeout)}, timeout)
   catch
     # A fetch already under way carries on and caches its token for the next
     # caller.
@@ -87,6 +88,9 @@ defmodule Teya.Auth do
   end
 
   defp timed_out, do: %Error{message: "timed out waiting for an access token"}
+
+  defp gives_up_at(:infinity), do: :infinity
+  defp gives_up_at(timeout), do: System.monotonic_time(:millisecond) + timeout
 
   defp token_timeout do
     case Application.get_env(:teya, :token_timeout_ms, @default_token_timeout_ms) do
@@ -108,13 +112,33 @@ defmodule Teya.Auth do
   end
 
   @impl true
-  def handle_call(:token, from, state) do
+  def handle_call({:token, gives_up_at}, from, state) do
+    now = System.monotonic_time(:millisecond)
+
     cond do
-      usable?(state) -> {:reply, {:ok, state.token}, state}
-      recently_failed?(state) -> {:reply, {:error, state.failure}, state}
-      true -> {:noreply, start_fetch(%{state | waiters: [from | state.waiters]}, :call)}
+      usable?(state) ->
+        {:reply, {:ok, state.token}, state}
+
+      recently_failed?(state) ->
+        {:reply, {:error, state.failure}, state}
+
+      # Its caller has already given up, so do not fetch for it.
+      gives_up_at <= now ->
+        {:reply, {:error, timed_out()}, state}
+
+      true ->
+        waiters = [{from, gives_up_at} | still_waiting(state.waiters, now)]
+        {:noreply, start_fetch(%{state | waiters: waiters}, :call)}
     end
   end
+
+  # A caller that has given up stays in the list until someone looks, so
+  # each new caller clears out those whose wait is over. The list then holds
+  # only callers still waiting, however long a fetch takes and however many
+  # short-lived callers come and go meanwhile. :infinity is later than any
+  # time: every atom sorts after every number.
+  defp still_waiting(waiters, now),
+    do: Enum.filter(waiters, fn {_from, gives_up_at} -> gives_up_at > now end)
 
   @impl true
   def handle_info({:refresh, tag}, %{refresh_tag: tag} = state) do
@@ -199,13 +223,13 @@ defmodule Teya.Auth do
       else: Logger.debug("Teya.Auth: token fetched, expires in #{lifetime}s")
 
     Process.cancel_timer(fetch.timer)
-    Enum.each(state.waiters, &GenServer.reply(&1, {:ok, token}))
+    reply_all(state.waiters, {:ok, token})
     %{store_token(state, token, expires_at, lifetime) | fetch: nil, waiters: []}
   end
 
   defp finish_fetch(%{fetch: fetch} = state, {:error, reason}) do
     Process.cancel_timer(fetch.timer)
-    Enum.each(state.waiters, &GenServer.reply(&1, {:error, reason}))
+    reply_all(state.waiters, {:error, reason})
     retry? = fetch.kind == :refresh or state.token != nil
 
     state = %{
@@ -218,6 +242,9 @@ defmodule Teya.Auth do
 
     if retry?, do: schedule_retry(state, reason), else: state
   end
+
+  defp reply_all(waiters, reply),
+    do: Enum.each(waiters, fn {from, _gives_up_at} -> GenServer.reply(from, reply) end)
 
   # A failed refresh, or any failed fetch while a token is cached, means the
   # token is due or overdue for renewal, so keep trying in the background,

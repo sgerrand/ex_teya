@@ -404,6 +404,92 @@ defmodule Teya.AuthTest do
                await_settled(auth_pid)
     end
 
+    test "ignores a refresh queued before a caller's fetch stored a new token", %{
+      auth_pid: auth_pid
+    } do
+      fetches = :counters.new(1, [])
+
+      stub_auth(auth_pid, fn conn ->
+        :counters.add(fetches, 1, 1)
+        Req.Test.json(conn, %{"access_token" => "fresh", "expires_in" => 3600})
+      end)
+
+      # A refresh timer is current, and its token has run out.
+      tag = make_ref()
+      expired_at = System.monotonic_time(:second) - 1
+
+      :sys.replace_state(
+        auth_pid,
+        &%{&1 | token: "expired", usable_until: expired_at, refresh_tag: tag}
+      )
+
+      # A caller's fetch stores a new token, and with it a new refresh timer.
+      assert {:ok, "fresh"} = Teya.Auth.token()
+
+      # The old timer's message, already sent before it was cancelled, arrives.
+      send(auth_pid, {:refresh, tag})
+
+      assert %{fetch: nil} = :sys.get_state(auth_pid)
+      assert :counters.get(fetches, 1) == 1
+    end
+
+    test "ignores a refresh queued before a failed fetch scheduled its retry", %{
+      auth_pid: auth_pid
+    } do
+      fetches = :counters.new(1, [])
+
+      stub_auth(auth_pid, fn conn ->
+        :counters.add(fetches, 1, 1)
+        conn |> Plug.Conn.put_status(503) |> Req.Test.json(%{"error" => "down"})
+      end)
+
+      tag = make_ref()
+      expired_at = System.monotonic_time(:second) - 1
+
+      :sys.replace_state(
+        auth_pid,
+        &%{&1 | token: "expired", usable_until: expired_at, refresh_tag: tag}
+      )
+
+      # The caller's fetch fails; with a token cached, a retry is scheduled.
+      assert {:error, %Teya.Error{}} = Teya.Auth.token()
+      %{refresh_timer_ref: retry_timer} = :sys.get_state(auth_pid)
+      assert is_reference(retry_timer)
+
+      send(auth_pid, {:refresh, tag})
+
+      # No fetch now; the retry keeps its delay.
+      assert %{fetch: nil, refresh_timer_ref: ^retry_timer} = :sys.get_state(auth_pid)
+      assert :counters.get(fetches, 1) == 1
+    end
+
+    test "keeps only callers still waiting while a fetch stalls", %{auth_pid: auth_pid} do
+      TestEnv.put(:token_timeout_ms, 100)
+
+      stub_auth(auth_pid, fn conn ->
+        Process.sleep(5_000)
+        Req.Test.json(conn, %{"access_token" => "never", "expires_in" => 3600})
+      end)
+
+      # Three callers in turn, each giving up before the next arrives.
+      for _caller <- 1..3, do: assert({:error, %Teya.Error{}} = Teya.Auth.token())
+
+      # The latest caller has given up too, but no one has cleared it out yet;
+      # the two before it were cleared when it arrived.
+      assert %{fetch: %{}, waiters: [_only_the_latest]} = :sys.get_state(auth_pid)
+
+      await_settled(auth_pid)
+    end
+
+    test "does not fetch for a caller that has already given up", %{auth_pid: auth_pid} do
+      gave_up_at = System.monotonic_time(:millisecond) - 1
+
+      assert {:error, %Teya.Error{message: "timed out waiting for an access token"}} =
+               GenServer.call(auth_pid, {:token, gave_up_at})
+
+      assert %{fetch: nil, waiters: []} = :sys.get_state(auth_pid)
+    end
+
     test "ignores a refresh whose timer has been replaced", %{auth_pid: auth_pid} do
       :sys.replace_state(auth_pid, &%{&1 | refresh_tag: make_ref()})
       send(auth_pid, {:refresh, make_ref()})

@@ -527,14 +527,14 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       assert {:error, %Req.TransportError{reason: :econnrefused}} = Payment.get("pr-uuid-34")
     end
 
-    test "returns a token failure as it is" do
+    test "returns a token failure as a Teya.Error" do
       stub_auth(fn conn ->
         conn
         |> Plug.Conn.put_status(401)
         |> Req.Test.json(%{"error" => "invalid_client"})
       end)
 
-      assert {:error, %Req.Response{status: 401}} = Payment.get("pr-uuid-35")
+      assert {:error, %Error{code: "invalid_client", status: 401}} = Payment.get("pr-uuid-35")
     end
 
     @tag :capture_log

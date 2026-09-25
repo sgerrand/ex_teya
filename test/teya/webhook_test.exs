@@ -200,6 +200,28 @@ defmodule Teya.WebhookTest do
       assert {:ok, {:RSAPublicKey, _modulus, _exponent}} = Webhook.decode_key(one_line)
     end
 
+    test "reads a PEM squashed onto one line with escaped old Mac line breaks", ctx do
+      one_line = String.replace(ctx.pem, "\n", "\\r")
+
+      assert {:ok, {:RSAPublicKey, _modulus, _exponent}} = Webhook.decode_key(one_line)
+    end
+
+    test "reads a PEM whose line breaks were escaped twice", ctx do
+      for escape <- ["\\\\n", "\\\\r\\\\n", "\\\\r"] do
+        one_line = String.replace(ctx.pem, "\n", escape)
+
+        assert {:ok, {:RSAPublicKey, _modulus, _exponent}} = Webhook.decode_key(one_line),
+               "escape #{inspect(escape)}"
+      end
+    end
+
+    test "refuses a key record too large to check quickly" do
+      huge = Integer.pow(2, 20_000) + 1
+
+      assert {:error, :malformed_key} =
+               Webhook.verify("{}", "AAAA", {:RSAPublicKey, huge, 65_537})
+    end
+
     test "reads a Base64 key that has lost its padding" do
       # A 2048-bit key with the usual exponent encodes without padding. The
       # smallest exponent makes the encoding one byte shorter, which needs it.

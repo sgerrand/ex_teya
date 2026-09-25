@@ -2,7 +2,7 @@ defmodule Teya.Webhook do
   @moduledoc """
   Checks that a webhook really came from Teya.
 
-  Teya signs every webhook with SHA256withRSA (RSASSA-PKCS1-v1_5 with SHA-256)
+  Teya signs every webhook with its RSA key, over a SHA-256 hash of the body,
   and sends the signature, Base64 encoded, in the `x-teya-signature` header.
   The public key comes from the webhook's settings in the Teya Business Portal,
   as PEM text or Base64. Both are accepted.
@@ -51,6 +51,11 @@ defmodule Teya.Webhook do
 
   Handing anything else on, such as `{:more, ...}` for a body over the length
   limit, leaves `Plug.Parsers` to answer it as usual.
+
+  The reader only runs for a body `Plug.Parsers` reads, which is one whose
+  content type matches a parser. Teya sends `application/json`, so keep the
+  `:json` parser in the list. A request with any other content type never
+  reaches the reader and so has no raw body.
 
   Match the path your webhook really has, including any scope it is mounted
   under. If the reader does not run for a request, there is no raw body, and
@@ -185,20 +190,21 @@ defmodule Teya.Webhook do
   defp to_key(text) when is_binary(text), do: decode_key(text)
   defp to_key(key), do: read_key(key)
 
-  @min_key_bytes div(2048, 8)
+  # Teya's keys are 2048 bits. The smallest 2048-bit number is 2^2047. The
+  # upper limit is far past any key in use, but stops a key built by hand from
+  # making every check slow.
+  @min_modulus Integer.pow(2, 2047)
+  @max_modulus Integer.pow(2, 16_384)
 
   # A key record built or stored by hand can hold anything, and :public_key
   # raises on fields that are not integers rather than refusing the key. Any
   # two integers also decode as an RSA key, so a key too small to be real is
   # refused here, where it is found at startup, rather than left to turn away
-  # every webhook. Teya's keys are 2048 bits.
+  # every webhook.
   defp read_key({:RSAPublicKey, modulus, exponent} = key)
-       when is_integer(modulus) and modulus > 0 and is_integer(exponent) and exponent > 1 and
-              rem(exponent, 2) == 1 do
-    if byte_size(:binary.encode_unsigned(modulus)) >= @min_key_bytes,
-      do: {:ok, key},
-      else: {:error, :malformed_key}
-  end
+       when is_integer(modulus) and modulus >= @min_modulus and modulus < @max_modulus and
+              is_integer(exponent) and exponent > 1 and rem(exponent, 2) == 1,
+       do: {:ok, key}
 
   defp read_key(_key), do: {:error, :malformed_key}
 
@@ -233,18 +239,21 @@ defmodule Teya.Webhook do
 
   # Keys stored in environment variables and secret stores arrive damaged in
   # a few common ways: wrapped in the quotes they were written with, or with
-  # their line breaks written out as \\n or \\r\\n. Undo those. Line breaks
-  # flattened to spaces need nothing here, since Base64 is read ignoring
-  # whitespace.
+  # their line breaks written out as \n, \r\n or \r — sometimes escaped twice,
+  # as \\n. Undo those. At any one place the longest match wins, so \r\n is
+  # read as one line break and not two. Line breaks flattened to spaces need
+  # nothing here, since Base64 is read ignoring whitespace.
+  @escaped_line_breaks ["\\\\r\\\\n", "\\\\n", "\\\\r", "\\r\\n", "\\n", "\\r"]
+
   defp tidy_key_text(text) do
     text
     |> String.trim()
-    |> String.replace(["\\r\\n", "\\n"], "\n")
+    |> String.replace(@escaped_line_breaks, "\n")
     |> unquote_key()
   end
 
-  defp unquote_key(<<quote, rest::binary>> = text) when quote in [?", ?'] do
-    if String.ends_with?(rest, <<quote>>),
+  defp unquote_key(<<mark, rest::binary>> = text) when mark in [?", ?'] do
+    if String.ends_with?(rest, <<mark>>),
       do: binary_part(rest, 0, byte_size(rest) - 1),
       else: text
   end

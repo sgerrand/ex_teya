@@ -52,12 +52,18 @@ lib/teya/
   refund.ex           — POST /v3/refunds
   receipt.ex          — POST /v1/transactions/{id}/receipts
   token.ex            — DELETE /v1/tokens/{id}
+  moto.ex             — POST /v1/transactions/moto
   webhook.ex          — verifies the x-teya-signature on an incoming webhook
                         (SHA256withRSA over the raw body); no HTTP of its own
   poslink/
-    store.ex          — GET /poslink/v1/stores, GET /poslink/v1/stores/{id}/terminals
+    store.ex          — GET /poslink/v1/stores, GET /poslink/v1/stores/{id}/terminals,
+                        GET /poslink/v1/stores/{id}/terminals/{tid}/configs,
+                        PUT /poslink/v1/stores/{id}/configs/{key}
+    epos.ex           — POST /poslink/v1/epos/register; takes a user's token
+                        (Client's :token option), not the auth process's
     payment.ex        — POST /poslink/v3/payment-requests, GET /poslink/v3/payment-requests/{id} (SSE),
-                        PATCH /poslink/v2/payment-requests/{id}, GET /poslink/v2/payment-requests
+                        PATCH /poslink/v2/payment-requests/{id}, GET /poslink/v2/payment-requests,
+                        GET /poslink/v3/payment-requests/{id}/receipt-text
                         subscribe/2: spawns a Task to stream SSE payment status events
     refund.ex         — POST /poslink/v2/refunds
     receipt.ex        — POST /poslink/v1/receipt-requests

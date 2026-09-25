@@ -14,12 +14,14 @@ defmodule Teya.Client do
   - `:body` — request body, serialised as JSON
   - `:params` — query parameters map or keyword list
   - `:idempotency_key` — custom idempotency key for POST/PATCH (auto-generated if omitted)
+  - `:token` — a bearer token to send in place of the auth process's own, for
+    the rare endpoint that takes a different kind of token
 
   Nothing else is read from `opts`. Settings for the underlying `Req`
   request, such as timeouts or extra headers, come from `:req_options`.
   """
   def request(method, path, opts \\ []) do
-    with {:ok, token} <- Auth.token() do
+    with {:ok, token} <- bearer_token(opts) do
       base_url = Application.get_env(:teya, :base_url, "https://api.teya.com")
       req_opts = Application.get_env(:teya, :req_options, [])
 
@@ -48,6 +50,13 @@ defmodule Teya.Client do
         {:ok, resp} -> {:error, Error.from_response(resp)}
         {:error, reason} -> {:error, reason}
       end
+    end
+  end
+
+  defp bearer_token(opts) do
+    case Keyword.fetch(opts, :token) do
+      {:ok, token} -> {:ok, token}
+      :error -> Auth.token()
     end
   end
 

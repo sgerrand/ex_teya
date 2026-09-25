@@ -72,4 +72,47 @@ defmodule Teya.POSLink.StoreTest do
                Store.list_terminals("nonexistent-store")
     end
   end
+
+  describe "terminal_configs/3" do
+    test "returns the configuration for a terminal in a store" do
+      stub_api(fn conn ->
+        assert conn.method == "GET"
+
+        assert conn.request_path ==
+                 "/poslink/v1/stores/store-uuid-1/terminals/term-1/configs"
+
+        json_response(conn, 200, %{
+          "configs" => [%{"config_key" => "PAT_ENABLED", "value" => "true"}]
+        })
+      end)
+
+      assert {:ok, %{"configs" => [%{"config_key" => "PAT_ENABLED"}]}} =
+               Store.terminal_configs("store-uuid-1", "term-1")
+    end
+  end
+
+  describe "put_config/4" do
+    test "sets a configuration value for the store" do
+      stub_api(fn conn ->
+        assert conn.method == "PUT"
+        assert conn.request_path == "/poslink/v1/stores/store-uuid-1/configs/PAT_ENABLED"
+
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        assert Jason.decode!(body) == %{"value" => "true"}
+
+        json_response(conn, 200, %{"config_key" => "PAT_ENABLED", "value" => "true"})
+      end)
+
+      assert {:ok, %{"value" => "true"}} = Store.put_config("store-uuid-1", "PAT_ENABLED", "true")
+    end
+
+    test "returns Teya.Error for a value the key does not accept" do
+      stub_api(fn conn ->
+        error_response(conn, 400, "BAD_REQUEST", "PAT_ENABLED accepts true or false")
+      end)
+
+      assert {:error, %Error{code: "BAD_REQUEST", status: 400}} =
+               Store.put_config("store-uuid-1", "PAT_ENABLED", "maybe")
+    end
+  end
 end

@@ -182,6 +182,31 @@ defmodule Teya.POSLink.Payment do
   end
 
   @doc """
+  Returns the receipt for a successful payment or refund, as plain text.
+
+  Returns `{:ok, %{"receipt_text" => text}}`. The text covers the store's name
+  and address, the date and time in UTC, the amount, tip and total, card
+  details, and the references a receipt needs. Lines with nothing to show are
+  left out. Only a payment request whose status is `"SUCCESSFUL"` has one.
+
+  ## Parameters
+
+  - `payment_request_id` — UUID returned from `create/2`
+
+  ## Examples
+
+      {:ok, %{"receipt_text" => text}} = Teya.POSLink.Payment.receipt_text(payment_request_id)
+  """
+  @spec receipt_text(String.t(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
+  def receipt_text(payment_request_id, opts \\ []) do
+    Client.request(
+      :get,
+      "/poslink/v3/payment-requests/#{payment_request_id}/receipt-text",
+      opts
+    )
+  end
+
+  @doc """
   Lists a store's payments and refunds, newest first.
 
   Returns `{:ok, response}` with a `"payment_requests"` list and a

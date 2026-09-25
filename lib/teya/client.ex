@@ -1,13 +1,7 @@
 defmodule Teya.Client do
   @moduledoc false
 
-  alias Teya.{Auth, Error}
-
-  @doc false
-  # Read from the running application, so it always names the version in use.
-  # Where the application is not loaded there is no version, and the slash
-  # that would stand before it is left off.
-  def user_agent, do: String.trim_trailing("teya-elixir/#{Application.spec(:teya, :vsn)}", "/")
+  alias Teya.{Auth, Error, HTTP}
 
   @doc """
   Makes an authenticated HTTP request to the Teya API.
@@ -36,7 +30,7 @@ defmodule Teya.Client do
           auth: {:bearer, token},
           # Req's own option, which gives way to a user-agent set in
           # :req_options, as an option or a header.
-          user_agent: user_agent(),
+          user_agent: HTTP.user_agent(),
           receive_timeout: 30_000
         ]
         |> put_if_present(:json, Keyword.get(opts, :body))

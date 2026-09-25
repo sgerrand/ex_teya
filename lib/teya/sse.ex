@@ -26,7 +26,7 @@ defmodule Teya.SSE do
   """
 
   alias ReqServerSentEvents.Frame
-  alias Teya.{Client, Error}
+  alias Teya.{Error, HTTP}
 
   @default_max_error_body_bytes 65_536
 
@@ -102,8 +102,7 @@ defmodule Teya.SSE do
   end
 
   defp request(url, token, handler) do
-    configured =
-      Application.get_env(:teya, :sse_req_options, Application.get_env(:teya, :req_options, []))
+    configured = HTTP.options(:sse_req_options)
 
     # Req retries a failed GET by default, which for a stream means opening it
     # again without a word: the reader never learns the connection dropped,
@@ -111,7 +110,7 @@ defmodule Teya.SSE do
     # stream and reconnect themselves, so retrying is off unless configured.
     # The user agent is Req's own option, which gives way to one configured
     # as an option or a header.
-    [retry: false, user_agent: Client.user_agent()]
+    [retry: false, user_agent: HTTP.user_agent()]
     |> Keyword.merge(configured)
     |> Keyword.merge(
       url: url,

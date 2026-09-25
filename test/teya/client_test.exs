@@ -21,7 +21,7 @@ defmodule Teya.ClientTest do
       stub_api(fn conn ->
         assert Plug.Conn.get_req_header(conn, "x-trace-id") == ["abc"]
         assert Plug.Conn.get_req_header(conn, "idempotency-key") != []
-        assert Plug.Conn.get_req_header(conn, "user-agent") == [Teya.Client.user_agent()]
+        assert Plug.Conn.get_req_header(conn, "user-agent") == [Teya.HTTP.user_agent()]
 
         json_response(conn, 200, %{"ok" => true})
       end)

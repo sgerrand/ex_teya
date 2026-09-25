@@ -127,13 +127,41 @@ defmodule Teya.ErrorTest do
                Teya.Error.from_oauth_response(response)
     end
 
-    test "keeps the body as the message for a gateway error on the token endpoint" do
-      response = %{status: 503, body: %{"error" => "service_unavailable"}}
+    test "keeps a gateway's free-text error on the token endpoint as the message" do
+      response = %{status: 503, body: %{"error" => "Service Unavailable"}}
 
-      assert %Teya.Error{code: nil, status: 503, message: message} =
+      assert %Teya.Error{code: nil, message: "Service Unavailable", status: 503} =
+               Teya.Error.from_oauth_response(response)
+    end
+
+    test "keeps a token endpoint reply with neither kind of code as the message" do
+      response = %{status: 502, body: "<html>Bad Gateway</html>"}
+
+      assert %Teya.Error{code: nil, status: 502, message: message} =
                Teya.Error.from_oauth_response(response)
 
-      assert message =~ "service_unavailable"
+      assert message =~ "Bad Gateway"
+    end
+
+    test "reads an OAuth code sent with a 5xx" do
+      response = %{status: 503, body: %{"error" => "temporarily_unavailable"}}
+
+      assert %Teya.Error{code: "temporarily_unavailable", status: 503} =
+               Teya.Error.from_oauth_response(response)
+    end
+
+    test "reads a body that names a Teya code as a Teya error" do
+      response = %{
+        status: 401,
+        body: %{
+          "error" => "Unauthorized",
+          "code" => "UNAUTHORISED",
+          "message" => "secret expired"
+        }
+      }
+
+      assert %Teya.Error{code: "UNAUTHORISED", message: "secret expired", status: 401} =
+               Teya.Error.from_oauth_response(response)
     end
 
     test "reads an OAuth error sent with another 4xx status" do

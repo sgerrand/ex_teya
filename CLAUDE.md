@@ -38,6 +38,9 @@ lib/teya/
   auth.ex             — GenServer: lazy token fetch, cache, proactive refresh
   client.ex           — HTTP layer: calls Auth.token/0, adds Bearer header,
                         auto-generates Idempotency-Key on POST/PATCH
+  http.ex             — shared by every module that makes a request: the user
+                        agent, and each request kind's options with their
+                        fallback to :req_options
   sse.ex              — SSE helpers: stream/6 sends each event to a process,
                         first/4 returns the first event of a given name;
                         frames are decoded by the req_server_sent_events plugin

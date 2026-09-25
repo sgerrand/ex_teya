@@ -7,7 +7,7 @@ defmodule Teya.DCCTest do
     test "returns an exchange rate offer for an eligible card" do
       stub_dcc(fn conn ->
         assert conn.method == "POST"
-        assert Plug.Conn.get_req_header(conn, "user-agent") == [Teya.Client.user_agent()]
+        assert Plug.Conn.get_req_header(conn, "user-agent") == [Teya.HTTP.user_agent()]
         assert conn.request_path == "/fx/v3/dcc"
         assert Plug.Conn.get_req_header(conn, "authorization") == []
 

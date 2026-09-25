@@ -26,7 +26,7 @@ defmodule Teya.AuthTest do
       stub_auth(auth_pid, fn conn ->
         assert conn.method == "POST"
         assert conn.request_path == "/connect/token"
-        assert Plug.Conn.get_req_header(conn, "user-agent") == [Teya.Client.user_agent()]
+        assert Plug.Conn.get_req_header(conn, "user-agent") == [Teya.HTTP.user_agent()]
         Req.Test.json(conn, %{"access_token" => "fresh_token", "expires_in" => 3600})
       end)
 
@@ -93,7 +93,73 @@ defmodule Teya.AuthTest do
         Req.Test.json(conn, %{"access_token" => "slow", "expires_in" => 3600})
       end)
 
-      assert {:error, :timeout} = Teya.Auth.token()
+      assert {:error, %Teya.Error{message: "timed out waiting for an access token"}} =
+               Teya.Auth.token()
+    end
+
+    test "does not fetch for callers that gave up while a failing fetch ran", %{
+      auth_pid: auth_pid
+    } do
+      TestEnv.put(:token_timeout_ms, 100)
+      fetches = :counters.new(1, [])
+
+      stub_auth(auth_pid, fn conn ->
+        :counters.add(fetches, 1, 1)
+        Process.sleep(300)
+        conn |> Plug.Conn.put_status(503) |> Req.Test.json(%{"error" => "down"})
+      end)
+
+      # Five callers queue up behind the first fetch, and all give up on it.
+      1..5
+      |> Enum.map(fn _i -> Task.async(fn -> Teya.Auth.token() end) end)
+      |> Enum.each(&assert({:error, %Teya.Error{}} = Task.await(&1)))
+
+      # Let the auth process work through the requests queued behind it.
+      :sys.get_state(auth_pid)
+      assert :counters.get(fetches, 1) == 1
+    end
+
+    test "refreshes a short-lived token halfway through rather than at once", %{
+      auth_pid: auth_pid
+    } do
+      fetches = :counters.new(1, [])
+
+      stub_auth(auth_pid, fn conn ->
+        :counters.add(fetches, 1, 1)
+        Req.Test.json(conn, %{"access_token" => "short", "expires_in" => 20})
+      end)
+
+      assert {:ok, "short"} = Teya.Auth.token()
+      assert {:ok, "short"} = Teya.Auth.token()
+      assert :counters.get(fetches, 1) == 1
+
+      state = :sys.get_state(auth_pid)
+      assert state.margin == 10
+      assert Process.read_timer(state.refresh_timer_ref) > 5_000
+    end
+
+    # Req.Test ignores timeouts, so this runs the capping but cannot see it
+    # take effect: it shows only that configured timeouts do not get in the way.
+    test "still fetches when longer timeouts are configured for API calls", %{
+      auth_pid: auth_pid
+    } do
+      TestEnv.add(:auth_req_options, receive_timeout: 60_000, connect_options: [timeout: 60_000])
+
+      stub_auth(auth_pid, fn conn ->
+        Req.Test.json(conn, %{"access_token" => "capped", "expires_in" => 3600})
+      end)
+
+      assert {:ok, "capped"} = Teya.Auth.token()
+    end
+
+    test "takes a token from any 2xx reply", %{auth_pid: auth_pid} do
+      stub_auth(auth_pid, fn conn ->
+        conn
+        |> Plug.Conn.put_status(201)
+        |> Req.Test.json(%{"access_token" => "created", "expires_in" => 3600})
+      end)
+
+      assert {:ok, "created"} = Teya.Auth.token()
     end
 
     test "caches the token on subsequent calls", %{auth_pid: auth_pid} do

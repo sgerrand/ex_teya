@@ -64,17 +64,20 @@ defmodule Teya.Error do
   defp invalid_parameters(_params), do: nil
 
   @doc false
-  # The token endpoint answers in the OAuth 2.0 error format. RFC 6749 sends
-  # it as 400, or 401 for a bad client, but servers use other 4xx statuses too,
-  # such as 403 or 429. A 5xx in front of that endpoint is a gateway or proxy
-  # page, so its body is kept as the message rather than read as a code.
-  #
-  # OAuth codes are short words joined by underscores, such as
-  # "invalid_client". A rate limiter or firewall may send
+  # The token endpoint answers in the OAuth 2.0 error format: an "error" code,
+  # sometimes with an "error_description". OAuth codes are short words joined
+  # by underscores, such as "invalid_client" or, with a 503,
+  # "temporarily_unavailable". A rate limiter or firewall may send
   # {"error": "Too Many Requests"} instead; that is a message, not a code a
   # caller could match on, so it is kept as one.
+  #
+  # A body that also names a Teya "code" is read as a Teya error, which keeps
+  # both that code and its message.
+  def from_oauth_response(%{body: %{"code" => code}} = resp) when is_binary(code),
+    do: from_response(resp)
+
   def from_oauth_response(%{status: status, body: %{"error" => error} = body})
-      when is_binary(error) and status in 400..499 do
+      when is_binary(error) do
     if oauth_code?(error),
       do: %__MODULE__{code: error, message: text(body["error_description"]), status: status},
       else: %__MODULE__{message: error, status: status}

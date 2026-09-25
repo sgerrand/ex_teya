@@ -17,7 +17,7 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       assert conn.method == "GET"
       assert String.starts_with?(conn.request_path, "/poslink/v3/payment-requests/")
       assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer test_access_token"]
-      assert Plug.Conn.get_req_header(conn, "user-agent") == [Teya.Client.user_agent()]
+      assert Plug.Conn.get_req_header(conn, "user-agent") == [Teya.HTTP.user_agent()]
 
       conn
       |> Plug.Conn.put_resp_content_type("text/event-stream")
@@ -305,7 +305,7 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
 
       stub_sse(fn conn ->
         assert Plug.Conn.get_req_header(conn, "x-trace-id") == ["abc"]
-        assert Plug.Conn.get_req_header(conn, "user-agent") == [Teya.Client.user_agent()]
+        assert Plug.Conn.get_req_header(conn, "user-agent") == [Teya.HTTP.user_agent()]
 
         conn
         |> Plug.Conn.put_resp_content_type("text/event-stream")

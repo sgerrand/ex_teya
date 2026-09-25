@@ -29,6 +29,8 @@ defmodule Teya.APICase do
             refresh_timer_ref: nil,
             failed_at: nil,
             failure: nil,
+            fetch: nil,
+            waiters: [],
             retry_count: 0
         }
       end)

@@ -27,7 +27,9 @@ defmodule Teya.POSLink.SubscribeCase do
             usable_until: System.monotonic_time(:second) + 3600,
             refresh_timer_ref: nil,
             failed_at: nil,
-            failure: nil
+            failure: nil,
+            fetch: nil,
+            waiters: []
         }
       end)
     end
@@ -79,6 +81,8 @@ defmodule Teya.POSLink.SubscribeCase do
           refresh_timer_ref: nil,
           failed_at: nil,
           failure: nil,
+          fetch: nil,
+          waiters: [],
           retry_count: 0
       }
     end)

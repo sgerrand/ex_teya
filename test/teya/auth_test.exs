@@ -17,6 +17,8 @@ defmodule Teya.AuthTest do
           refresh_timer_ref: nil,
           failed_at: nil,
           failure: nil,
+          fetch: nil,
+          waiters: [],
           retry_count: 0
       }
     end)
@@ -34,6 +36,23 @@ defmodule Teya.AuthTest do
     end)
 
     %{auth_pid: auth_pid}
+  end
+
+  # Sends a refresh and waits for the fetch it starts to settle. The fetch
+  # runs in a task, so the state is only final once its reply is handled.
+  defp refresh(auth_pid) do
+    send(auth_pid, :refresh)
+    await_settled(auth_pid)
+  end
+
+  defp await_settled(auth_pid, attempts \\ 200) do
+    state = :sys.get_state(auth_pid)
+
+    cond do
+      state.fetch == nil -> state
+      attempts > 0 -> Process.sleep(10) && await_settled(auth_pid, attempts - 1)
+      true -> flunk("the token fetch did not settle")
+    end
   end
 
   # Stubs the auth token endpoint and allows the Auth GenServer process to access it.
@@ -275,6 +294,64 @@ defmodule Teya.AuthTest do
       assert {:ok, "replacement"} = Teya.Auth.token()
     end
 
+    test "hands out the cached token at once while a slow refresh runs", %{auth_pid: auth_pid} do
+      stub_auth(auth_pid, fn conn ->
+        Process.sleep(500)
+        Req.Test.json(conn, %{"access_token" => "next", "expires_in" => 3600})
+      end)
+
+      :sys.replace_state(auth_pid, fn state ->
+        now = System.monotonic_time(:second)
+        %{state | token: "current", expires_at: now + 20, usable_until: now + 15}
+      end)
+
+      send(auth_pid, :refresh)
+      assert %{fetch: %{}} = :sys.get_state(auth_pid)
+
+      {elapsed_us, result} = :timer.tc(fn -> Teya.Auth.token() end)
+
+      assert {:ok, "current"} = result
+      assert elapsed_us < 250_000
+
+      # Let the refresh finish inside this test, while its stub is still here,
+      # and see that it took the new token.
+      assert %{token: "next"} = await_settled(auth_pid)
+    end
+
+    test "answers every caller waiting on a fetch with its one token", %{auth_pid: auth_pid} do
+      fetches = :counters.new(1, [])
+
+      stub_auth(auth_pid, fn conn ->
+        :counters.add(fetches, 1, 1)
+        Process.sleep(200)
+        Req.Test.json(conn, %{"access_token" => "shared", "expires_in" => 3600})
+      end)
+
+      1..10
+      |> Enum.map(fn _i -> Task.async(fn -> Teya.Auth.token() end) end)
+      |> Enum.each(&assert({:ok, "shared"} = Task.await(&1)))
+
+      assert :counters.get(fetches, 1) == 1
+    end
+
+    @tag :capture_log
+    test "reports a fetch that crashed to the callers waiting on it", %{auth_pid: auth_pid} do
+      stub_auth(auth_pid, fn _conn -> raise "boom" end)
+
+      assert {:error, %Teya.Error{message: "the token request failed"} = error} =
+               Teya.Auth.token()
+
+      refute inspect(error) =~ "boom"
+      assert Process.alive?(auth_pid)
+    end
+
+    test "ignores a message it is not waiting for", %{auth_pid: auth_pid} do
+      send(auth_pid, {make_ref(), {:ok, "stray", 0}})
+      send(auth_pid, :something_else)
+
+      assert %{token: nil} = :sys.get_state(auth_pid)
+    end
+
     test "takes a token from any 2xx reply", %{auth_pid: auth_pid} do
       stub_auth(auth_pid, fn conn ->
         conn
@@ -337,8 +414,7 @@ defmodule Teya.AuthTest do
 
       live = Process.send_after(auth_pid, :never_sent, 60_000)
       :sys.replace_state(auth_pid, &%{&1 | refresh_timer_ref: live})
-      send(auth_pid, :refresh)
-      :sys.get_state(auth_pid)
+      refresh(auth_pid)
 
       assert Process.read_timer(live) == false
     end
@@ -351,8 +427,7 @@ defmodule Teya.AuthTest do
       end)
 
       :sys.replace_state(auth_pid, &%{&1 | retry_count: 5_000})
-      send(auth_pid, :refresh)
-      state = :sys.get_state(auth_pid)
+      state = refresh(auth_pid)
 
       assert Process.alive?(auth_pid)
       assert state.retry_count == 5_001
@@ -370,8 +445,7 @@ defmodule Teya.AuthTest do
         Req.Test.json(conn, %{"access_token" => "refreshed_token", "expires_in" => 3600})
       end)
 
-      send(auth_pid, :refresh)
-      :sys.get_state(auth_pid)
+      refresh(auth_pid)
 
       assert {:ok, "refreshed_token"} = Teya.Auth.token()
     end
@@ -383,8 +457,7 @@ defmodule Teya.AuthTest do
         |> Req.Test.json(%{"error" => "service_unavailable"})
       end)
 
-      send(auth_pid, :refresh)
-      state = :sys.get_state(auth_pid)
+      state = refresh(auth_pid)
 
       assert is_reference(state.refresh_timer_ref)
     end
@@ -397,9 +470,7 @@ defmodule Teya.AuthTest do
       end)
 
       :sys.replace_state(auth_pid, fn state -> %{state | retry_count: 0} end)
-      send(auth_pid, :refresh)
-      :sys.get_state(auth_pid)
-      state_after_1 = :sys.get_state(auth_pid)
+      state_after_1 = refresh(auth_pid)
       assert state_after_1.retry_count == 1
 
       stub_auth(auth_pid, fn conn ->
@@ -408,9 +479,7 @@ defmodule Teya.AuthTest do
         |> Req.Test.json(%{"error" => "service_unavailable"})
       end)
 
-      send(auth_pid, :refresh)
-      :sys.get_state(auth_pid)
-      state_after_2 = :sys.get_state(auth_pid)
+      state_after_2 = refresh(auth_pid)
       assert state_after_2.retry_count == 2
     end
 
@@ -421,8 +490,7 @@ defmodule Teya.AuthTest do
         Req.Test.json(conn, %{"access_token" => "recovered_token", "expires_in" => 3600})
       end)
 
-      send(auth_pid, :refresh)
-      :sys.get_state(auth_pid)
+      refresh(auth_pid)
 
       assert :sys.get_state(auth_pid).retry_count == 0
     end

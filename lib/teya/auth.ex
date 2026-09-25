@@ -9,17 +9,25 @@ defmodule Teya.Auth do
   @base_retry_delay_ms 1_000
   @max_retry_delay_ms 60_000
 
-  # usable_until is when the cached token stops being handed out, a little
-  # before it expires. failed_at and failure hold the last failed fetch, which
-  # callers share for a moment rather than each setting off another.
+  # The token request runs in a task, never in this process, so a caller with
+  # a usable token cached is answered at once, whatever a fetch is doing.
+  #
+  # fetch is the task under way, if any, and whether it is a background
+  # refresh. waiters are the callers who need a token that is not cached;
+  # the one fetch answers them all. usable_until is when the cached token
+  # stops being handed out, a little before it expires. failed_at and failure
+  # hold the last failed fetch, which callers share for a moment rather than
+  # each setting off another.
   defstruct [
     :config,
     :token,
     :expires_at,
     :usable_until,
     :refresh_timer_ref,
+    :fetch,
     :failed_at,
     :failure,
+    waiters: [],
     retry_count: 0
   ]
 
@@ -29,8 +37,6 @@ defmodule Teya.Auth do
 
   # How long a caller waits for a token. It is longer than the token request's
   # own 10-second default, so a slow but working token server is not cut off.
-  # Without it, GenServer.call's 5-second default made a slow token request
-  # crash the caller instead of returning an error.
   @default_token_timeout_ms 15_000
 
   # The token's lifetime when the reply does not give a usable one. RFC 6749
@@ -43,9 +49,9 @@ defmodule Teya.Auth do
   @expiry_skew_seconds 5
 
   # After a fetch fails, callers in the next second are given that failure
-  # rather than each sending the token server a request of its own. Without
-  # it, a burst of calls while the server was refusing every request — after
-  # credentials were rotated, say — sent one request per call.
+  # rather than setting off another fetch straight away. Without it, a burst
+  # of calls while the server was refusing every request — after credentials
+  # were rotated, say — would fetch again and again.
   @failure_hold_ms 1_000
 
   # Process.send_after/3 takes at most 2^32 - 1 milliseconds, about 49 days.
@@ -59,8 +65,7 @@ defmodule Teya.Auth do
   def token do
     GenServer.call(__MODULE__, :token, token_timeout())
   catch
-    # A fetch already under way carries on and caches its token for the next
-    # caller.
+    # The fetch carries on and caches its token for the next caller.
     :exit, {:timeout, _call} -> {:error, timed_out()}
   end
 
@@ -79,82 +84,101 @@ defmodule Teya.Auth do
   end
 
   @impl true
-  def handle_call(:token, _from, state) do
-    case ensure_valid_token(state) do
-      {:ok, state} -> {:reply, {:ok, state.token}, state}
-      {:error, reason, state} -> {:reply, {:error, reason}, state}
+  def handle_call(:token, from, state) do
+    cond do
+      usable?(state) -> {:reply, {:ok, state.token}, state}
+      recently_failed?(state) -> {:reply, {:error, state.failure}, state}
+      true -> {:noreply, start_fetch(%{state | waiters: [from | state.waiters]}, :call)}
     end
   end
 
   @impl true
   def handle_info(:refresh, state) do
     Logger.debug("Teya.Auth: proactive token refresh started")
-
-    case fetch_token(state.config) do
-      {:ok, token, expires_at} ->
-        expires_in = expires_at - System.monotonic_time(:second)
-        Logger.info("Teya.Auth: token refreshed, expires in #{expires_in}s")
-        {:noreply, store_token(state, token, expires_at)}
-
-      {:error, reason} ->
-        delay_ms = retry_delay_ms(state.retry_count)
-
-        Logger.warning(
-          "Teya.Auth: token refresh failed (#{inspect(reason)}), retrying in #{delay_ms}ms"
-        )
-
-        # A synchronous fetch may have scheduled a refresh while this one was
-        # queued. Cancel it, or the two would run as separate loops for good.
-        if state.refresh_timer_ref, do: Process.cancel_timer(state.refresh_timer_ref)
-        ref = Process.send_after(self(), :refresh, delay_ms)
-
-        {:noreply,
-         %{
-           record_failure(state, reason)
-           | refresh_timer_ref: ref,
-             retry_count: state.retry_count + 1
-         }}
-    end
+    {:noreply, start_fetch(state, :refresh)}
   end
+
+  def handle_info({ref, result}, %{fetch: %{ref: ref}} = state) do
+    Process.demonitor(ref, [:flush])
+    {:noreply, finish_fetch(state, result)}
+  end
+
+  # The task died before it answered. Its exit reason is not passed on: it
+  # could hold the request, and with it the client secret.
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, %{fetch: %{ref: ref}} = state) do
+    {:noreply, finish_fetch(state, {:error, %Error{message: "the token request failed"}})}
+  end
+
+  # A reply or exit from a fetch this process no longer follows, such as one
+  # started before its state was reset.
+  def handle_info(_message, state), do: {:noreply, state}
 
   # The cached token is used until shortly before it expires. Renewing it
   # before then is the background refresh's job, which retries with backoff
-  # when it fails. Fetching here any sooner would make every caller in the last
-  # seconds of a token's life wait on a fetch of its own, and, while the token
-  # server was down, hand them an error in place of a token that still worked.
-  defp ensure_valid_token(%{token: token, usable_until: until} = state)
-       when is_binary(token) and is_integer(until) do
-    if System.monotonic_time(:second) < until, do: {:ok, state}, else: fetch(state)
-  end
+  # when it fails, so a failing refresh never costs a caller a token that
+  # still works.
+  defp usable?(%{token: token, usable_until: until})
+       when is_binary(token) and is_integer(until),
+       do: System.monotonic_time(:second) < until
 
-  defp ensure_valid_token(state), do: fetch(state)
-
-  defp fetch(state) do
-    if recently_failed?(state) do
-      {:error, state.failure, state}
-    else
-      case fetch_token(state.config) do
-        {:ok, token, expires_at} ->
-          expires_in = expires_at - System.monotonic_time(:second)
-          Logger.debug("Teya.Auth: token fetched, expires in #{expires_in}s")
-          {:ok, store_token(state, token, expires_at)}
-
-        {:error, reason} ->
-          {:error, reason, record_failure(state, reason)}
-      end
-    end
-  end
+  defp usable?(_state), do: false
 
   defp recently_failed?(%{failed_at: nil}), do: false
 
   defp recently_failed?(%{failed_at: failed_at}),
     do: System.monotonic_time(:millisecond) - failed_at < @failure_hold_ms
 
-  defp record_failure(state, reason),
-    do: %{state | failed_at: System.monotonic_time(:millisecond), failure: reason}
+  # One fetch at a time: a caller who arrives while one is under way waits
+  # for it, whether it was started by another caller or by the refresh timer.
+  defp start_fetch(%{fetch: nil} = state, kind) do
+    config = state.config
+    task = Task.Supervisor.async_nolink(Teya.TaskSupervisor, fn -> fetch_token(config) end)
+    %{state | fetch: %{ref: task.ref, kind: kind}}
+  end
+
+  defp start_fetch(state, _kind), do: state
+
+  defp finish_fetch(state, {:ok, token, expires_at}) do
+    expires_in = expires_at - System.monotonic_time(:second)
+    Logger.debug("Teya.Auth: token fetched, expires in #{expires_in}s")
+    Enum.each(state.waiters, &GenServer.reply(&1, {:ok, token}))
+    %{store_token(state, token, expires_at) | fetch: nil, waiters: []}
+  end
+
+  defp finish_fetch(state, {:error, reason}) do
+    Enum.each(state.waiters, &GenServer.reply(&1, {:error, reason}))
+    retry? = state.fetch.kind == :refresh or state.token != nil
+
+    state = %{
+      state
+      | fetch: nil,
+        waiters: [],
+        failed_at: System.monotonic_time(:millisecond),
+        failure: reason
+    }
+
+    if retry?, do: schedule_retry(state, reason), else: state
+  end
+
+  # A failed refresh, or any failed fetch while a token is cached, means the
+  # token is due or overdue for renewal, so keep trying in the background,
+  # with growing gaps. A caller's fetch with no token cached is not retried:
+  # the next caller fetches again.
+  defp schedule_retry(state, reason) do
+    delay_ms = retry_delay_ms(state.retry_count)
+
+    Logger.warning(
+      "Teya.Auth: token refresh failed (#{inspect(reason)}), retrying in #{delay_ms}ms"
+    )
+
+    cancel_timer(state.refresh_timer_ref)
+    ref = Process.send_after(self(), :refresh, delay_ms)
+    %{state | refresh_timer_ref: ref, retry_count: state.retry_count + 1}
+  end
 
   defp store_token(state, token, expires_at) do
     lifetime = expires_at - System.monotonic_time(:second)
+    cancel_timer(state.refresh_timer_ref)
 
     %{
       state
@@ -164,9 +188,12 @@ defmodule Teya.Auth do
         failed_at: nil,
         failure: nil,
         retry_count: 0,
-        refresh_timer_ref: schedule_refresh(state, lifetime)
+        refresh_timer_ref: schedule_refresh(lifetime)
     }
   end
+
+  defp cancel_timer(nil), do: :ok
+  defp cancel_timer(ref), do: Process.cancel_timer(ref)
 
   defp fetch_token(%Config{} = config) do
     body =
@@ -230,8 +257,7 @@ defmodule Teya.Auth do
   # refreshed in a loop, so a new one is fetched when the next caller needs it.
   # A very long-lived one is refreshed after at most the longest a timer can
   # wait, which only means fetching its replacement early.
-  defp schedule_refresh(%{refresh_timer_ref: ref}, lifetime) do
-    if ref, do: Process.cancel_timer(ref)
+  defp schedule_refresh(lifetime) do
     margin = min(@refresh_margin_seconds, div(lifetime, 2))
 
     if margin > 0 do

@@ -9,16 +9,7 @@ defmodule Teya.Auth do
   @base_retry_delay_ms 1_000
   @max_retry_delay_ms 60_000
 
-  # margin is how long before expiry this token is refreshed. It shrinks for a
-  # token that lives less than twice the usual margin.
-  defstruct [
-    :config,
-    :token,
-    :expires_at,
-    :refresh_timer_ref,
-    retry_count: 0,
-    margin: @refresh_margin_seconds
-  ]
+  defstruct [:config, :token, :expires_at, :refresh_timer_ref, retry_count: 0]
 
   def start_link(%Config{} = config) do
     GenServer.start_link(__MODULE__, config, name: __MODULE__)
@@ -98,14 +89,17 @@ defmodule Teya.Auth do
     end
   end
 
+  # The cached token is used until it has expired. Renewing it before then is
+  # the background refresh's job, which retries with backoff when it fails.
+  # Fetching here any sooner would make every caller in the last seconds of a
+  # token's life wait on a fetch of its own, and, while the token server was
+  # down, hand them an error in place of a token that still worked.
   defp ensure_valid_token(%{token: nil} = state), do: do_fetch(state)
 
   defp ensure_valid_token(state) do
-    if System.monotonic_time(:second) + state.margin >= state.expires_at do
-      do_fetch(state)
-    else
-      {:ok, state}
-    end
+    if System.monotonic_time(:second) >= state.expires_at,
+      do: do_fetch(state),
+      else: {:ok, state}
   end
 
   defp do_fetch(state) do
@@ -120,20 +114,13 @@ defmodule Teya.Auth do
     end
   end
 
-  # A token that lives less than twice the usual margin is refreshed halfway
-  # through its life instead. With the full margin it would already count as
-  # due, and be fetched again straight away, over and over.
   defp store_token(state, token, expires_at) do
-    lifetime = expires_at - System.monotonic_time(:second)
-    margin = min(@refresh_margin_seconds, div(lifetime, 2))
-
     %{
       state
       | token: token,
         expires_at: expires_at,
-        margin: margin,
         retry_count: 0,
-        refresh_timer_ref: schedule_refresh(state, expires_at, margin)
+        refresh_timer_ref: schedule_refresh(state, expires_at)
     }
   end
 
@@ -147,9 +134,11 @@ defmodule Teya.Auth do
       })
 
     # Connecting and waiting for the reply each get at most half of the time a
-    # caller waits, whatever the options say, so the request always finishes
-    # before its caller gives up. The options may be the ones for API calls,
-    # with timeouts meant for those.
+    # caller waits, whatever the options say. The options may be the ones for
+    # API calls, with timeouts meant for those. Getting a connection from the
+    # pool, DNS and redirects fall outside these two limits, so a request can
+    # still outlast its caller; the caller then gets a timeout, and the fetch
+    # finishes and caches its token for the next one.
     budget = div(token_timeout(), 2)
 
     req =
@@ -182,25 +171,41 @@ defmodule Teya.Auth do
     end
   end
 
-  defp lifetime(seconds) when is_integer(seconds) and seconds > 0, do: seconds
+  # A lifetime of 0 is the server saying not to reuse the token, so it is
+  # kept as 0 rather than read as missing: the caller gets this token, and the
+  # next one fetches a new one.
+  defp lifetime(seconds) when is_integer(seconds) and seconds >= 0, do: seconds
 
   defp lifetime(seconds) when is_binary(seconds) do
     case Integer.parse(seconds) do
-      {seconds, ""} when seconds > 0 -> seconds
+      {seconds, ""} when seconds >= 0 -> seconds
       _other -> @default_token_lifetime_seconds
     end
   end
 
   defp lifetime(_seconds), do: @default_token_lifetime_seconds
 
-  defp schedule_refresh(%{refresh_timer_ref: ref}, expires_at, margin) do
+  # A token is refreshed ahead of expiry by the usual margin, or halfway
+  # through its life if it lives less than twice that. A token too short-lived
+  # for either — a second or less — gets no refresh ahead of time: it would be
+  # refreshed in a loop, so a new one is fetched when the next caller needs it.
+  defp schedule_refresh(%{refresh_timer_ref: ref}, expires_at) do
     if ref, do: Process.cancel_timer(ref)
-    delay = max(expires_at - System.monotonic_time(:second) - margin, 0)
-    Process.send_after(self(), :refresh, :timer.seconds(delay))
+    remaining = expires_at - System.monotonic_time(:second)
+    margin = min(@refresh_margin_seconds, div(remaining, 2))
+
+    if margin > 0,
+      do: Process.send_after(self(), :refresh, :timer.seconds(remaining - margin)),
+      else: nil
   end
 
+  # The delay doubles from a second up to a minute. The doubling stops once it
+  # passes the cap: an unbounded power of two overflows a float after 1024
+  # failures, about 17 hours of them, and would crash the process.
+  @max_retry_doublings 6
+
   defp retry_delay_ms(count) do
-    delay = @base_retry_delay_ms * trunc(:math.pow(2, count))
+    delay = @base_retry_delay_ms * Integer.pow(2, min(count, @max_retry_doublings))
     min(delay, @max_retry_delay_ms)
   end
 end

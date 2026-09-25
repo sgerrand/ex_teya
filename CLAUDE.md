@@ -126,15 +126,21 @@ must win.
 
 ### Auth failure and retry behaviour
 
-`Teya.Auth` refreshes tokens proactively `@refresh_margin_seconds` (30s) before
-expiry. If `fetch_token` fails during a proactive background refresh
-(`handle_info(:refresh, state)`), the GenServer schedules a retry after 10
-seconds — it does **not** crash. The cached token remains valid until it
-expires; only after expiry will `Auth.token/0` return `{:error, reason}`.
+`Teya.Auth` refreshes tokens in the background `@refresh_margin_seconds` (30s)
+before expiry, or halfway through the life of a token that lives less than a
+minute. A token that lives a second or less gets no background refresh; a new
+one is fetched when the next caller needs it.
 
-If `fetch_token` fails during a synchronous `Auth.token/0` call (e.g. on first
-use when no token is cached), the call returns `{:error, reason}` immediately
-and no token is cached.
+If a background refresh (`handle_info(:refresh, state)`) fails, the GenServer
+retries after 1 second, doubling each time up to 1 minute — it does **not**
+crash. `Auth.token/0` keeps returning the cached token until it has expired,
+even while refreshes fail, and only fetches synchronously once it has.
+
+If that synchronous fetch fails (for example on first use, when no token is
+cached), the call returns `{:error, reason}` and nothing is cached. A caller
+waits at most `:token_timeout_ms` (15s) for a token, then gets
+`{:error, %Teya.Error{}}`; a request reached only after its caller gave up is
+answered without fetching.
 
 ## Documentation conventions
 

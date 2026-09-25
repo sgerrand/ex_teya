@@ -11,6 +11,18 @@ defmodule Teya.AuthTest do
       %{state | token: nil, expires_at: nil, refresh_timer_ref: nil, retry_count: 0}
     end)
 
+    # A refresh timer left running would fire during a later test, one that
+    # allows no token stub to the auth process, and crash it. Some tests here
+    # leave one due within seconds, so stop it when each test ends.
+    on_exit(fn ->
+      if pid = Process.whereis(Teya.Auth) do
+        :sys.replace_state(pid, fn state ->
+          if state.refresh_timer_ref, do: Process.cancel_timer(state.refresh_timer_ref)
+          %{state | refresh_timer_ref: nil}
+        end)
+      end
+    end)
+
     %{auth_pid: auth_pid}
   end
 
@@ -134,8 +146,7 @@ defmodule Teya.AuthTest do
       assert :counters.get(fetches, 1) == 1
 
       state = :sys.get_state(auth_pid)
-      assert state.margin == 10
-      assert Process.read_timer(state.refresh_timer_ref) > 5_000
+      assert Process.read_timer(state.refresh_timer_ref) in 5_000..10_000
     end
 
     # Req.Test ignores timeouts, so this runs the capping but cannot see it
@@ -150,6 +161,38 @@ defmodule Teya.AuthTest do
       end)
 
       assert {:ok, "capped"} = Teya.Auth.token()
+    end
+
+    test "keeps using a cached token that has not expired while the token server is down", %{
+      auth_pid: auth_pid
+    } do
+      :sys.replace_state(auth_pid, fn state ->
+        %{state | token: "still-good", expires_at: System.monotonic_time(:second) + 10}
+      end)
+
+      stub_auth(auth_pid, fn conn ->
+        conn |> Plug.Conn.put_status(503) |> Req.Test.json(%{"error" => "down"})
+      end)
+
+      assert {:ok, "still-good"} = Teya.Auth.token()
+    end
+
+    test "fetches a new token for each caller when told not to reuse one", %{
+      auth_pid: auth_pid
+    } do
+      fetches = :counters.new(1, [])
+
+      stub_auth(auth_pid, fn conn ->
+        :counters.add(fetches, 1, 1)
+        Req.Test.json(conn, %{"access_token" => "once", "expires_in" => 0})
+      end)
+
+      assert {:ok, "once"} = Teya.Auth.token()
+      assert {:ok, "once"} = Teya.Auth.token()
+      assert :counters.get(fetches, 1) == 2
+
+      # Refreshing ahead of time would loop, so there is no refresh timer.
+      assert :sys.get_state(auth_pid).refresh_timer_ref == nil
     end
 
     test "takes a token from any 2xx reply", %{auth_pid: auth_pid} do
@@ -193,7 +236,7 @@ defmodule Teya.AuthTest do
       assert {:error, %Req.TransportError{reason: :timeout}} = Teya.Auth.token()
     end
 
-    test "re-fetches when cached token is near expiry", %{auth_pid: auth_pid} do
+    test "re-fetches once the cached token has expired", %{auth_pid: auth_pid} do
       stub_auth(auth_pid, fn conn ->
         Req.Test.json(conn, %{"access_token" => "fresh_token", "expires_in" => 3600})
       end)
@@ -207,6 +250,22 @@ defmodule Teya.AuthTest do
   end
 
   describe "proactive refresh" do
+    test "waits a minute at most between retries, however many have failed", %{
+      auth_pid: auth_pid
+    } do
+      stub_auth(auth_pid, fn conn ->
+        conn |> Plug.Conn.put_status(503) |> Req.Test.json(%{"error" => "down"})
+      end)
+
+      :sys.replace_state(auth_pid, &%{&1 | retry_count: 5_000})
+      send(auth_pid, :refresh)
+      state = :sys.get_state(auth_pid)
+
+      assert Process.alive?(auth_pid)
+      assert state.retry_count == 5_001
+      assert Process.read_timer(state.refresh_timer_ref) in 59_000..60_000
+    end
+
     test "updates cached token on successful refresh", %{auth_pid: auth_pid} do
       stub_auth(auth_pid, fn conn ->
         Req.Test.json(conn, %{"access_token" => "initial_token", "expires_in" => 3600})

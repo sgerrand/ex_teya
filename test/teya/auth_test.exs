@@ -15,6 +15,7 @@ defmodule Teya.AuthTest do
           expires_at: nil,
           usable_until: nil,
           refresh_timer_ref: nil,
+          refresh_tag: nil,
           failed_at: nil,
           failure: nil,
           fetch: nil,
@@ -41,8 +42,25 @@ defmodule Teya.AuthTest do
   # Sends a refresh and waits for the fetch it starts to settle. The fetch
   # runs in a task, so the state is only final once its reply is handled.
   defp refresh(auth_pid) do
-    send(auth_pid, :refresh)
+    start_refresh(auth_pid)
     await_settled(auth_pid)
+  end
+
+  defp await_fetch_started(auth_pid, attempts \\ 200) do
+    state = :sys.get_state(auth_pid)
+
+    cond do
+      state.fetch != nil -> state
+      attempts > 0 -> Process.sleep(10) && await_fetch_started(auth_pid, attempts - 1)
+      true -> flunk("no token fetch started")
+    end
+  end
+
+  # Fires a refresh as its timer would: with the tag the process expects.
+  defp start_refresh(auth_pid) do
+    tag = make_ref()
+    :sys.replace_state(auth_pid, &%{&1 | refresh_tag: tag})
+    send(auth_pid, {:refresh, tag})
   end
 
   defp await_settled(auth_pid, attempts \\ 200) do
@@ -305,13 +323,13 @@ defmodule Teya.AuthTest do
         %{state | token: "current", expires_at: now + 20, usable_until: now + 15}
       end)
 
-      send(auth_pid, :refresh)
+      start_refresh(auth_pid)
       assert %{fetch: %{}} = :sys.get_state(auth_pid)
 
-      {elapsed_us, result} = :timer.tc(fn -> Teya.Auth.token() end)
+      assert {:ok, "current"} = Teya.Auth.token()
 
-      assert {:ok, "current"} = result
-      assert elapsed_us < 250_000
+      # Answered while the refresh was still running, so it did not wait on it.
+      assert %{fetch: %{kind: :refresh}} = :sys.get_state(auth_pid)
 
       # Let the refresh finish inside this test, while its stub is still here,
       # and see that it took the new token.
@@ -334,22 +352,105 @@ defmodule Teya.AuthTest do
       assert :counters.get(fetches, 1) == 1
     end
 
-    @tag :capture_log
-    test "reports a fetch that crashed to the callers waiting on it", %{auth_pid: auth_pid} do
-      stub_auth(auth_pid, fn _conn -> raise "boom" end)
+    test "reports a fetch that raised without logging what it raised", %{auth_pid: auth_pid} do
+      stub_auth(auth_pid, fn _conn -> raise "client_secret=hunter2" end)
 
-      assert {:error, %Teya.Error{message: "the token request failed"} = error} =
-               Teya.Auth.token()
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          assert {:error, %Teya.Error{message: "the token request failed"} = error} =
+                   Teya.Auth.token()
 
-      refute inspect(error) =~ "boom"
+          refute inspect(error) =~ "hunter2"
+        end)
+
+      refute log =~ "hunter2"
       assert Process.alive?(auth_pid)
     end
 
-    test "ignores a message it is not waiting for", %{auth_pid: auth_pid} do
-      send(auth_pid, {make_ref(), {:ok, "stray", 0}})
-      send(auth_pid, :something_else)
+    test "reports a fetch that exited", %{auth_pid: auth_pid} do
+      stub_auth(auth_pid, fn _conn -> exit(:boom) end)
 
-      assert %{token: nil} = :sys.get_state(auth_pid)
+      assert {:error, %Teya.Error{message: "the token request failed"}} = Teya.Auth.token()
+    end
+
+    test "reports a fetch killed from outside to the callers waiting on it", %{
+      auth_pid: auth_pid
+    } do
+      stub_auth(auth_pid, fn conn ->
+        Process.sleep(5_000)
+        Req.Test.json(conn, %{"access_token" => "never", "expires_in" => 3600})
+      end)
+
+      caller = Task.async(fn -> Teya.Auth.token() end)
+      %{fetch: %{pid: pid}} = await_fetch_started(auth_pid)
+      Process.exit(pid, :kill)
+
+      assert {:error, %Teya.Error{message: "the token request failed"}} = Task.await(caller)
+    end
+
+    test "stops a fetch that runs past its limit, so later callers are not stuck", %{
+      auth_pid: auth_pid
+    } do
+      TestEnv.put(:token_timeout_ms, 100)
+
+      stub_auth(auth_pid, fn conn ->
+        Process.sleep(5_000)
+        Req.Test.json(conn, %{"access_token" => "never", "expires_in" => 3600})
+      end)
+
+      assert {:error, %Teya.Error{}} = Teya.Auth.token()
+
+      assert %{fetch: nil, failure: %Teya.Error{message: "the token request took too long"}} =
+               await_settled(auth_pid)
+    end
+
+    test "ignores a refresh whose timer has been replaced", %{auth_pid: auth_pid} do
+      :sys.replace_state(auth_pid, &%{&1 | refresh_tag: make_ref()})
+      send(auth_pid, {:refresh, make_ref()})
+
+      assert %{fetch: nil} = :sys.get_state(auth_pid)
+    end
+
+    test "gives a token too short-lived to cache only to the callers who waited", %{
+      auth_pid: auth_pid
+    } do
+      fetches = :counters.new(1, [])
+
+      stub_auth(auth_pid, fn conn ->
+        :counters.add(fetches, 1, 1)
+        Req.Test.json(conn, %{"access_token" => "brief", "expires_in" => 3})
+      end)
+
+      assert {:ok, "brief"} = Teya.Auth.token()
+      assert {:ok, "brief"} = Teya.Auth.token()
+      assert :counters.get(fetches, 1) == 2
+    end
+
+    test "returns an error when the auth process is not running", %{auth_pid: auth_pid} do
+      Process.unregister(Teya.Auth)
+
+      try do
+        assert {:error, %Teya.Error{message: "the auth process is not available"}} =
+                 Teya.Auth.token()
+      after
+        Process.register(auth_pid, Teya.Auth)
+      end
+    end
+
+    test "ignores a stale fetch reply, and logs a message it does not expect", %{
+      auth_pid: auth_pid
+    } do
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          send(auth_pid, {make_ref(), {:ok, "stray", 0}})
+          send(auth_pid, {:DOWN, make_ref(), :process, self(), :normal})
+          send(auth_pid, {:fetch_timeout, make_ref()})
+          send(auth_pid, :something_else)
+          assert %{token: nil} = :sys.get_state(auth_pid)
+        end)
+
+      assert log =~ "unexpected message :something_else"
+      refute log =~ "stray"
     end
 
     test "takes a token from any 2xx reply", %{auth_pid: auth_pid} do

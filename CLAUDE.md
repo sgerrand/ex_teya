@@ -148,7 +148,17 @@ Every fetch, the background refresh included, runs in a task under
 `Teya.TaskSupervisor`, never inside the GenServer. A caller with a usable token
 cached is answered at once, whatever a fetch is doing. Callers who need a new
 token join a list of waiters, and the one fetch under way answers them all
-with `GenServer.reply/2`. There is only ever one fetch at a time.
+with `GenServer.reply/2`. There is only ever one fetch at a time. A fetch that
+runs a second past `:token_timeout_ms` (or 60s when that is `:infinity`) is
+killed and
+reported as a failure, so one that hangs cannot hold every later caller. The
+task catches its own errors, so no crash report — which could carry the
+request and the client secret — is logged. A token that lives 5 seconds or
+less is given to the callers who waited for it and never cached.
+
+`Auth.token/0` returns `{:error, %Teya.Error{}}` for any exit from the call, not
+only a timeout, including when no `:client_id` is configured and so the auth
+process is not running.
 
 In tests, a fetch finishes after the call that started it returns, so a test
 that sends `:refresh` must wait for the fetch to settle before reading the

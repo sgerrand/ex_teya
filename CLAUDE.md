@@ -35,7 +35,8 @@ lib/teya/
   config.ex           — %Teya.Config{} struct + Config.from_env/0
   error.ex            — %Teya.Error{code, message, status, invalid_parameters} returned
                         on failures, including token endpoint (OAuth) failures
-  auth.ex             — GenServer: lazy token fetch, cache, proactive refresh
+  auth.ex             — GenServer: token cache and proactive refresh; fetches
+                        run in tasks, and waiting callers share one fetch
   client.ex           — HTTP layer: calls Auth.token/0, adds Bearer header,
                         auto-generates Idempotency-Key on POST/PATCH
   http.ex             — shared by every module that makes a request: the user
@@ -143,9 +144,28 @@ next second, callers are given that same failure rather than each sending
 another request. A caller waits at most `:token_timeout_ms` (15s) for a token,
 then gets `{:error, %Teya.Error{}}`.
 
-Every fetch, the background refresh included, runs inside the GenServer, so
-callers wait behind it. A slow token server can make them time out even while
-a usable token is cached.
+Every fetch, the background refresh included, runs in a task under
+`Teya.TaskSupervisor`, never inside the GenServer. A caller with a usable token
+cached is answered at once, whatever a fetch is doing. Callers who need a new
+token join a list of waiters, each with the time it gives up, and the one fetch
+under way answers them all with `GenServer.reply/2`. Each new caller clears out
+waiters that have given up, so the list holds only callers still waiting. There is only ever one fetch at a time. A fetch that
+runs a second past `:token_timeout_ms` (or 60s when that is `:infinity`) is
+killed and
+reported as a failure, so one that hangs cannot hold every later caller. The
+task catches its own errors, so no crash report — which could carry the
+request and the client secret — is logged. A token that lives 5 seconds or
+less is given to the callers who waited for it and never cached.
+
+`Auth.token/0` returns `{:error, %Teya.Error{}}` for any exit from the call, not
+only a timeout, including when no `:client_id` is configured and so the auth
+process is not running.
+
+In tests, a fetch finishes after the call that started it returns, so a test
+that sends `:refresh` must wait for the fetch to settle before reading the
+state (see `refresh/1` in `auth_test.exs`). Test setup that resets the auth
+state must also reset `fetch` and `waiters`, or a fetch left from an earlier
+test makes callers wait on a task that is not theirs.
 
 ## Documentation conventions
 

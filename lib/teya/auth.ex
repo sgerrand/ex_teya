@@ -9,21 +9,47 @@ defmodule Teya.Auth do
   @base_retry_delay_ms 1_000
   @max_retry_delay_ms 60_000
 
-  defstruct [:config, :token, :expires_at, :refresh_timer_ref, retry_count: 0]
+  # usable_until is when the cached token stops being handed out, a little
+  # before it expires. failed_at and failure hold the last failed fetch, which
+  # callers share for a moment rather than each setting off another.
+  defstruct [
+    :config,
+    :token,
+    :expires_at,
+    :usable_until,
+    :refresh_timer_ref,
+    :failed_at,
+    :failure,
+    retry_count: 0
+  ]
 
   def start_link(%Config{} = config) do
     GenServer.start_link(__MODULE__, config, name: __MODULE__)
   end
 
-  # How long a caller waits for a token. The token request's own timeouts are
-  # kept inside it, so a slow but working token server is not cut off. Without
-  # it, GenServer.call's 5-second default made a slow token request crash the
-  # caller instead of returning an error.
+  # How long a caller waits for a token. It is longer than the token request's
+  # own 10-second default, so a slow but working token server is not cut off.
+  # Without it, GenServer.call's 5-second default made a slow token request
+  # crash the caller instead of returning an error.
   @default_token_timeout_ms 15_000
 
   # The token's lifetime when the reply does not give a usable one. RFC 6749
   # only recommends expires_in, so a server may leave it out.
   @default_token_lifetime_seconds 300
+
+  # A token is handed out only until this long before it expires, so a request
+  # made with it does not reach Teya just after it has run out. The expiry is
+  # counted from when the reply arrived, a little after the server issued it.
+  @expiry_skew_seconds 5
+
+  # After a fetch fails, callers in the next second are given that failure
+  # rather than each sending the token server a request of its own. Without
+  # it, a burst of calls while the server was refusing every request — after
+  # credentials were rotated, say — sent one request per call.
+  @failure_hold_ms 1_000
+
+  # Process.send_after/3 takes at most 2^32 - 1 milliseconds, about 49 days.
+  @max_timer_ms 4_294_967_295
 
   @doc """
   Returns `{:ok, access_token}` from the cache, fetching one from the token
@@ -32,18 +58,24 @@ defmodule Teya.Auth do
   """
   def token do
     timeout = token_timeout()
-    deadline = System.monotonic_time(:millisecond) + timeout
-    GenServer.call(__MODULE__, {:token, deadline}, timeout)
+    GenServer.call(__MODULE__, {:token, deadline(timeout)}, timeout)
   catch
     # A fetch already under way carries on and caches its token for the next
     # caller.
     :exit, {:timeout, _call} -> {:error, timed_out()}
   end
 
+  defp deadline(:infinity), do: :infinity
+  defp deadline(timeout), do: System.monotonic_time(:millisecond) + timeout
+
   defp timed_out, do: %Error{message: "timed out waiting for an access token"}
 
-  defp token_timeout,
-    do: Application.get_env(:teya, :token_timeout_ms, @default_token_timeout_ms)
+  defp token_timeout do
+    case Application.get_env(:teya, :token_timeout_ms, @default_token_timeout_ms) do
+      timeout when timeout == :infinity or (is_integer(timeout) and timeout > 0) -> timeout
+      _other -> @default_token_timeout_ms
+    end
+  end
 
   @impl true
   def init(%Config{} = config) do
@@ -52,18 +84,17 @@ defmodule Teya.Auth do
 
   # A request reached only after its caller has given up is answered without
   # fetching. Otherwise, while a fetch is failing, every caller queued behind
-  # it would set off another fetch, one after another, for nobody.
+  # it would set off another fetch, one after another, for nobody. An
+  # :infinity deadline is never passed: any number is less than any atom.
   @impl true
   def handle_call({:token, deadline}, _from, state) do
-    if System.monotonic_time(:millisecond) >= deadline,
-      do: {:reply, {:error, timed_out()}, state},
-      else: reply_with_token(state)
-  end
-
-  defp reply_with_token(state) do
-    case ensure_valid_token(state) do
-      {:ok, new_state} -> {:reply, {:ok, new_state.token}, new_state}
-      {:error, reason} -> {:reply, {:error, reason}, state}
+    if System.monotonic_time(:millisecond) >= deadline do
+      {:reply, {:error, timed_out()}, state}
+    else
+      case ensure_valid_token(state) do
+        {:ok, state} -> {:reply, {:ok, state.token}, state}
+        {:error, reason, state} -> {:reply, {:error, reason}, state}
+      end
     end
   end
 
@@ -85,42 +116,63 @@ defmodule Teya.Auth do
         )
 
         ref = Process.send_after(self(), :refresh, delay_ms)
-        {:noreply, %{state | refresh_timer_ref: ref, retry_count: state.retry_count + 1}}
+
+        {:noreply,
+         %{
+           record_failure(state, reason)
+           | refresh_timer_ref: ref,
+             retry_count: state.retry_count + 1
+         }}
     end
   end
 
-  # The cached token is used until it has expired. Renewing it before then is
-  # the background refresh's job, which retries with backoff when it fails.
-  # Fetching here any sooner would make every caller in the last seconds of a
-  # token's life wait on a fetch of its own, and, while the token server was
-  # down, hand them an error in place of a token that still worked.
-  defp ensure_valid_token(%{token: nil} = state), do: do_fetch(state)
-
+  # The cached token is used until shortly before it expires. Renewing it
+  # before then is the background refresh's job, which retries with backoff
+  # when it fails. Fetching here any sooner would make every caller in the last
+  # seconds of a token's life wait on a fetch of its own, and, while the token
+  # server was down, hand them an error in place of a token that still worked.
   defp ensure_valid_token(state) do
-    if System.monotonic_time(:second) >= state.expires_at,
-      do: do_fetch(state),
-      else: {:ok, state}
+    if state.token && System.monotonic_time(:second) < (state.usable_until || state.expires_at),
+      do: {:ok, state},
+      else: fetch(state)
   end
 
-  defp do_fetch(state) do
-    case fetch_token(state.config) do
-      {:ok, token, expires_at} ->
-        expires_in = expires_at - System.monotonic_time(:second)
-        Logger.debug("Teya.Auth: token fetched, expires in #{expires_in}s")
-        {:ok, store_token(state, token, expires_at)}
+  defp fetch(state) do
+    if recently_failed?(state) do
+      {:error, state.failure, state}
+    else
+      case fetch_token(state.config) do
+        {:ok, token, expires_at} ->
+          expires_in = expires_at - System.monotonic_time(:second)
+          Logger.debug("Teya.Auth: token fetched, expires in #{expires_in}s")
+          {:ok, store_token(state, token, expires_at)}
 
-      {:error, reason} ->
-        {:error, reason}
+        {:error, reason} ->
+          {:error, reason, record_failure(state, reason)}
+      end
     end
   end
+
+  defp recently_failed?(%{failed_at: nil}), do: false
+
+  defp recently_failed?(%{failed_at: failed_at}),
+    do: System.monotonic_time(:millisecond) - failed_at < @failure_hold_ms
+
+  defp record_failure(state, reason),
+    do: %{state | failed_at: System.monotonic_time(:millisecond), failure: reason}
 
   defp store_token(state, token, expires_at) do
+    lifetime = expires_at - System.monotonic_time(:second)
+
     %{
       state
       | token: token,
         expires_at: expires_at,
+        usable_until: expires_at - min(@expiry_skew_seconds, div(lifetime, 4)),
+        failed_at: nil,
+        failure: nil,
         retry_count: 0,
-        refresh_timer_ref: schedule_refresh(state, expires_at)
+        refresh_timer_ref: schedule_refresh(state, lifetime)
     }
   end
 
@@ -133,21 +185,15 @@ defmodule Teya.Auth do
         "scope" => Enum.join(config.scopes, " ")
       })
 
-    # Connecting and waiting for the reply each get at most half of the time a
-    # caller waits, whatever the options say. The options may be the ones for
-    # API calls, with timeouts meant for those. Getting a connection from the
-    # pool, DNS and redirects fall outside these two limits, so a request can
-    # still outlast its caller; the caller then gets a timeout, and the fetch
-    # finishes and caches its token for the next one.
-    budget = div(token_timeout(), 2)
-
     req =
-      [method: :post, url: config.token_url, body: body, user_agent: HTTP.user_agent()]
+      [
+        method: :post,
+        url: config.token_url,
+        body: body,
+        user_agent: HTTP.user_agent(),
+        receive_timeout: 10_000
+      ]
       |> Keyword.merge(HTTP.options(:auth_req_options))
-      |> Keyword.update(:receive_timeout, budget, &min(&1, budget))
-      |> Keyword.update(:connect_options, [timeout: budget], fn connect ->
-        Keyword.update(connect, :timeout, budget, &min(&1, budget))
-      end)
       |> Req.new()
       # The body is a form whatever the options say about content types. They
       # fall back to :req_options, which are meant for JSON API calls.
@@ -189,14 +235,16 @@ defmodule Teya.Auth do
   # through its life if it lives less than twice that. A token too short-lived
   # for either — a second or less — gets no refresh ahead of time: it would be
   # refreshed in a loop, so a new one is fetched when the next caller needs it.
-  defp schedule_refresh(%{refresh_timer_ref: ref}, expires_at) do
+  # A very long-lived one is refreshed after at most the longest a timer can
+  # wait, which only means fetching its replacement early.
+  defp schedule_refresh(%{refresh_timer_ref: ref}, lifetime) do
     if ref, do: Process.cancel_timer(ref)
-    remaining = expires_at - System.monotonic_time(:second)
-    margin = min(@refresh_margin_seconds, div(remaining, 2))
+    margin = min(@refresh_margin_seconds, div(lifetime, 2))
 
-    if margin > 0,
-      do: Process.send_after(self(), :refresh, :timer.seconds(remaining - margin)),
-      else: nil
+    if margin > 0 do
+      delay_ms = min(:timer.seconds(lifetime - margin), @max_timer_ms)
+      Process.send_after(self(), :refresh, delay_ms)
+    end
   end
 
   # The delay doubles from a second up to a minute. The doubling stops once it

@@ -65,9 +65,8 @@ defmodule Teya.Error do
 
   @doc false
   # The token endpoint answers in the OAuth 2.0 error format: an "error" code,
-  # sometimes with an "error_description". OAuth codes are short words joined
-  # by underscores, such as "invalid_client" or, with a 503,
-  # "temporarily_unavailable". A rate limiter or firewall may send
+  # sometimes with an "error_description". OAuth codes are single words, such
+  # as "invalid_client" or, with a 503, "temporarily_unavailable". A rate limiter or firewall may send
   # {"error": "Too Many Requests"} instead; that is a message, not a code a
   # caller could match on, so it is kept as one.
   #
@@ -83,7 +82,14 @@ defmodule Teya.Error do
       else: %__MODULE__{message: error, status: status}
   end
 
-  def from_oauth_response(resp), do: from_response(resp)
+  # Anything else — a proxy's page, or a server echoing the form it was sent,
+  # client secret and all — keeps none of its body. A failed refresh is
+  # logged, and the body could hold a credential.
+  def from_oauth_response(%{status: status}),
+    do: %__MODULE__{status: status, message: "the token endpoint refused the request"}
 
-  defp oauth_code?(error), do: String.match?(error, ~r/\A[a-z0-9_]+\z/)
+  # One word with no spaces: letters in either case, digits, and the
+  # separators "_", "-" and ".". That covers "invalid_client" and
+  # "INVALID-CLIENT", and leaves out free text such as "Too Many Requests".
+  defp oauth_code?(error), do: String.match?(error, ~r/\A[A-Za-z0-9_.-]+\z/)
 end

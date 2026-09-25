@@ -24,7 +24,10 @@ defmodule Teya.POSLink.SubscribeCase do
           state
           | token: "test_access_token",
             expires_at: System.monotonic_time(:second) + 3600,
-            refresh_timer_ref: nil
+            usable_until: nil,
+            refresh_timer_ref: nil,
+            failed_at: nil,
+            failure: nil
         }
       end)
     end
@@ -67,7 +70,17 @@ defmodule Teya.POSLink.SubscribeCase do
 
     :sys.replace_state(auth_pid, fn state ->
       if state.refresh_timer_ref, do: Process.cancel_timer(state.refresh_timer_ref)
-      %{state | token: nil, expires_at: nil, refresh_timer_ref: nil, retry_count: 0}
+
+      %{
+        state
+        | token: nil,
+          expires_at: nil,
+          usable_until: nil,
+          refresh_timer_ref: nil,
+          failed_at: nil,
+          failure: nil,
+          retry_count: 0
+      }
     end)
 
     :ok

@@ -134,13 +134,31 @@ defmodule Teya.ErrorTest do
                Teya.Error.from_oauth_response(response)
     end
 
-    test "keeps a token endpoint reply with neither kind of code as the message" do
-      response = %{status: 502, body: "<html>Bad Gateway</html>"}
+    test "keeps none of a token endpoint reply with neither kind of code" do
+      page = %{status: 502, body: "<html>Bad Gateway</html>"}
 
-      assert %Teya.Error{code: nil, status: 502, message: message} =
-               Teya.Error.from_oauth_response(response)
+      echo = %{
+        status: 400,
+        body: %{"client_id" => "abc", "client_secret" => "hunter2", "grant_type" => "x"}
+      }
 
-      assert message =~ "Bad Gateway"
+      assert %Teya.Error{
+               code: nil,
+               status: 502,
+               message: "the token endpoint refused the request"
+             } =
+               Teya.Error.from_oauth_response(page)
+
+      assert %Teya.Error{status: 400} = error = Teya.Error.from_oauth_response(echo)
+      refute inspect(error) =~ "hunter2"
+    end
+
+    test "reads OAuth codes in either case and with hyphens or dots" do
+      for code <- ["INVALID_CLIENT", "invalid-client", "urn.example.denied"] do
+        response = %{status: 401, body: %{"error" => code}}
+
+        assert %Teya.Error{code: ^code} = Teya.Error.from_oauth_response(response)
+      end
     end
 
     test "reads an OAuth code sent with a 5xx" do

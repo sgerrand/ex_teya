@@ -133,14 +133,16 @@ one is fetched when the next caller needs it.
 
 If a background refresh (`handle_info(:refresh, state)`) fails, the GenServer
 retries after 1 second, doubling each time up to 1 minute — it does **not**
-crash. `Auth.token/0` keeps returning the cached token until it has expired,
-even while refreshes fail, and only fetches synchronously once it has.
+crash. `Auth.token/0` keeps returning the cached token, even while refreshes
+fail, until 5 seconds before it expires, and only then fetches synchronously.
+The gap keeps a request from reaching Teya with a token that has just run out.
 
 If that synchronous fetch fails (for example on first use, when no token is
-cached), the call returns `{:error, reason}` and nothing is cached. A caller
-waits at most `:token_timeout_ms` (15s) for a token, then gets
-`{:error, %Teya.Error{}}`; a request reached only after its caller gave up is
-answered without fetching.
+cached), the call returns `{:error, reason}` and nothing is cached. For the
+next second, callers are given that same failure rather than each sending
+another request. A caller waits at most `:token_timeout_ms` (15s) for a token,
+then gets `{:error, %Teya.Error{}}`; a request reached only after its caller
+gave up is answered without fetching.
 
 ## Documentation conventions
 

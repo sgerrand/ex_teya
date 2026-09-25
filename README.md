@@ -43,7 +43,7 @@ These settings are optional:
 
 | Setting | Default | What it does |
 |---|---|---|
-| `:token_timeout_ms` | `15_000` | How long a request waits for an access token before it returns an error. The token request itself is kept within this time, whatever other timeouts are set |
+| `:token_timeout_ms` | `15_000` | How long a request waits for an access token before it returns an error, or `:infinity`. A token request still running then carries on, and caches its token for the next request |
 | `:sse_stream_timeout_ms` | `60_000` | How long a POSLink stream waits for the next event before it gives up |
 | `:sse_max_error_body_bytes` | `65_536` | How much of a failed stream's error body is kept. A JSON error larger than this is cut and can no longer be read, so the error keeps its status and raw text but no code |
 

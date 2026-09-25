@@ -43,9 +43,10 @@ defmodule Teya.Client do
         |> put_if_present(:params, Keyword.get(opts, :params))
         |> Keyword.merge(req_opts)
         |> Req.new()
-        # Merged last so it replaces any idempotency-key set in config: one
-        # key there would mark every POST as a retry of the first, and the API
-        # would answer them all with that first response.
+        # Any idempotency-key set in config is dropped, whatever the method:
+        # one key there would mark every POST as a retry of the first, and it
+        # means nothing on other methods. POST and PATCH get their own.
+        |> Req.Request.delete_header("idempotency-key")
         |> Req.merge(headers: idempotency_headers(method, opts))
 
       case Req.request(req) do

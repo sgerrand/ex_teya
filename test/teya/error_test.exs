@@ -75,6 +75,13 @@ defmodule Teya.ErrorTest do
                Teya.Error.from_response(response)
     end
 
+    test "keeps a gateway's bare message as text" do
+      response = %{status: 403, body: %{"message" => "Forbidden"}}
+
+      assert %Teya.Error{code: nil, message: "Forbidden", status: 403} =
+               Teya.Error.from_response(response)
+    end
+
     test "keeps the message as text or nothing" do
       response = %{status: 400, body: %{"code" => "BAD_REQUEST", "description" => %{"en" => "x"}}}
 
@@ -136,6 +143,13 @@ defmodule Teya.ErrorTest do
         assert %Teya.Error{code: "slow_down", status: ^status} =
                  Teya.Error.from_oauth_response(response)
       end
+    end
+
+    test "keeps a free-text error as the message, not the code" do
+      response = %{status: 429, body: %{"error" => "Too Many Requests"}}
+
+      assert %Teya.Error{code: nil, message: "Too Many Requests", status: 429} =
+               Teya.Error.from_oauth_response(response)
     end
 
     test "falls back to the standard shape for a non-OAuth body" do

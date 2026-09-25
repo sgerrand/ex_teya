@@ -15,10 +15,29 @@ defmodule Teya.Auth do
     GenServer.start_link(__MODULE__, config, name: __MODULE__)
   end
 
-  @doc "Returns `{:ok, access_token}` from the cache, fetching one from the token endpoint if needed."
+  # Longer than the token request's own 10-second wait, so a slow but working
+  # token server is not cut off. Without it, GenServer.call's 5-second default
+  # made a slow token request crash the caller instead of returning an error.
+  @default_token_timeout_ms 15_000
+
+  # The token's lifetime when the reply does not give a usable one. RFC 6749
+  # only recommends expires_in, so a server may leave it out.
+  @default_token_lifetime_seconds 300
+
+  @doc """
+  Returns `{:ok, access_token}` from the cache, fetching one from the token
+  endpoint if needed. Returns `{:error, :timeout}` if that takes longer than
+  `:token_timeout_ms`.
+  """
   def token do
-    GenServer.call(__MODULE__, :token)
+    GenServer.call(__MODULE__, :token, token_timeout())
+  catch
+    # The fetch carries on and caches its token for the next caller.
+    :exit, {:timeout, _call} -> {:error, :timeout}
   end
+
+  defp token_timeout,
+    do: Application.get_env(:teya, :token_timeout_ms, @default_token_timeout_ms)
 
   @impl true
   def init(%Config{} = config) do
@@ -124,9 +143,8 @@ defmodule Teya.Auth do
       |> Req.merge(headers: [{"content-type", "application/x-www-form-urlencoded"}])
 
     case Req.request(req) do
-      {:ok, %{status: 200, body: %{"access_token" => token, "expires_in" => expires_in}}}
-      when is_binary(token) and is_integer(expires_in) ->
-        {:ok, token, System.monotonic_time(:second) + expires_in}
+      {:ok, %{status: 200, body: %{"access_token" => token} = body}} when is_binary(token) ->
+        {:ok, token, System.monotonic_time(:second) + lifetime(body["expires_in"])}
 
       # A success whose reply cannot be read may still hold a live token, and
       # a failed refresh is logged, so none of the body goes into the error.
@@ -140,6 +158,17 @@ defmodule Teya.Auth do
         {:error, reason}
     end
   end
+
+  defp lifetime(seconds) when is_integer(seconds) and seconds > 0, do: seconds
+
+  defp lifetime(seconds) when is_binary(seconds) do
+    case Integer.parse(seconds) do
+      {seconds, ""} when seconds > 0 -> seconds
+      _other -> @default_token_lifetime_seconds
+    end
+  end
+
+  defp lifetime(_seconds), do: @default_token_lifetime_seconds
 
   defp schedule_refresh(%{refresh_timer_ref: ref}, expires_at) do
     if ref, do: Process.cancel_timer(ref)

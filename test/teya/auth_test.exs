@@ -53,8 +53,8 @@ defmodule Teya.AuthTest do
       auth_pid: auth_pid
     } do
       for body <- [
-            %{"access_token" => "secret-token-1"},
-            %{"access_token" => "secret-token-1", "expires_in" => "3600"}
+            %{"accessToken" => "secret-token-1"},
+            %{"access_token" => %{"value" => "secret-token-1"}}
           ] do
         :sys.replace_state(auth_pid, &%{&1 | token: nil, expires_at: nil})
         stub_auth(auth_pid, fn conn -> Req.Test.json(conn, body) end)
@@ -63,6 +63,37 @@ defmodule Teya.AuthTest do
         refute inspect(error) =~ "secret-token-1"
         assert Process.alive?(auth_pid)
       end
+    end
+
+    test "uses a token whose lifetime is missing or given as text", %{auth_pid: auth_pid} do
+      for {expires_in, lifetime} <- [{nil, 300}, {"3600", 3600}, {"soon", 300}] do
+        :sys.replace_state(auth_pid, &%{&1 | token: nil, expires_at: nil})
+
+        body =
+          if expires_in,
+            do: %{"access_token" => "tok", "expires_in" => expires_in},
+            else: %{"access_token" => "tok"}
+
+        stub_auth(auth_pid, fn conn -> Req.Test.json(conn, body) end)
+
+        assert {:ok, "tok"} = Teya.Auth.token()
+
+        remaining = :sys.get_state(auth_pid).expires_at - System.monotonic_time(:second)
+        assert remaining in (lifetime - 5)..lifetime, "expires_in #{inspect(expires_in)}"
+      end
+    end
+
+    test "returns an error rather than exiting when the token takes too long", %{
+      auth_pid: auth_pid
+    } do
+      TestEnv.put(:token_timeout_ms, 50)
+
+      stub_auth(auth_pid, fn conn ->
+        Process.sleep(300)
+        Req.Test.json(conn, %{"access_token" => "slow", "expires_in" => 3600})
+      end)
+
+      assert {:error, :timeout} = Teya.Auth.token()
     end
 
     test "caches the token on subsequent calls", %{auth_pid: auth_pid} do

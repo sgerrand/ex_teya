@@ -15,7 +15,8 @@ defmodule Teya.Error do
   such as `"invalid_client"` and `"invalid_scope"`.
 
   `invalid_parameters` lists the request fields the API rejected, when it says
-  which. Each entry is a map with `"name"` and `"reason"` keys.
+  which. Each entry is a map, usually with `"name"` and `"reason"` keys; read
+  them with `Map.get/2`, since the API does not promise every entry has both.
   """
 
   @type t :: %__MODULE__{
@@ -40,6 +41,12 @@ defmodule Teya.Error do
     }
   end
 
+  # A gateway or firewall in front often answers with a message and nothing
+  # else. Keep that as text rather than as an inspected map.
+  def from_response(%{status: status, body: %{"message" => message}}) when is_binary(message) do
+    %__MODULE__{status: status, message: message}
+  end
+
   def from_response(%{status: status, body: body}) do
     %__MODULE__{status: status, message: body |> inspect() |> String.slice(0, 500)}
   end
@@ -61,10 +68,19 @@ defmodule Teya.Error do
   # it as 400, or 401 for a bad client, but servers use other 4xx statuses too,
   # such as 403 or 429. A 5xx in front of that endpoint is a gateway or proxy
   # page, so its body is kept as the message rather than read as a code.
-  def from_oauth_response(%{status: status, body: %{"error" => code} = body})
-      when is_binary(code) and status in 400..499 do
-    %__MODULE__{code: code, message: text(body["error_description"]), status: status}
+  #
+  # OAuth codes are short words joined by underscores, such as
+  # "invalid_client". A rate limiter or firewall may send
+  # {"error": "Too Many Requests"} instead; that is a message, not a code a
+  # caller could match on, so it is kept as one.
+  def from_oauth_response(%{status: status, body: %{"error" => error} = body})
+      when is_binary(error) and status in 400..499 do
+    if oauth_code?(error),
+      do: %__MODULE__{code: error, message: text(body["error_description"]), status: status},
+      else: %__MODULE__{message: error, status: status}
   end
 
   def from_oauth_response(resp), do: from_response(resp)
+
+  defp oauth_code?(error), do: String.match?(error, ~r/\A[a-z0-9_]+\z/)
 end

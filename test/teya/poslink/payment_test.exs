@@ -117,6 +117,17 @@ defmodule Teya.POSLink.PaymentTest do
                Payment.receipt_text("pr-uuid-1")
     end
 
+    test "returns a receipt sent as plain text in the same shape" do
+      stub_api(fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("text/plain")
+        |> Plug.Conn.send_resp(200, "MAIN STREET\nTOTAL GBP 10.00")
+      end)
+
+      assert {:ok, %{"receipt_text" => "MAIN STREET\nTOTAL GBP 10.00"}} =
+               Payment.receipt_text("pr-uuid-1")
+    end
+
     test "returns Teya.Error for a payment with no receipt" do
       stub_api(fn conn ->
         error_response(conn, 404, "NOT_FOUND", "No receipt for this payment request")

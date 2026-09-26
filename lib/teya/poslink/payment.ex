@@ -207,11 +207,14 @@ defmodule Teya.POSLink.Payment do
   """
   @spec receipt_text(String.t(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def receipt_text(payment_request_id, opts \\ []) do
-    Client.request(
-      :get,
-      "/poslink/v3/payment-requests/#{Client.segment(payment_request_id)}/receipt-text",
-      opts
-    )
+    path = "/poslink/v3/payment-requests/#{Client.segment(payment_request_id)}/receipt-text"
+
+    case Client.request(:get, path, opts) do
+      # The spec gives a JSON body, but a receipt sent as plain text is
+      # returned in the same shape, so the documented match still holds.
+      {:ok, text} when is_binary(text) -> {:ok, %{"receipt_text" => text}}
+      result -> result
+    end
   end
 
   @doc """

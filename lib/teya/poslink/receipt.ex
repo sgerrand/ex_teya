@@ -8,8 +8,7 @@ defmodule Teya.POSLink.Receipt do
   Use `create/2` to submit the receipt and `subscribe_status/2` to receive
   real-time printer status updates via SSE.
 
-  Required OAuth scopes: `poslink/receipt-requests/create`,
-  `poslink/receipt-requests/id/status/get`.
+  Teya's specification names no scope for receipt requests.
 
   ## Task lifecycle
 

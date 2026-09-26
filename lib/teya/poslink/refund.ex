@@ -7,7 +7,7 @@ defmodule Teya.POSLink.Refund do
   via `Teya.Refund`). Use this module when refunding a payment that was
   originally processed through a POSLink terminal.
 
-  Required OAuth scope: `poslink/refunds/create`.
+  Needs the `refunds` scope, which ePOS registration returns.
   """
 
   alias Teya.Client

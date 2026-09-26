@@ -6,7 +6,7 @@ defmodule Teya.Reversal do
   network. For transactions that have already settled, use `Teya.Refund`
   instead.
 
-  Required OAuth scope: `reversals/create`.
+  Teya's specification names no OAuth scope for this endpoint.
   """
 
   alias Teya.Client

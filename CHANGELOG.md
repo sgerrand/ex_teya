@@ -1,5 +1,38 @@
 # Changelog
 
+## [1.0.0](https://github.com/sgerrand/ex_teya/compare/v0.4.3...v1.0.0) (2026-09-26)
+
+
+### ⚠ BREAKING CHANGES
+
+* without :token_url set, tokens are now fetched from https://id.teya.com/oauth/v2/oauth-token instead of https://identity.teya.com/connect/token. To keep the old endpoint, set config :teya, token_url: "https://identity.teya.com/connect/token".
+* **auth:** a failed token fetch returns {:error, %Teya.Error{}} rather than {:error, %Req.Response{}}. Transport failures still return the underlying Req exception.
+* **error:** a failed token fetch returns {:error, %Teya.Error{}} rather than {:error, %Req.Response{}}. Transport failures still return the underlying Req exception.
+* **webhook:** verify/3 and parse/3 no longer accept a PEM or Base64 key. Read it with Teya.Webhook.decode_key/1 and pass the result.
+* **poslink:** Refund.create/2 now takes transaction_id (the original payment's gateway_payment_id) and amount instead of store_id and payment_request_id. Refund statuses are SUCCESS, FAILURE or PENDING. Payment.create/2 requires transaction_type and merchant_reference. Payment.list/1 requires the store_id query param. Payment.get/2 accepts only a :timeout option and can return {:error, :timeout} or
+
+### Features
+
+* add a staging environment and use the token URL Teya documents ([#48](https://github.com/sgerrand/ex_teya/issues/48)) ([da3a4d8](https://github.com/sgerrand/ex_teya/commit/da3a4d802131cb55fc740b3ee99825ea888046c5))
+* add MOTO payments, POSLink receipt text, store configs and ePOS registration ([#45](https://github.com/sgerrand/ex_teya/issues/45)) ([5e90476](https://github.com/sgerrand/ex_teya/commit/5e904760934d65a0ca6ff245e267c4dc79c148b1))
+* **error:** richer errors and a library user agent ([#40](https://github.com/sgerrand/ex_teya/issues/40)) ([7a157d5](https://github.com/sgerrand/ex_teya/commit/7a157d5cdd367d1ab398c93ebd6e0d65c27a4e5b))
+* opt-in retries for POSTs that are safe to repeat ([#47](https://github.com/sgerrand/ex_teya/issues/47)) ([c7c9781](https://github.com/sgerrand/ex_teya/commit/c7c9781477a831c193449e8281b9900941d9f39e))
+* **webhook:** check the signature on an incoming webhook ([#43](https://github.com/sgerrand/ex_teya/issues/43)) ([6f58e07](https://github.com/sgerrand/ex_teya/commit/6f58e0787c6623f3bded23966419a90e16829407))
+
+
+### Bug Fixes
+
+* encode every id put into a request path ([#46](https://github.com/sgerrand/ex_teya/issues/46)) ([ad12c33](https://github.com/sgerrand/ex_teya/commit/ad12c33a78f0f096486a96ef1c55b7e15ba4691d))
+* **poslink:** move to current POSLink payment and refund endpoints ([#37](https://github.com/sgerrand/ex_teya/issues/37)) ([b61ca85](https://github.com/sgerrand/ex_teya/commit/b61ca852529b603f20d9e397c58a9fce2ca4ff52))
+* **poslink:** read the snapshot in get/2 outside the caller's mailbox ([#41](https://github.com/sgerrand/ex_teya/issues/41)) ([272b472](https://github.com/sgerrand/ex_teya/commit/272b47280830b107a5f74c96fdb5d01f7a3b73bb))
+* **sse:** cut an oversized error chunk instead of copying it whole ([#42](https://github.com/sgerrand/ex_teya/issues/42)) ([b066431](https://github.com/sgerrand/ex_teya/commit/b06643178a0cd484482c19601b50e93f654e5884))
+* **sse:** keep the error body on failed stream requests ([#39](https://github.com/sgerrand/ex_teya/issues/39)) ([ee0c912](https://github.com/sgerrand/ex_teya/commit/ee0c912233bde01c9ee7e273d4227d157787f565))
+
+
+### Code Refactoring
+
+* **auth:** fetch tokens in a task and let waiting callers share it ([#44](https://github.com/sgerrand/ex_teya/issues/44)) ([ba6ee07](https://github.com/sgerrand/ex_teya/commit/ba6ee07b074321da91b7b44ded9109ac9ecc2ca2))
+
 ## [0.4.3](https://github.com/sgerrand/ex_teya/compare/v0.4.2...v0.4.3) (2026-09-10)
 
 

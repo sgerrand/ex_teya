@@ -12,8 +12,7 @@ defmodule Teya.ConfigTest do
 
       assert config.client_id == "test_client_id"
       assert config.client_secret == "test_client_secret"
-      assert config.token_url == "https://identity.teya.test/connect/token"
-      assert config.base_url == "https://api.teya.test"
+      assert config.token_url == "https://id.teya.test/oauth/v2/oauth-token"
       assert config.scopes == ["checkout/sessions/create", "checkout/sessions/id/get"]
     end
 

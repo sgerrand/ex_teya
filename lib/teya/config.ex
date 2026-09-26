@@ -23,6 +23,8 @@ defmodule Teya.Config do
 
   The API and token URLs come from `:environment`, `:production` (the
   default) or `:staging`. Set `:base_url` or `:token_url` to use another.
+  Like the credentials, the token URL is read once, when the application
+  starts, so changing the environment takes a restart.
   """
 
   alias Teya.HTTP
@@ -33,11 +35,10 @@ defmodule Teya.Config do
           client_id: String.t(),
           client_secret: String.t(),
           token_url: String.t(),
-          base_url: String.t(),
           scopes: [String.t()]
         }
 
-  defstruct [:client_id, :client_secret, :token_url, :base_url, scopes: []]
+  defstruct [:client_id, :client_secret, :token_url, scopes: []]
 
   @doc false
   def from_env do
@@ -45,7 +46,6 @@ defmodule Teya.Config do
       client_id: Application.fetch_env!(:teya, :client_id),
       client_secret: Application.fetch_env!(:teya, :client_secret),
       token_url: HTTP.token_url(),
-      base_url: HTTP.base_url(),
       scopes: Application.get_env(:teya, :scopes, [])
     }
     |> validate!()

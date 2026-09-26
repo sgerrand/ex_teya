@@ -3,7 +3,7 @@ import Config
 config :teya,
   client_id: "test_client_id",
   client_secret: "test_client_secret",
-  token_url: "https://identity.teya.test/connect/token",
+  token_url: "https://id.teya.test/oauth/v2/oauth-token",
   base_url: "https://api.teya.test",
   scopes: ["checkout/sessions/create", "checkout/sessions/id/get"],
   # Auth uses a separate stub name so the token endpoint can be stubbed

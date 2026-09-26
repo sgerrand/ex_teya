@@ -50,7 +50,9 @@ config :teya, environment: :staging
 | `:staging` | `https://api.teya.xyz` | `https://id.teya.xyz/oauth/v2/oauth-token` |
 
 To use other URLs, such as a proxy, set `:base_url` or `:token_url`. Each
-wins over the environment's.
+wins over the environment's. The environment may be given as text, such as
+`System.get_env("TEYA_ENV", "production")`. Like the credentials, it is read
+when the application starts, so changing it takes a restart.
 
 These settings are optional:
 

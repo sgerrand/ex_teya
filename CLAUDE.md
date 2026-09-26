@@ -104,7 +104,7 @@ cannot mix with a `subscribe/2` stream for the same payment.
 
 Tests use `Req.Test` to stub HTTP. Three separate stub names are used to cleanly separate concerns:
 
-- `Teya.Auth` stub — handles token endpoint (`/connect/token`); set in `APICase` setup and `allow`-ed to the Auth GenServer process
+- `Teya.Auth` stub — handles token endpoint (`/oauth/v2/oauth-token`); set in `APICase` setup and `allow`-ed to the Auth GenServer process
 - `Teya.Client` stub — handles API endpoint calls; set per-test via `stub_api/1`
 - `Teya.POSLink.Subscriber` stub — handles POSLink SSE streaming requests; configured via `:sse_req_options` in test config
 

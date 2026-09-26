@@ -84,7 +84,7 @@ defmodule Teya.AuthTest do
     test "fetches an OAuth token from the token endpoint", %{auth_pid: auth_pid} do
       stub_auth(auth_pid, fn conn ->
         assert conn.method == "POST"
-        assert conn.request_path == "/connect/token"
+        assert conn.request_path == "/oauth/v2/oauth-token"
         assert Plug.Conn.get_req_header(conn, "user-agent") == [Teya.HTTP.user_agent()]
         Req.Test.json(conn, %{"access_token" => "fresh_token", "expires_in" => 3600})
       end)

@@ -104,6 +104,57 @@ defmodule Teya.POSLink.PaymentTest do
     end
   end
 
+  describe "receipt_text/2" do
+    test "returns the plain-text receipt for a payment" do
+      stub_api(fn conn ->
+        assert conn.method == "GET"
+        assert conn.request_path == "/poslink/v3/payment-requests/pr-uuid-1/receipt-text"
+
+        json_response(conn, 200, %{"receipt_text" => "MAIN STREET\nTOTAL GBP 10.00"})
+      end)
+
+      assert {:ok, %{"receipt_text" => "MAIN STREET\nTOTAL GBP 10.00"}} =
+               Payment.receipt_text("pr-uuid-1")
+    end
+
+    test "returns a receipt sent as plain text in the same shape" do
+      stub_api(fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("text/plain")
+        |> Plug.Conn.send_resp(200, "MAIN STREET\nTOTAL GBP 10.00")
+      end)
+
+      assert {:ok, %{"receipt_text" => "MAIN STREET\nTOTAL GBP 10.00"}} =
+               Payment.receipt_text("pr-uuid-1")
+    end
+
+    test "decodes a JSON receipt sent under another content type" do
+      stub_api(fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("text/plain")
+        |> Plug.Conn.send_resp(200, ~s({"receipt_text":"MAIN STREET"}))
+      end)
+
+      assert {:ok, %{"receipt_text" => "MAIN STREET"}} = Payment.receipt_text("pr-uuid-1")
+    end
+
+    test "returns Teya.Error for an empty receipt" do
+      stub_api(fn conn -> Plug.Conn.send_resp(conn, 200, "") end)
+
+      assert {:error, %Error{message: "the receipt text was empty"}} =
+               Payment.receipt_text("pr-uuid-1")
+    end
+
+    test "returns Teya.Error for a payment with no receipt" do
+      stub_api(fn conn ->
+        error_response(conn, 404, "NOT_FOUND", "No receipt for this payment request")
+      end)
+
+      assert {:error, %Error{code: "NOT_FOUND", status: 404}} =
+               Payment.receipt_text("pr-uuid-2")
+    end
+  end
+
   describe "list/1" do
     test "returns a list of payment requests" do
       stub_api(fn conn ->

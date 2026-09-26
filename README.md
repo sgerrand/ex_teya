@@ -220,6 +220,26 @@ params = %{
 response["status"]  # "SUCCESS" | "FAILURE" | "PENDING"
 ```
 
+### MOTO (Mail and Telephone Orders)
+
+For a card taken over the phone or by post and entered in a virtual terminal.
+The card details are sent encrypted with a key Teya provides; handling them at
+all puts your software within PCI DSS scope.
+
+```elixir
+{:ok, %{"status" => "SUCCESS"}} =
+  Teya.Moto.create(%{
+    "type"          => "SALE",
+    "amounts"       => %{"amount" => 2500, "currency" => "GBP"},
+    "card_details"  => %{
+      "encrypted_card_data" => ciphertext,
+      "encryption_key_id"   => key_id,
+      "encryption_ksn"      => ksn
+    },
+    "transacted_at" => "2026-09-25T10:30:00Z"
+  })
+```
+
 ### Reversal
 
 Void a transaction before it settles with the card network. Use a refund
@@ -278,6 +298,24 @@ POSLink integrates ePOS software with physical payment terminals. Discover
 available stores and terminals, then create payment requests and stream their
 status in real time.
 
+#### Register an ePOS application
+
+Registering once per store turns a signed-in user's token into credentials for
+the library. It is a setup step: store the `client_id`, `client_secret` and
+`scopes` that come back in your configuration, then restart the application,
+which reads them only when it starts. Registering needs no `:client_id` of
+its own.
+
+```elixir
+{:ok, %{"client_id" => id, "client_secret" => secret, "scopes" => scopes}} =
+  Teya.POSLink.Epos.register(
+    %{"store_id" => store_id, "epos_external_id" => "till-1"},
+    user_token: user_jwt
+  )
+```
+
+The client secret is a credential: store it as you would a password.
+
 #### Discover stores and terminals
 
 ```elixir
@@ -287,6 +325,14 @@ store_id = hd(stores)["store_id"]
 {:ok, %{"terminals" => terminals}} = Teya.POSLink.Store.list_terminals(store_id)
 
 terminal_id = hd(terminals)["terminal_id"]
+```
+
+A store's settings apply to all its terminals. Read them for one terminal, or
+change one for the whole store:
+
+```elixir
+{:ok, %{"configs" => configs}} = Teya.POSLink.Store.terminal_configs(store_id, terminal_id)
+{:ok, _} = Teya.POSLink.Store.put_config(store_id, "PAT_ENABLED", "true")
 ```
 
 #### Take a card-present payment
@@ -370,6 +416,15 @@ receive do
 end
 ```
 
+#### Receipt text
+
+A successful payment or refund has a plain-text receipt, ready to print or
+send:
+
+```elixir
+{:ok, %{"receipt_text" => text}} = Teya.POSLink.Payment.receipt_text(payment_request_id)
+```
+
 ### Idempotency Keys
 
 POST and PATCH requests automatically include a random `Idempotency-Key` header. Supply your own to safely retry a request:
@@ -414,10 +469,12 @@ so they can identify your integration. To send your own, use Req's
 config :teya, req_options: [user_agent: "acme-shop/1.0"]
 ```
 
-Other headers you set there are sent too, with two exceptions the library
-always sets itself. API calls carry their own `Idempotency-Key`, since one key
-shared by every request would make each POST look like a retry of the first.
-Token requests are always sent as a form, whatever content type is set.
+Other headers and options you set there are used too, with three exceptions
+the library always sets itself. API calls always send the library's own
+bearer token, so an `:auth` option there is ignored. API calls carry their own
+`Idempotency-Key`, since one key shared by every request would make each POST
+look like a retry of the first. Token requests are always sent as a form,
+whatever content type is set.
 
 Token requests and SSE streams use `:auth_req_options` and `:sse_req_options`
 when you set them, and `:req_options` when you do not. DCC quotes use only

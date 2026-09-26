@@ -29,7 +29,7 @@ defmodule Teya.POSLink.Payment do
     stream always starts with a full snapshot of the payment request.
   """
 
-  alias Teya.{Auth, Client, SSE}
+  alias Teya.{Auth, Client, Error, SSE}
 
   @doc """
   Creates a payment request at a terminal.
@@ -178,6 +178,53 @@ defmodule Teya.POSLink.Payment do
         :none -> {:error, :no_snapshot}
         result -> result
       end
+    end
+  end
+
+  @doc """
+  Returns the receipt for a successful payment or refund, as plain text.
+
+  Returns `{:ok, %{"receipt_text" => text}}`. The text covers the store's name
+  and address, the date and time in UTC, the amount, tip and total, card
+  details, and the references a receipt needs. Lines with nothing to show are
+  left out. Only a payment request whose status is `"SUCCESSFUL"` has one.
+
+  A refund has a receipt here when it was made as a payment request, with
+  `create/2` and `"transaction_type" => "REFUND"`. One made with
+  `Teya.POSLink.Refund.create/2` has no payment request id, so it cannot be
+  looked up this way.
+
+  Needs the `payment_requests/id` scope, which ePOS registration returns, or
+  the deprecated `default_access`.
+
+  ## Parameters
+
+  - `payment_request_id` — UUID returned from `create/2`
+
+  ## Examples
+
+      {:ok, %{"receipt_text" => text}} = Teya.POSLink.Payment.receipt_text(payment_request_id)
+  """
+  @spec receipt_text(String.t(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
+  def receipt_text(payment_request_id, opts \\ []) do
+    path = "/poslink/v3/payment-requests/#{Client.segment(payment_request_id)}/receipt-text"
+
+    case Client.request(:get, path, opts) do
+      {:ok, body} when is_binary(body) -> receipt_from_text(body)
+      result -> result
+    end
+  end
+
+  # The spec gives a JSON body, which Req decodes to a map. A body left as
+  # text is JSON Req did not decode (sent under another content type, or with
+  # decode_body: false) or a receipt sent as plain text. Either way it comes
+  # back in the documented shape. An empty body holds no receipt at all.
+  defp receipt_from_text(""), do: {:error, %Error{message: "the receipt text was empty"}}
+
+  defp receipt_from_text(text) do
+    case Jason.decode(text) do
+      {:ok, %{"receipt_text" => receipt} = body} when is_binary(receipt) -> {:ok, body}
+      _ -> {:ok, %{"receipt_text" => text}}
     end
   end
 

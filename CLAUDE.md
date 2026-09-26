@@ -40,7 +40,10 @@ lib/teya/
   client.ex           — HTTP layer: calls Auth.token/0, adds Bearer header,
                         auto-generates Idempotency-Key on POST/PATCH;
                         segment/1 encodes each id put into a path (every
-                        path builder must use it, before any task starts)
+                        path builder must use it, before any task starts);
+                        idempotent_post/2 for a POST whose spec documents
+                        Idempotency-Key, retried when :retry_idempotent_posts
+                        is set
   http.ex             — shared by every module that makes a request: the user
                         agent, and each request kind's options with their
                         fallback to :req_options

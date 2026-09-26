@@ -47,7 +47,7 @@ defmodule Teya.Checkout do
   """
   @spec create_session(map(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def create_session(params, opts \\ []) do
-    Client.request(:post, "/v2/checkout/sessions", Keyword.put(opts, :body, params))
+    Client.idempotent_post("/v2/checkout/sessions", Keyword.put(opts, :body, params))
   end
 
   @doc """

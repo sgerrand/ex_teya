@@ -30,8 +30,7 @@ defmodule Teya.Capture do
   """
   @spec create(String.t(), map(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def create(transaction_id, params \\ %{}, opts \\ []) do
-    Client.request(
-      :post,
+    Client.idempotent_post(
       "/v1/transactions/#{Client.segment(transaction_id)}/capture",
       Keyword.put(opts, :body, params)
     )

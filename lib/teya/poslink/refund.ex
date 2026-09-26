@@ -47,6 +47,6 @@ defmodule Teya.POSLink.Refund do
   """
   @spec create(map(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def create(params, opts \\ []) do
-    Client.request(:post, "/poslink/v2/refunds", Keyword.put(opts, :body, params))
+    Client.idempotent_post("/poslink/v2/refunds", Keyword.put(opts, :body, params))
   end
 end

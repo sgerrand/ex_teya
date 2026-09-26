@@ -45,7 +45,8 @@ defmodule Teya.Moto do
   ## Options
 
   - `:idempotency_key` — override the auto-generated idempotency key. Sending
-    the same key again returns the first response rather than charging twice
+    the same key again does not charge twice, though it may answer with an
+    error, such as a 409, rather than the first response
 
   ## Examples
 
@@ -63,6 +64,6 @@ defmodule Teya.Moto do
   """
   @spec create(map(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def create(params, opts \\ []) do
-    Client.request(:post, "/v1/transactions/moto", Keyword.put(opts, :body, params))
+    Client.idempotent_post("/v1/transactions/moto", Keyword.put(opts, :body, params))
   end
 end

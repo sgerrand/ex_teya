@@ -75,7 +75,7 @@ defmodule Teya.Transaction do
   """
   @spec create(map(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def create(params, opts \\ []) do
-    Client.request(:post, "/v3/transactions/online", Keyword.put(opts, :body, params))
+    Client.idempotent_post("/v3/transactions/online", Keyword.put(opts, :body, params))
   end
 
   @doc """

@@ -13,7 +13,14 @@ defmodule Teya do
 
   ## Configuration
 
-  Add to your application config:
+  The library runs one set of credentials, so configure one of these two,
+  not both:
+
+  - **Online Payments and Payments Gateway**: the client from the Teya
+    Developer Portal.
+  - **POSLink**: the client that ePOS registration returns.
+
+  For Online Payments and Payments Gateway:
 
       config :teya,
         client_id: "your_client_id",
@@ -33,22 +40,21 @@ defmodule Teya do
           "token/delete"
         ]
 
-  POSLink uses its own credentials: the client that ePOS registration
-  returns, with the scopes it returns. Store them where your application
-  keeps its secrets, such as environment variables, and read them when it
-  starts:
+  For POSLink, instead: store the client id, secret and scopes that
+  registration returns where your application keeps its secrets, such as
+  environment variables, and read them when it starts:
 
       # config/runtime.exs
       config :teya,
         client_id: System.fetch_env!("TEYA_EPOS_CLIENT_ID"),
         client_secret: System.fetch_env!("TEYA_EPOS_CLIENT_SECRET"),
-        # the "scopes" list from registration, stored space-separated, such as
-        # "payment_requests payment_requests/id stores/id/terminals refunds"
-        scopes: String.split(System.fetch_env!("TEYA_EPOS_SCOPES"))
+        # the "scopes" list from registration, separated by spaces or commas,
+        # such as "payment_requests payment_requests/id stores/id/terminals refunds"
+        scopes: String.split(System.fetch_env!("TEYA_EPOS_SCOPES"), ~r/[\\s,]+/, trim: true)
 
-  One application runs one set of credentials, so ask a POSLink client only
-  for the scopes registration gave it. Asking for others, such as the Online
-  Payments ones above, can make the token request fail with `invalid_scope`.
+  Ask a POSLink client only for the scopes registration gave it. Asking for
+  others, such as the Online Payments ones above, can make the token request
+  fail with `invalid_scope`.
 
   OAuth tokens are fetched automatically and refreshed before expiry.
   Only request the scopes your application needs. The

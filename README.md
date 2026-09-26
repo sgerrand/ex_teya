@@ -37,6 +37,12 @@ config :teya,
 
 OAuth tokens are fetched automatically and refreshed before expiry. Only request the scopes your application needs.
 
+These credentials come from the Teya Developer Portal, for Online Payments and
+Payments Gateway. POSLink calls need a different client, the one
+[ePOS registration](#register-an-epos-application) returns, with the scopes it
+returns. The library runs one set of credentials at a time, so configure one
+or the other; see [POSLink scopes](#poslink-scopes).
+
 The library talks to Teya's production API. To use Teya's staging API
 instead, with staging credentials, set:
 
@@ -71,7 +77,9 @@ These settings are optional:
 
 ### Scope reference
 
-The scope names below are the ones Teya's API specifications give.
+The scope names below come from Teya's API specifications. Where a spec
+leaves a scope out, the notes under each table say so and where the name
+comes from instead.
 
 #### Online Payments scopes
 
@@ -103,7 +111,7 @@ scopes your credentials need.
 | `payment_requests` | `Teya.POSLink.Payment.create/2`, `Teya.POSLink.Payment.list/1`, `Teya.POSLink.Payment.cancel/2` |
 | `payment_requests/id` | `Teya.POSLink.Payment.get/2`, `Teya.POSLink.Payment.subscribe/2`, `Teya.POSLink.Payment.receipt_text/2` |
 | `stores/id/terminals` | `Teya.POSLink.Store.list/1`, `Teya.POSLink.Store.list_terminals/2` |
-| `refunds` | `Teya.POSLink.Refund.create/2` (see below) |
+| `refunds` | `Teya.POSLink.Refund.create/2` (from registration; see below) |
 
 These are the scopes [ePOS registration](#register-an-epos-application)
 returns, for the client it returns. POSLink calls use that client, so set

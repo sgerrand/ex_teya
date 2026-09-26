@@ -480,8 +480,11 @@ out what happened. How depends on the endpoint:
 - **Card-present and MOTO payments** (`Teya.CardPresent.create/2`,
   `Teya.Moto.create/2`): reverse by the original key with
   `Teya.Reversal.create/2` and `"reversal_reason" =>
-  "COMMUNICATION_REVERSAL"`. That undoes the payment if it went through, and
-  you can then start again with a new key.
+  "COMMUNICATION_REVERSAL"`. Start again with a new key only once the
+  reversal's `"status"` is `"SUCCESS"`. `"PENDING"` or `"ACKNOWLEDGED"` means
+  Teya has not finished it yet, so the payment may still stand. A
+  `"FAILURE"` or an error does not prove there was no payment to reverse.
+  In those cases check in the Teya portal before starting again.
 - **Checkout sessions and payment links** (`Teya.Checkout.create_session/2`,
   `Teya.PayByLink.create/2`): creating one charges nothing until the
   customer pays, so a second one is a smaller risk. Still, send only one of

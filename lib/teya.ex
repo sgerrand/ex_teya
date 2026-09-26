@@ -34,12 +34,17 @@ defmodule Teya do
         ]
 
   POSLink uses its own credentials: the client that ePOS registration
-  returns, with the scopes it returns, such as:
+  returns, with the scopes it returns. Store them where your application
+  keeps its secrets, such as environment variables, and read them when it
+  starts:
 
+      # config/runtime.exs
       config :teya,
-        client_id: epos_client_id,
-        client_secret: epos_client_secret,
-        scopes: ["payment_requests", "payment_requests/id", "stores/id/terminals", "refunds"]
+        client_id: System.fetch_env!("TEYA_EPOS_CLIENT_ID"),
+        client_secret: System.fetch_env!("TEYA_EPOS_CLIENT_SECRET"),
+        # the "scopes" list from registration, stored space-separated, such as
+        # "payment_requests payment_requests/id stores/id/terminals refunds"
+        scopes: String.split(System.fetch_env!("TEYA_EPOS_SCOPES"))
 
   One application runs one set of credentials, so ask a POSLink client only
   for the scopes registration gave it. Asking for others, such as the Online

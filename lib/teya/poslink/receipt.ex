@@ -27,7 +27,7 @@ defmodule Teya.POSLink.Receipt do
     stream.
   """
 
-  alias Teya.{Auth, Client, SSE}
+  alias Teya.{Auth, Client, HTTP, SSE}
 
   @doc """
   Submits a receipt print request to a terminal.
@@ -108,8 +108,7 @@ defmodule Teya.POSLink.Receipt do
   def subscribe_status(receipt_id, pid \\ self()) do
     # Built before the task starts, so an id that cannot be a path segment
     # raises where the mistake was made.
-    base_url = Application.get_env(:teya, :base_url, "https://api.teya.com")
-    url = base_url <> "/poslink/v1/receipt-requests/#{Client.segment(receipt_id)}/status"
+    url = HTTP.base_url() <> "/poslink/v1/receipt-requests/#{Client.segment(receipt_id)}/status"
 
     task =
       Task.Supervisor.async_nolink(Teya.TaskSupervisor, fn ->

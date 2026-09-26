@@ -45,8 +45,11 @@ lib/teya/
                         Idempotency-Key, retried when :retry_idempotent_posts
                         is set
   http.ex             — shared by every module that makes a request: the user
-                        agent, and each request kind's options with their
-                        fallback to :req_options
+                        agent, each request kind's options with their
+                        fallback to :req_options, and base_url/0 and
+                        token_url/0 (:base_url/:token_url, else the
+                        :environment's URLs; the only place they are
+                        written out)
   sse.ex              — SSE helpers: stream/6 sends each event to a process,
                         first/4 returns the first event of a given name;
                         frames are decoded by the req_server_sent_events plugin
@@ -101,7 +104,7 @@ cannot mix with a `subscribe/2` stream for the same payment.
 
 Tests use `Req.Test` to stub HTTP. Three separate stub names are used to cleanly separate concerns:
 
-- `Teya.Auth` stub — handles token endpoint (`/connect/token`); set in `APICase` setup and `allow`-ed to the Auth GenServer process
+- `Teya.Auth` stub — handles token endpoint (`/oauth/v2/oauth-token`); set in `APICase` setup and `allow`-ed to the Auth GenServer process
 - `Teya.Client` stub — handles API endpoint calls; set per-test via `stub_api/1`
 - `Teya.POSLink.Subscriber` stub — handles POSLink SSE streaming requests; configured via `:sse_req_options` in test config
 

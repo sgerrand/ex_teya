@@ -560,7 +560,7 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
           sse_event("full", %{"status" => "SUCCESSFUL"})
       )
 
-      url = Application.get_env(:teya, :base_url) <> "/poslink/v3/payment-requests/pr-uuid-37"
+      url = Teya.HTTP.base_url() <> "/poslink/v3/payment-requests/pr-uuid-37"
 
       assert :none = Teya.SSE.first(url, "test_access_token", "full", owner)
     end

@@ -30,14 +30,35 @@ end
 config :teya,
   client_id: System.fetch_env!("TEYA_CLIENT_ID"),
   client_secret: System.fetch_env!("TEYA_CLIENT_SECRET"),
-  token_url: "https://identity.teya.com/connect/token",
-  base_url: "https://api.teya.com",
   scopes: [
     # list only the scopes your application needs — see table below
   ]
 ```
 
 OAuth tokens are fetched automatically and refreshed before expiry. Only request the scopes your application needs.
+
+The library talks to Teya's production API. To use Teya's staging API
+instead, with staging credentials, set:
+
+```elixir
+config :teya, environment: :staging
+```
+
+| `:environment` | API | Token endpoint |
+|---|---|---|
+| `:production` (default) | `https://api.teya.com` | `https://id.teya.com/oauth/v2/oauth-token` |
+| `:staging` | `https://api.teya.xyz` | `https://id.teya.xyz/oauth/v2/oauth-token` |
+
+To use other URLs, such as a proxy, set `:base_url` or `:token_url`. Each
+wins over the environment's. The environment may be given as text, such as
+`System.get_env("TEYA_ENV", "production")`.
+
+Set these before the application starts, and do not change them while it
+runs. The auth process reads the credentials and the token URL once, when it
+starts, and keeps the token it fetched. API calls read `:environment` and
+`:base_url` on every request. So a change while the application runs sends
+API calls to the new host with a token from the old one, which Teya refuses.
+To switch, change the settings and restart the application.
 
 These settings are optional:
 

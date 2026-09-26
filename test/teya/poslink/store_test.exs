@@ -117,8 +117,12 @@ defmodule Teya.POSLink.StoreTest do
     end
 
     test "does not take a float, whose text the API may not accept" do
+      # The compiler already rejects a float written into the call, so this
+      # one comes from a runtime value, to check the guard itself.
+      value = Enum.random([30.0])
+
       assert_raise FunctionClauseError, fn ->
-        Store.put_config("store-uuid-1", "TIMEOUT", 30.0)
+        Store.put_config("store-uuid-1", "TIMEOUT", value)
       end
     end
 

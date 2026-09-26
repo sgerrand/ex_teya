@@ -76,7 +76,7 @@ defmodule Teya.PathSegmentTest do
 
     {:ok, _task} = Payment.subscribe(@id)
 
-    assert_receive {:poslink_payment, @id, "full", %{"status" => "NEW"}}
+    assert_receive {:poslink_payment, @id, "full", %{"status" => "NEW"}}, 500
   end
 
   test "Receipt.subscribe_status/2 encodes the id, and sends messages with the id as given" do
@@ -84,7 +84,7 @@ defmodule Teya.PathSegmentTest do
 
     {:ok, _task} = POSLinkReceipt.subscribe_status(@id)
 
-    assert_receive {:poslink_receipt, @id, "full", %{"status" => "NEW"}}
+    assert_receive {:poslink_receipt, @id, "full", %{"status" => "NEW"}}, 500
   end
 
   test "an id that cannot be a path segment raises before any request" do

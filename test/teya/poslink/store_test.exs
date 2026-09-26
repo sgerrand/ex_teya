@@ -132,6 +132,14 @@ defmodule Teya.POSLink.StoreTest do
       end
     end
 
+    test "raises for a dot segment, which could reach another route" do
+      for id <- [".", ".."] do
+        assert_raise ArgumentError, ~r/cannot be empty, "\." or "\.\."/, fn ->
+          Store.put_config(id, "PAT_ENABLED", "true")
+        end
+      end
+    end
+
     test "encodes a key so it cannot change which endpoint is called" do
       stub_api(fn conn ->
         assert conn.request_path == "/poslink/v1/stores/store-uuid-1/configs/A%2FB%3Fx"

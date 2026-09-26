@@ -29,7 +29,7 @@ defmodule Teya.POSLink.Payment do
     stream always starts with a full snapshot of the payment request.
   """
 
-  alias Teya.{Auth, Client, SSE}
+  alias Teya.{Auth, Client, Error, SSE}
 
   @doc """
   Creates a payment request at a terminal.
@@ -210,10 +210,21 @@ defmodule Teya.POSLink.Payment do
     path = "/poslink/v3/payment-requests/#{Client.segment(payment_request_id)}/receipt-text"
 
     case Client.request(:get, path, opts) do
-      # The spec gives a JSON body, but a receipt sent as plain text is
-      # returned in the same shape, so the documented match still holds.
-      {:ok, text} when is_binary(text) -> {:ok, %{"receipt_text" => text}}
+      {:ok, body} when is_binary(body) -> receipt_from_text(body)
       result -> result
+    end
+  end
+
+  # The spec gives a JSON body, which Req decodes to a map. A body left as
+  # text is JSON Req did not decode (sent under another content type, or with
+  # decode_body: false) or a receipt sent as plain text. Either way it comes
+  # back in the documented shape. An empty body holds no receipt at all.
+  defp receipt_from_text(""), do: {:error, %Error{message: "the receipt text was empty"}}
+
+  defp receipt_from_text(text) do
+    case Jason.decode(text) do
+      {:ok, %{"receipt_text" => receipt} = body} when is_binary(receipt) -> {:ok, body}
+      _ -> {:ok, %{"receipt_text" => text}}
     end
   end
 

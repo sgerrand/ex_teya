@@ -47,9 +47,12 @@ defmodule Teya.POSLink.EposTest do
     end
 
     test "registers without asking the auth process for a token" do
-      # The auth process now answers every caller with an error, as it would
-      # before there are credentials to fetch with. The next test's setup
-      # seeds a token again.
+      # The auth process answers every caller with an error for this test, as
+      # it would before there are credentials to fetch with. Its state from
+      # setup is put back afterwards, whatever runs next.
+      seeded = :sys.get_state(Teya.Auth)
+      on_exit(fn -> :sys.replace_state(Teya.Auth, fn _state -> seeded end) end)
+
       :sys.replace_state(Teya.Auth, fn state ->
         %{
           state

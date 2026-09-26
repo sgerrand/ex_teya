@@ -128,6 +128,23 @@ defmodule Teya.POSLink.PaymentTest do
                Payment.receipt_text("pr-uuid-1")
     end
 
+    test "decodes a JSON receipt sent under another content type" do
+      stub_api(fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("text/plain")
+        |> Plug.Conn.send_resp(200, ~s({"receipt_text":"MAIN STREET"}))
+      end)
+
+      assert {:ok, %{"receipt_text" => "MAIN STREET"}} = Payment.receipt_text("pr-uuid-1")
+    end
+
+    test "returns Teya.Error for an empty receipt" do
+      stub_api(fn conn -> Plug.Conn.send_resp(conn, 200, "") end)
+
+      assert {:error, %Error{message: "the receipt text was empty"}} =
+               Payment.receipt_text("pr-uuid-1")
+    end
+
     test "returns Teya.Error for a payment with no receipt" do
       stub_api(fn conn ->
         error_response(conn, 404, "NOT_FOUND", "No receipt for this payment request")

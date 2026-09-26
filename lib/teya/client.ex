@@ -37,10 +37,16 @@ defmodule Teya.Client do
   # Encodes one segment of a request path, so a value holding "/", "?", "#"
   # or a space cannot change which endpoint is called. An empty one, from nil
   # say, raises: it would leave "//" in the path and call some other route.
+  # So do "." and "..", which encoding leaves as they are, and which a proxy
+  # or server may read as "this level" and "the level above".
   def segment(value) do
     case to_string(value) do
-      "" -> raise ArgumentError, "a request path segment cannot be empty, got: #{inspect(value)}"
-      text -> URI.encode(text, &URI.char_unreserved?/1)
+      text when text in ["", ".", ".."] ->
+        raise ArgumentError,
+              "a request path segment cannot be empty, \".\" or \"..\", got: #{inspect(value)}"
+
+      text ->
+        URI.encode(text, &URI.char_unreserved?/1)
     end
   end
 

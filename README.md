@@ -469,10 +469,12 @@ so they can identify your integration. To send your own, use Req's
 config :teya, req_options: [user_agent: "acme-shop/1.0"]
 ```
 
-Other headers you set there are sent too, with two exceptions the library
-always sets itself. API calls carry their own `Idempotency-Key`, since one key
-shared by every request would make each POST look like a retry of the first.
-Token requests are always sent as a form, whatever content type is set.
+Other headers and options you set there are used too, with three exceptions
+the library always sets itself. API calls always send the library's own
+bearer token, so an `:auth` option there is ignored. API calls carry their own
+`Idempotency-Key`, since one key shared by every request would make each POST
+look like a retry of the first. Token requests are always sent as a form,
+whatever content type is set.
 
 Token requests and SSE streams use `:auth_req_options` and `:sse_req_options`
 when you set them, and `:req_options` when you do not. DCC quotes use only

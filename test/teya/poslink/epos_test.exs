@@ -46,21 +46,27 @@ defmodule Teya.POSLink.EposTest do
       end
     end
 
-    test "registers before there is any auth process to ask" do
-      auth_pid = Process.whereis(Teya.Auth)
-      Process.unregister(Teya.Auth)
+    test "registers without asking the auth process for a token" do
+      # The auth process now answers every caller with an error, as it would
+      # before there are credentials to fetch with. The next test's setup
+      # seeds a token again.
+      :sys.replace_state(Teya.Auth, fn state ->
+        %{
+          state
+          | token: nil,
+            usable_until: nil,
+            failed_at: System.monotonic_time(:millisecond),
+            failure: %Error{message: "no credentials yet"}
+        }
+      end)
 
       stub_api(fn conn ->
         assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer user-jwt"]
         json_response(conn, 200, %{"client_id" => "m2m-client"})
       end)
 
-      try do
-        assert {:ok, %{"client_id" => "m2m-client"}} =
-                 Epos.register(@params, user_token: "user-jwt")
-      after
-        Process.register(auth_pid, Teya.Auth)
-      end
+      assert {:ok, %{"client_id" => "m2m-client"}} =
+               Epos.register(@params, user_token: "user-jwt")
     end
   end
 end

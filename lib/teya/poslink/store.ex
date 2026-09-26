@@ -91,17 +91,17 @@ defmodule Teya.POSLink.Store do
 
   - `store_id` — UUID of the store
   - `config_key` — the setting to change, such as `"PAT_ENABLED"`
-  - `value` — the new value: a string, boolean or number
+  - `value` — the new value: a string, boolean or integer
 
   ## Examples
 
       {:ok, %{"value" => "true"}} =
         Teya.POSLink.Store.put_config(store_id, "PAT_ENABLED", "true")
   """
-  @spec put_config(String.t(), String.t(), String.t() | boolean() | number(), keyword()) ::
+  @spec put_config(String.t(), String.t(), String.t() | boolean() | integer(), keyword()) ::
           {:ok, map()} | {:error, Teya.Error.t()}
   def put_config(store_id, config_key, value, opts \\ [])
-      when is_binary(value) or is_boolean(value) or is_number(value) do
+      when is_binary(value) or is_boolean(value) or is_integer(value) do
     Client.request(
       :put,
       "/poslink/v1/stores/#{Client.segment(store_id)}/configs/#{Client.segment(config_key)}",

@@ -109,6 +109,12 @@ defmodule Teya.ClientTest do
       assert {:ok, _} = Teya.Client.request(:get, "/v1/test", token: "tok_card_1234")
     end
 
+    test "request_with_token/4 takes no empty token" do
+      assert_raise FunctionClauseError, fn ->
+        Teya.Client.request_with_token("", :get, "/v1/test", [])
+      end
+    end
+
     test "sends its own token even when :req_options sets :auth" do
       TestEnv.add(:req_options, auth: {:bearer, "proxy-token"})
 

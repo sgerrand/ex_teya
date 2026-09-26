@@ -194,6 +194,9 @@ defmodule Teya.POSLink.Payment do
   `Teya.POSLink.Refund.create/2` has no payment request id, so it cannot be
   looked up this way.
 
+  Needs the `payment_requests/id` scope, which ePOS registration returns, or
+  the deprecated `default_access`.
+
   ## Parameters
 
   - `payment_request_id` — UUID returned from `create/2`

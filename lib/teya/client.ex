@@ -30,13 +30,19 @@ defmodule Teya.Client do
   not an option of `request/3`, so a token cannot slip in through the
   options every resource function passes along. Takes the same options.
   """
-  def request_with_token(token, method, path, opts) when is_binary(token),
+  def request_with_token(token, method, path, opts) when is_binary(token) and token != "",
     do: send_request(method, path, opts, token)
 
   @doc false
   # Encodes one segment of a request path, so a value holding "/", "?", "#"
-  # or a space cannot change which endpoint is called.
-  def segment(value), do: value |> to_string() |> URI.encode(&URI.char_unreserved?/1)
+  # or a space cannot change which endpoint is called. An empty one, from nil
+  # say, raises: it would leave "//" in the path and call some other route.
+  def segment(value) do
+    case to_string(value) do
+      "" -> raise ArgumentError, "a request path segment cannot be empty, got: #{inspect(value)}"
+      text -> URI.encode(text, &URI.char_unreserved?/1)
+    end
+  end
 
   defp send_request(method, path, opts, token) do
     base_url = Application.get_env(:teya, :base_url, "https://api.teya.com")

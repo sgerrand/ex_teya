@@ -53,7 +53,7 @@ defmodule Teya.POSLink.Epos do
   def register(params, opts \\ []) do
     {user_token, opts} = Keyword.pop(opts, :user_token)
 
-    unless is_binary(user_token) and user_token != "" do
+    if not (is_binary(user_token) and user_token != "") do
       raise ArgumentError,
             "Teya.POSLink.Epos.register/2 needs the signed-in user's token as :user_token"
     end

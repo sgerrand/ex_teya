@@ -116,6 +116,18 @@ defmodule Teya.POSLink.StoreTest do
       assert {:ok, %{"value" => "30"}} = Store.put_config("store-uuid-1", "TIMEOUT", 30)
     end
 
+    test "does not take a float, whose text the API may not accept" do
+      assert_raise FunctionClauseError, fn ->
+        Store.put_config("store-uuid-1", "TIMEOUT", 30.0)
+      end
+    end
+
+    test "raises for a missing store id rather than calling another route" do
+      assert_raise ArgumentError, ~r/cannot be empty/, fn ->
+        Store.put_config(nil, "PAT_ENABLED", "true")
+      end
+    end
+
     test "encodes a key so it cannot change which endpoint is called" do
       stub_api(fn conn ->
         assert conn.request_path == "/poslink/v1/stores/store-uuid-1/configs/A%2FB%3Fx"

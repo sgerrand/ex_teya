@@ -29,7 +29,7 @@ defmodule Teya.POSLink.Payment do
     stream always starts with a full snapshot of the payment request.
   """
 
-  alias Teya.{Auth, Client, Error, SSE}
+  alias Teya.{Auth, Client, Error, HTTP, SSE}
 
   @doc """
   Creates a payment request at a terminal.
@@ -331,7 +331,7 @@ defmodule Teya.POSLink.Payment do
   # Built by the caller, before any task starts, so an id that cannot be a
   # path segment raises where the mistake was made.
   defp stream_url(id) do
-    Application.get_env(:teya, :base_url, "https://api.teya.com") <>
+    HTTP.base_url() <>
       "/poslink/v3/payment-requests/#{Client.segment(id)}"
   end
 end

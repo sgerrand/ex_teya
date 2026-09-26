@@ -30,14 +30,27 @@ end
 config :teya,
   client_id: System.fetch_env!("TEYA_CLIENT_ID"),
   client_secret: System.fetch_env!("TEYA_CLIENT_SECRET"),
-  token_url: "https://identity.teya.com/connect/token",
-  base_url: "https://api.teya.com",
   scopes: [
     # list only the scopes your application needs — see table below
   ]
 ```
 
 OAuth tokens are fetched automatically and refreshed before expiry. Only request the scopes your application needs.
+
+The library talks to Teya's production API. To use Teya's staging API
+instead, with staging credentials, set:
+
+```elixir
+config :teya, environment: :staging
+```
+
+| `:environment` | API | Token endpoint |
+|---|---|---|
+| `:production` (default) | `https://api.teya.com` | `https://id.teya.com/oauth/v2/oauth-token` |
+| `:staging` | `https://api.teya.xyz` | `https://id.teya.xyz/oauth/v2/oauth-token` |
+
+To use other URLs, such as a proxy, set `:base_url` or `:token_url`. Each
+wins over the environment's.
 
 These settings are optional:
 

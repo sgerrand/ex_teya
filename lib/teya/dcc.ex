@@ -70,7 +70,7 @@ defmodule Teya.DCC do
   """
   @spec quote(map()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def quote(params) do
-    base_url = Application.get_env(:teya, :base_url, "https://api.teya.com")
+    base_url = HTTP.base_url()
 
     # Not :req_options: those are built for authenticated API calls, and this
     # endpoint takes no token, so their auth, test stubs and the rest do not

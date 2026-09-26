@@ -18,8 +18,6 @@ defmodule Teya do
       config :teya,
         client_id: "your_client_id",
         client_secret: "your_client_secret",
-        token_url: "https://identity.teya.com/connect/token",
-        base_url: "https://api.teya.com",
         scopes: [
           # Online Payments
           "checkout/sessions/create",
@@ -50,6 +48,9 @@ defmodule Teya do
 
   OAuth tokens are fetched automatically and refreshed before expiry.
   Only request the scopes your application needs.
+
+  The library talks to Teya's production API unless you set
+  `environment: :staging`. Set `:base_url` or `:token_url` to use other URLs.
 
   ## API modules
 

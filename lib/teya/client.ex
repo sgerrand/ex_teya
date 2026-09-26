@@ -86,7 +86,7 @@ defmodule Teya.Client do
   #   it again
   # - :retry — Req's :retry option, unless :req_options sets one
   defp send_request(method, path, opts, token, settings \\ []) do
-    base_url = Application.get_env(:teya, :base_url, "https://api.teya.com")
+    base_url = HTTP.base_url()
     req_opts = Application.get_env(:teya, :req_options, [])
 
     req =

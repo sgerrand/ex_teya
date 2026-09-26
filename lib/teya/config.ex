@@ -7,8 +7,6 @@ defmodule Teya.Config do
       config :teya,
         client_id: "your_client_id",
         client_secret: "your_client_secret",
-        token_url: "https://identity.teya.com/connect/token",
-        base_url: "https://api.teya.com",
         scopes: [
           "checkout/sessions/create",
           "checkout/sessions/id/get",
@@ -22,7 +20,12 @@ defmodule Teya.Config do
           "transactions/id/receipts/create",
           "token/delete"
         ]
+
+  The API and token URLs come from `:environment`, `:production` (the
+  default) or `:staging`. Set `:base_url` or `:token_url` to use another.
   """
+
+  alias Teya.HTTP
 
   require Logger
 
@@ -34,22 +37,15 @@ defmodule Teya.Config do
           scopes: [String.t()]
         }
 
-  defstruct [
-    :client_id,
-    :client_secret,
-    token_url: "https://identity.teya.com/connect/token",
-    base_url: "https://api.teya.com",
-    scopes: []
-  ]
+  defstruct [:client_id, :client_secret, :token_url, :base_url, scopes: []]
 
   @doc false
   def from_env do
     %__MODULE__{
       client_id: Application.fetch_env!(:teya, :client_id),
       client_secret: Application.fetch_env!(:teya, :client_secret),
-      token_url:
-        Application.get_env(:teya, :token_url, "https://identity.teya.com/connect/token"),
-      base_url: Application.get_env(:teya, :base_url, "https://api.teya.com"),
+      token_url: HTTP.token_url(),
+      base_url: HTTP.base_url(),
       scopes: Application.get_env(:teya, :scopes, [])
     }
     |> validate!()

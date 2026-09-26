@@ -511,10 +511,10 @@ Ids that go into the request path, such as a session or payment request id,
 are URL-encoded, so a `/` or `?` in one cannot reach a different endpoint.
 Such an id that is `nil`, empty, `"."`, `".."`, or anything but text or an
 integer raises `ArgumentError` before any request is sent: that is a mistake
-in the calling code, not something the API said. Ids sent as query
+in the calling code, not something the API said. The subscribe functions
+raise it too, in your process, not in the task they start. Ids sent as query
 parameters, such as the `store_id` for `Teya.Token.delete/3`, are encoded as
-query values and not checked this way. The subscribe functions raise it too, in your process, not in the
-task they start.
+query values and not checked this way.
 
 ### User agent
 

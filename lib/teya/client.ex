@@ -25,8 +25,10 @@ defmodule Teya.Client do
   @doc """
   Makes a POST to an endpoint that honours the `Idempotency-Key` header.
 
-  Teya's specs say that repeating such a request with the same key returns
-  the first response rather than acting again, so it is safe to retry. When
+  Teya's specs say that repeating such a request with the same key does not
+  act a second time, so it is safe to retry. The retry may still fail, with a
+  409 for a key already used say, after a first attempt that succeeded but
+  whose response was lost; the README tells callers to check the outcome. When
   `:retry_idempotent_posts` is set, a network error, 408, 429 or 5xx is
   retried with Req's `retry: :transient`, sending the same key each time. A
   `:retry` in `:req_options` still wins. Takes the same options as

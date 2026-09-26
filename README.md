@@ -441,8 +441,7 @@ GET requests are retried by default when they fail with a network error,
 card twice.
 
 Some endpoints make repeating safe: sent again with the same
-`Idempotency-Key`, they return the first answer rather than acting again.
-To retry those too, set:
+`Idempotency-Key`, they do not act a second time. To retry those too, set:
 
 ```elixir
 config :teya, retry_idempotent_posts: true
@@ -462,6 +461,15 @@ That covers only POSTs whose Teya spec documents the key:
 
 Every retry sends the same key as the first attempt, your own if you gave
 one. Other writes, such as receipts and reversals, are sent once.
+
+A retry does not always bring back the first answer. If the first attempt
+reached Teya but its response was lost, the retry can fail instead, for
+example with a 409 conflict because the key was already used. So an error
+from a call that was retried does not prove that nothing happened: the
+payment may have gone through. Before you try again with a new key, which
+could charge the card twice, check the outcome, for example with
+`Teya.POSLink.Payment.list/1` or in the Teya portal. Trying again with the
+same key stays safe.
 
 Retries follow Req's defaults: up to 3 more attempts, about 1, 2 and 4
 seconds apart, or as long as a 429 or 503 asks in its `Retry-After` header.

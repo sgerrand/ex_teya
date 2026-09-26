@@ -45,7 +45,8 @@ defmodule Teya.Moto do
   ## Options
 
   - `:idempotency_key` — override the auto-generated idempotency key. Sending
-    the same key again returns the first response rather than charging twice
+    the same key again does not charge twice, though it may answer with an
+    error, such as a 409, rather than the first response
 
   ## Examples
 

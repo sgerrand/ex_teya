@@ -46,7 +46,7 @@ These settings are optional:
 | `:token_timeout_ms` | `15_000` | How long a request waits for an access token before it returns an error, or `:infinity`. A token request still running then carries on, and caches its token for the next request |
 | `:sse_stream_timeout_ms` | `60_000` | How long a POSLink stream waits for the next event before it gives up |
 | `:sse_max_error_body_bytes` | `65_536` | How much of a failed stream's error body is kept. A JSON error larger than this is cut and can no longer be read, so the error keeps its status and raw text but no code |
-| `:retry_idempotent_posts` | `false` | Retry a payment, refund or other POST that is safe to repeat when it fails with a network error, 408, 429 or 5xx. See [Retries](#retries) |
+| `:retry_idempotent_posts` | `false` | Retry a payment, refund or other POST that is safe to repeat when it fails for a reason that may pass. See [Retries](#retries) |
 
 ### Scope reference
 
@@ -436,9 +436,10 @@ Teya.Checkout.create_session(params, idempotency_key: order_id)
 
 ### Retries
 
-GET requests are retried by default when they fail with a network error,
-408, 429 or 5xx. POST requests are not, since repeating one could charge a
-card twice.
+GET requests are retried by default when they fail for a reason that may
+pass: a 408, 429, 500, 502, 503 or 504, a connection that timed out, was
+refused or was closed, or an HTTP/2 request the server did not handle. POST
+requests are not, since repeating one could charge a card twice.
 
 Some endpoints make repeating safe: sent again with the same
 `Idempotency-Key`, they do not act a second time. To retry those too, set:
@@ -459,8 +460,9 @@ That covers only POSTs whose Teya spec documents the key:
 - `Teya.POSLink.Payment.create/2`
 - `Teya.POSLink.Refund.create/2`
 
-Every retry sends the same key as the first attempt, your own if you gave
-one. Other writes, such as receipts and reversals, are sent once.
+They are retried for the same reasons as GET requests. Every retry sends
+the same key as the first attempt, your own if you gave one, and the current
+access token. Other writes, such as receipts and reversals, are sent once.
 
 A retry does not always bring back the first answer. If the first attempt
 reached Teya but its response was lost, the retry can fail instead, for
@@ -471,11 +473,22 @@ could charge the card twice, check the outcome, for example with
 `Teya.POSLink.Payment.list/1` or in the Teya portal. Trying again with the
 same key stays safe.
 
+So with retries on, pass your own key, such as your order id. A key the
+library makes up is never given back to you, so after an error you could
+neither send it again nor use it to reverse the payment:
+
+```elixir
+Teya.Moto.create(params, idempotency_key: order_id)
+```
+
 Retries follow Req's defaults: up to 3 more attempts, about 1, 2 and 4
-seconds apart, or as long as a 429 or 503 asks in its `Retry-After` header.
-Each attempt can take up to the 30 second receive timeout, so a call can take
-a couple of minutes before it gives up. Change this with `:max_retries` and
-`:retry_delay` in `:req_options`.
+seconds apart. A 429 or 503 with a `Retry-After` header is retried after the
+wait it asks for, if that is 10 seconds or less. A longer wait, or one that
+cannot be read, is not waited out: the error comes back at once, since your
+process would sit blocked for it. Each attempt can take up to the 30 second
+receive timeout, so a call can take up to about two and a half minutes
+before it gives up. Change this with `:max_retries` and `:retry_delay` in
+`:req_options`.
 
 A `:retry` set in `:req_options` wins over all of this, for every request.
 `retry: :transient` there retries every write, including those that are not
@@ -542,8 +555,11 @@ authenticated API calls do not apply to it.
 
 ### Rate limiting (`TOO_MANY_REQUESTS`)
 
-Teya returns HTTP 429 when you exceed the rate limit. Back off exponentially
-and retry using the same idempotency key to avoid duplicate operations:
+Teya returns HTTP 429 when you exceed the rate limit. With
+[`:retry_idempotent_posts`](#retries) on, the POSTs it covers have already
+been retried by the time you see the error, so do not retry them again
+straight away. Otherwise, back off and retry using the same idempotency key
+to avoid duplicate operations:
 
 ```elixir
 case Teya.POSLink.Payment.create(params, idempotency_key: ref) do

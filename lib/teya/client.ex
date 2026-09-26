@@ -23,6 +23,26 @@ defmodule Teya.Client do
   end
 
   @doc """
+  Makes a POST to an endpoint that honours the `Idempotency-Key` header.
+
+  Teya's specs say that repeating such a request with the same key returns
+  the first response rather than acting again, so it is safe to retry. When
+  `:retry_idempotent_posts` is set, a network error, 408, 429 or 5xx is
+  retried with Req's `retry: :transient`, sending the same key each time. A
+  `:retry` in `:req_options` still wins. Takes the same options as
+  `request/3`.
+
+  Use it only for an endpoint whose spec documents the header. Anything
+  else, such as a receipt that would be emailed twice, uses `request/3`.
+  """
+  def idempotent_post(path, opts) do
+    retry = if Application.get_env(:teya, :retry_idempotent_posts, false), do: :transient
+
+    with {:ok, token} <- Auth.token(),
+         do: send_request(:post, path, opts, token, retry)
+  end
+
+  @doc """
   Makes a request with the given bearer token instead of the auth process's.
 
   For the rare endpoint that takes a different kind of token, such as ePOS
@@ -51,7 +71,7 @@ defmodule Teya.Client do
             "\".\" or \"..\", got: #{inspect(value)}"
   end
 
-  defp send_request(method, path, opts, token) do
+  defp send_request(method, path, opts, token, retry \\ nil) do
     base_url = Application.get_env(:teya, :base_url, "https://api.teya.com")
     req_opts = Application.get_env(:teya, :req_options, [])
 
@@ -66,6 +86,8 @@ defmodule Teya.Client do
       ]
       |> put_if_present(:json, Keyword.get(opts, :body))
       |> put_if_present(:params, Keyword.get(opts, :params))
+      # Before the configured options, so a :retry among them wins.
+      |> put_if_present(:retry, retry)
       |> Keyword.merge(req_opts)
       # Set after the configured options, so an :auth among them cannot send
       # the wrong credentials to Teya in place of this token.

@@ -63,6 +63,6 @@ defmodule Teya.Moto do
   """
   @spec create(map(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def create(params, opts \\ []) do
-    Client.request(:post, "/v1/transactions/moto", Keyword.put(opts, :body, params))
+    Client.idempotent_post("/v1/transactions/moto", Keyword.put(opts, :body, params))
   end
 end

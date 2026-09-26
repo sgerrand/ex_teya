@@ -73,7 +73,7 @@ defmodule Teya.POSLink.Payment do
   """
   @spec create(map(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def create(params, opts \\ []) do
-    Client.request(:post, "/poslink/v3/payment-requests", Keyword.put(opts, :body, params))
+    Client.idempotent_post("/poslink/v3/payment-requests", Keyword.put(opts, :body, params))
   end
 
   @doc """

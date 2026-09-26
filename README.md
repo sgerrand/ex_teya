@@ -46,6 +46,7 @@ These settings are optional:
 | `:token_timeout_ms` | `15_000` | How long a request waits for an access token before it returns an error, or `:infinity`. A token request still running then carries on, and caches its token for the next request |
 | `:sse_stream_timeout_ms` | `60_000` | How long a POSLink stream waits for the next event before it gives up |
 | `:sse_max_error_body_bytes` | `65_536` | How much of a failed stream's error body is kept. A JSON error larger than this is cut and can no longer be read, so the error keeps its status and raw text but no code |
+| `:retry_idempotent_posts` | `false` | Retry a payment, refund or other POST that is safe to repeat when it fails with a network error, 408, 429 or 5xx. See [Retries](#retries) |
 
 ### Scope reference
 
@@ -432,6 +433,45 @@ POST and PATCH requests automatically include a random `Idempotency-Key` header.
 ```elixir
 Teya.Checkout.create_session(params, idempotency_key: order_id)
 ```
+
+### Retries
+
+GET requests are retried by default when they fail with a network error,
+408, 429 or 5xx. POST requests are not, since repeating one could charge a
+card twice.
+
+Some endpoints make repeating safe: sent again with the same
+`Idempotency-Key`, they return the first answer rather than acting again.
+To retry those too, set:
+
+```elixir
+config :teya, retry_idempotent_posts: true
+```
+
+That covers only POSTs whose Teya spec documents the key:
+
+- `Teya.Checkout.create_session/2`
+- `Teya.PayByLink.create/2`
+- `Teya.Transaction.create/2`
+- `Teya.Capture.create/3`
+- `Teya.Refund.create/2`
+- `Teya.Moto.create/2`
+- `Teya.CardPresent.create/2`
+- `Teya.POSLink.Payment.create/2`
+- `Teya.POSLink.Refund.create/2`
+
+Every retry sends the same key as the first attempt, your own if you gave
+one. Other writes, such as receipts and reversals, are sent once.
+
+Retries follow Req's defaults: up to 3 more attempts, about 1, 2 and 4
+seconds apart, or as long as a 429 or 503 asks in its `Retry-After` header.
+Each attempt can take up to the 30 second receive timeout, so a call can take
+a couple of minutes before it gives up. Change this with `:max_retries` and
+`:retry_delay` in `:req_options`.
+
+A `:retry` set in `:req_options` wins over all of this, for every request.
+`retry: :transient` there retries every write, including those that are not
+safe to repeat.
 
 ### Error Handling
 

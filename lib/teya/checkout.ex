@@ -63,6 +63,6 @@ defmodule Teya.Checkout do
   """
   @spec get_session(String.t(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def get_session(session_id, opts \\ []) do
-    Client.request(:get, "/v2/checkout/sessions/#{session_id}", opts)
+    Client.request(:get, "/v2/checkout/sessions/#{Client.segment(session_id)}", opts)
   end
 end

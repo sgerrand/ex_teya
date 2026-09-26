@@ -25,7 +25,7 @@ defmodule Teya.Receipt do
   def create(transaction_id, params \\ %{}, opts \\ []) do
     Client.request(
       :post,
-      "/v1/transactions/#{transaction_id}/receipts",
+      "/v1/transactions/#{Client.segment(transaction_id)}/receipts",
       Keyword.put(opts, :body, params)
     )
   end

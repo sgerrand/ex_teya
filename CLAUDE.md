@@ -38,7 +38,9 @@ lib/teya/
   auth.ex             — GenServer: token cache and proactive refresh; fetches
                         run in tasks, and waiting callers share one fetch
   client.ex           — HTTP layer: calls Auth.token/0, adds Bearer header,
-                        auto-generates Idempotency-Key on POST/PATCH
+                        auto-generates Idempotency-Key on POST/PATCH;
+                        segment/1 encodes each id put into a path (every
+                        path builder must use it, before any task starts)
   http.ex             — shared by every module that makes a request: the user
                         agent, and each request kind's options with their
                         fallback to :req_options
@@ -46,8 +48,9 @@ lib/teya/
                         first/4 returns the first event of a given name;
                         frames are decoded by the req_server_sent_events plugin
   checkout.ex         — POST/GET /v2/checkout/sessions
-  transaction.ex      — POST/GET /v3/transactions/online
-  pay_by_link.ex      — POST/GET/PATCH /v2/payment-links
+  transaction.ex      — POST /v3/transactions/online, GET /v2/transactions/online/{id}
+  pay_by_link.ex      — POST /v2/payment-links, GET /v1/payment-links/{id},
+                        PATCH /v2/payment-links/{id}
   capture.ex          — POST /v1/transactions/{id}/capture
   refund.ex           — POST /v3/refunds
   receipt.ex          — POST /v1/transactions/{id}/receipts

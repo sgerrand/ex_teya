@@ -101,7 +101,7 @@ defmodule Teya.POSLink.Payment do
 
     Client.request(
       :patch,
-      "/poslink/v2/payment-requests/#{payment_request_id}",
+      "/poslink/v2/payment-requests/#{Client.segment(payment_request_id)}",
       Keyword.put(opts, :body, body)
     )
   end
@@ -144,6 +144,10 @@ defmodule Teya.POSLink.Payment do
   - `{:error, {:exit, reason}}` — the task reading the stream crashed
   - `{:error, reason}` — any other failure, such as a `Req.TransportError`
 
+  Raises `ArgumentError`, before opening any stream, for an id that cannot be
+  part of a path: `nil`, empty, `"."`, `".."`, or anything but text or an
+  integer. That is a mistake in the calling code, not something the API said.
+
   ## Examples
 
       {:ok, payment} = Teya.POSLink.Payment.get(payment_request_id)
@@ -154,10 +158,11 @@ defmodule Teya.POSLink.Payment do
     timeout = Keyword.get(opts, :timeout, 30_000)
 
     caller = self()
+    url = stream_url(payment_request_id)
 
     task =
       Task.Supervisor.async_nolink(Teya.TaskSupervisor, fn ->
-        fetch_snapshot(payment_request_id, caller)
+        fetch_snapshot(url, caller)
       end)
 
     case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
@@ -172,9 +177,9 @@ defmodule Teya.POSLink.Payment do
   # Only a "full" event is a snapshot: a "diff" carries just the fields that
   # changed, and returning one as the payment would leave out identifiers the
   # caller needs, such as gateway_payment_id for a refund.
-  defp fetch_snapshot(id, caller) do
+  defp fetch_snapshot(url, caller) do
     with {:ok, token} <- Auth.token() do
-      case SSE.first(stream_url(id), token, "full", caller) do
+      case SSE.first(url, token, "full", caller) do
         :none -> {:error, :no_snapshot}
         result -> result
       end
@@ -263,6 +268,10 @@ defmodule Teya.POSLink.Payment do
   stream for `payment_request_id` and forwards parsed events as messages to
   `pid` (defaults to `self()`).
 
+  Raises `ArgumentError` in the calling process, before starting the task, for
+  an id that cannot be part of a path: `nil`, empty, `"."`, `".."`, or
+  anything but text or an integer. Every other failure arrives as a message.
+
   ## Messages sent to `pid`
 
   - `{:poslink_payment, id, event_type, data}` — a status event where:
@@ -299,26 +308,30 @@ defmodule Teya.POSLink.Payment do
   """
   @spec subscribe(String.t(), pid()) :: {:ok, Task.t()}
   def subscribe(payment_request_id, pid \\ self()) do
+    url = stream_url(payment_request_id)
+
     task =
       Task.Supervisor.async_nolink(Teya.TaskSupervisor, fn ->
-        stream_payment(payment_request_id, pid)
+        stream_payment(url, payment_request_id, pid)
       end)
 
     {:ok, task}
   end
 
-  defp stream_payment(id, pid) do
+  defp stream_payment(url, id, pid) do
     case Auth.token() do
       {:ok, token} ->
-        SSE.stream(stream_url(id), token, id, :poslink_payment, :poslink_payment_error, pid)
+        SSE.stream(url, token, id, :poslink_payment, :poslink_payment_error, pid)
 
       {:error, reason} ->
         send(pid, {:poslink_payment_error, id, reason})
     end
   end
 
+  # Built by the caller, before any task starts, so an id that cannot be a
+  # path segment raises where the mistake was made.
   defp stream_url(id) do
     Application.get_env(:teya, :base_url, "https://api.teya.com") <>
-      "/poslink/v3/payment-requests/#{id}"
+      "/poslink/v3/payment-requests/#{Client.segment(id)}"
   end
 end

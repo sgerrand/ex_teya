@@ -25,7 +25,7 @@ defmodule Teya.Token do
   def delete(token_id, store_id, opts \\ []) do
     case Client.request(
            :delete,
-           "/v1/tokens/#{token_id}",
+           "/v1/tokens/#{Client.segment(token_id)}",
            Keyword.put(opts, :params, %{store_id: store_id})
          ) do
       {:ok, _} -> :ok

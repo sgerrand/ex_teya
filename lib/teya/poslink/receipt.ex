@@ -73,6 +73,10 @@ defmodule Teya.POSLink.Receipt do
   stream for `receipt_id` and forwards parsed events as messages to `pid`
   (defaults to `self()`).
 
+  Raises `ArgumentError` in the calling process, before starting the task, for
+  an id that cannot be part of a path: `nil`, empty, `"."`, `".."`, or
+  anything but text or an integer. Every other failure arrives as a message.
+
   ## Messages sent to `pid`
 
   - `{:poslink_receipt, id, event_type, data}` — a status event where:
@@ -102,20 +106,22 @@ defmodule Teya.POSLink.Receipt do
   """
   @spec subscribe_status(String.t(), pid()) :: {:ok, Task.t()}
   def subscribe_status(receipt_id, pid \\ self()) do
+    # Built before the task starts, so an id that cannot be a path segment
+    # raises where the mistake was made.
+    base_url = Application.get_env(:teya, :base_url, "https://api.teya.com")
+    url = base_url <> "/poslink/v1/receipt-requests/#{Client.segment(receipt_id)}/status"
+
     task =
       Task.Supervisor.async_nolink(Teya.TaskSupervisor, fn ->
-        stream_receipt(receipt_id, pid)
+        stream_receipt(url, receipt_id, pid)
       end)
 
     {:ok, task}
   end
 
-  defp stream_receipt(id, pid) do
+  defp stream_receipt(url, id, pid) do
     case Auth.token() do
       {:ok, token} ->
-        base_url = Application.get_env(:teya, :base_url, "https://api.teya.com")
-        url = base_url <> "/poslink/v1/receipt-requests/#{id}/status"
-
         SSE.stream(url, token, id, :poslink_receipt, :poslink_receipt_error, pid)
 
       {:error, reason} ->

@@ -62,7 +62,7 @@ defmodule Teya.PayByLink do
   """
   @spec get(String.t(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def get(payment_link_id, opts \\ []) do
-    Client.request(:get, "/v1/payment-links/#{payment_link_id}", opts)
+    Client.request(:get, "/v1/payment-links/#{Client.segment(payment_link_id)}", opts)
   end
 
   @doc """
@@ -83,7 +83,7 @@ defmodule Teya.PayByLink do
   def update(payment_link_id, params, opts \\ []) do
     Client.request(
       :patch,
-      "/v2/payment-links/#{payment_link_id}",
+      "/v2/payment-links/#{Client.segment(payment_link_id)}",
       Keyword.put(opts, :body, params)
     )
   end

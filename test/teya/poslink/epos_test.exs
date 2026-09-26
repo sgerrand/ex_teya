@@ -47,21 +47,7 @@ defmodule Teya.POSLink.EposTest do
     end
 
     test "registers without asking the auth process for a token" do
-      # The auth process answers every caller with an error for this test, as
-      # it would before there are credentials to fetch with. Its state from
-      # setup is put back afterwards, whatever runs next.
-      seeded = :sys.get_state(Teya.Auth)
-      on_exit(fn -> :sys.replace_state(Teya.Auth, fn _state -> seeded end) end)
-
-      :sys.replace_state(Teya.Auth, fn state ->
-        %{
-          state
-          | token: nil,
-            usable_until: nil,
-            failed_at: System.monotonic_time(:millisecond),
-            failure: %Error{message: "no credentials yet"}
-        }
-      end)
+      fail_auth_until_exit()
 
       stub_api(fn conn ->
         assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer user-jwt"]
@@ -71,5 +57,39 @@ defmodule Teya.POSLink.EposTest do
       assert {:ok, %{"client_id" => "m2m-client"}} =
                Epos.register(@params, user_token: "user-jwt")
     end
+  end
+
+  # Makes the auth process answer every caller with an error, as it would
+  # before there are credentials to fetch with, and puts its state back when
+  # the test ends. Like APICase's setup, this allows for the process being
+  # missing or restarting after a crash left by an earlier test. A new one
+  # holds no token and has no stub to fetch one from, so it fails callers
+  # too, and there is nothing to put back.
+  defp fail_auth_until_exit do
+    with pid when is_pid(pid) <- Process.whereis(Teya.Auth),
+         {:ok, seeded} <- on_auth(fn -> :sys.get_state(pid) end) do
+      on_exit(fn -> put_auth_state(pid, seeded) end)
+      put_auth_state(pid, &failing/1)
+    end
+  end
+
+  defp put_auth_state(pid, state) when is_map(state), do: put_auth_state(pid, fn _ -> state end)
+  defp put_auth_state(pid, fun), do: on_auth(fn -> :sys.replace_state(pid, fun) end)
+
+  defp failing(state) do
+    %{
+      state
+      | token: nil,
+        usable_until: nil,
+        failed_at: System.monotonic_time(:millisecond),
+        failure: %Error{message: "no credentials yet"}
+    }
+  end
+
+  # An exit here means the process died between being looked up and asked.
+  defp on_auth(fun) do
+    {:ok, fun.()}
+  catch
+    :exit, _reason -> :gone
   end
 end

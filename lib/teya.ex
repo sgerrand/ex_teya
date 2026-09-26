@@ -30,17 +30,25 @@ defmodule Teya do
           "captures/create",
           "refunds/create",
           "transactions/id/receipts/create",
-          "token/delete",
-          # POSLink: the scopes ePOS registration returns
-          "payment_requests",
-          "payment_requests/id",
-          "stores/id/terminals",
-          "refunds"
+          "token/delete"
         ]
 
+  POSLink uses its own credentials: the client that ePOS registration
+  returns, with the scopes it returns, such as:
+
+      config :teya,
+        client_id: epos_client_id,
+        client_secret: epos_client_secret,
+        scopes: ["payment_requests", "payment_requests/id", "stores/id/terminals", "refunds"]
+
+  One application runs one set of credentials, so ask a POSLink client only
+  for the scopes registration gave it. Asking for others, such as the Online
+  Payments ones above, can make the token request fail with `invalid_scope`.
+
   OAuth tokens are fetched automatically and refreshed before expiry.
-  Only request the scopes your application needs. The README's scope
-  reference shows which function needs which.
+  Only request the scopes your application needs. The
+  [scope reference](readme.html#scope-reference) shows which function needs
+  which.
 
   The library talks to Teya's production API unless you set
   `environment: :staging`. Set `:base_url` or `:token_url` to use other URLs.

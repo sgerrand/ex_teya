@@ -31,7 +31,7 @@ config :teya,
   client_id: System.fetch_env!("TEYA_CLIENT_ID"),
   client_secret: System.fetch_env!("TEYA_CLIENT_SECRET"),
   scopes: [
-    # list only the scopes your application needs — see table below
+    # list only the scopes your application needs; see "Scope reference" below
   ]
 ```
 
@@ -92,8 +92,9 @@ The scope names below are the ones Teya's API specifications give.
 #### Payments Gateway scopes
 
 The specification names no scopes for `Teya.CardPresent.create/2`,
-`Teya.Moto.create/2` or `Teya.Reversal.create/2`. Ask Teya which your
-credentials need.
+`Teya.Moto.create/2` or `Teya.Reversal.create/2`. If the token endpoint
+answers `invalid_scope`, or these calls answer 401 or 403, ask Teya which
+scopes your credentials need.
 
 #### POSLink scopes
 
@@ -102,16 +103,28 @@ credentials need.
 | `payment_requests` | `Teya.POSLink.Payment.create/2`, `Teya.POSLink.Payment.list/1`, `Teya.POSLink.Payment.cancel/2` |
 | `payment_requests/id` | `Teya.POSLink.Payment.get/2`, `Teya.POSLink.Payment.subscribe/2`, `Teya.POSLink.Payment.receipt_text/2` |
 | `stores/id/terminals` | `Teya.POSLink.Store.list/1`, `Teya.POSLink.Store.list_terminals/2` |
-| `refunds` | `Teya.POSLink.Refund.create/2` |
+| `refunds` | `Teya.POSLink.Refund.create/2` (see below) |
 
 These are the scopes [ePOS registration](#register-an-epos-application)
-returns: set `:scopes` to what it gives you. The older `default_access` also
-works for payment requests and stores, but Teya plans to remove it. The
-specification names no scope for receipt requests
+returns, for the client it returns. POSLink calls use that client, so set
+`:client_id`, `:client_secret` and `:scopes` to what registration gives you,
+and do not add the Online Payments scopes: asking for scopes the client was
+not given can make the token request fail with `invalid_scope`.
+
+The older `default_access` also works for payment requests and stores, but
+Teya plans to remove it.
+
+The `refunds` scope is not the Online Payments `refunds/create`: each works
+only for its own module. Registration describes `refunds` as "for refund
+operations", but the refund endpoint itself names no scope.
+
+The specification names no scope for receipt requests
 (`Teya.POSLink.Receipt.create/2`, `Teya.POSLink.Receipt.subscribe_status/2`)
 or store settings (`Teya.POSLink.Store.terminal_configs/3`,
-`Teya.POSLink.Store.put_config/4`). `Teya.POSLink.Epos.register/2` takes a
-signed-in user's token rather than scopes.
+`Teya.POSLink.Store.put_config/4`). If these calls answer 401 or 403 with the
+scopes registration gave you, ask Teya which they need.
+`Teya.POSLink.Epos.register/2` takes a signed-in user's token rather than
+scopes.
 
 Obtain credentials from the [Teya Developer Portal](https://docs.teya.com/apis/developer-portal/introduction).
 

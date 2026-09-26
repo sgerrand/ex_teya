@@ -468,10 +468,28 @@ A retry does not always bring back the first answer. If the first attempt
 reached Teya but its response was lost, the retry can fail instead, for
 example with a 409 conflict because the key was already used. So an error
 from a call that was retried does not prove that nothing happened: the
-payment may have gone through. Before you try again with a new key, which
-could charge the card twice, check the outcome, for example with
-`Teya.POSLink.Payment.list/1` or in the Teya portal. Trying again with the
-same key stays safe.
+payment may have gone through. Sending the request again with the same key
+stays safe. Before you use a new key, which could charge the card twice, find
+out what happened. How depends on the endpoint:
+
+- **POSLink payment requests** (`Teya.POSLink.Payment.create/2`): list the
+  store's recent ones with `Teya.POSLink.Payment.list/1`, narrowed by
+  `terminal_id` and `start_date_time`, and look for your
+  `merchant_reference`. This lists only payment requests, not refunds made
+  with `Teya.POSLink.Refund.create/2`.
+- **Card-present and MOTO payments** (`Teya.CardPresent.create/2`,
+  `Teya.Moto.create/2`): reverse by the original key with
+  `Teya.Reversal.create/2` and `"reversal_reason" =>
+  "COMMUNICATION_REVERSAL"`. That undoes the payment if it went through, and
+  you can then start again with a new key.
+- **Checkout sessions and payment links** (`Teya.Checkout.create_session/2`,
+  `Teya.PayByLink.create/2`): creating one charges nothing until the
+  customer pays, so a second one is a smaller risk. Still, send only one of
+  them to the customer.
+- **Everything else** (`Teya.Transaction.create/2`, `Teya.Capture.create/3`,
+  `Teya.Refund.create/2`, `Teya.POSLink.Refund.create/2`): the library
+  cannot look these up without the id the lost answer held. Check in the
+  Teya portal, or keep sending with the same key.
 
 So with retries on, pass your own key, such as your order id. A key the
 library makes up is never given back to you, so after an error you could

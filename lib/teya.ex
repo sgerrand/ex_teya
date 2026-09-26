@@ -31,23 +31,16 @@ defmodule Teya do
           "refunds/create",
           "transactions/id/receipts/create",
           "token/delete",
-          # Payments Gateway
-          "transactions/card-present/create",
-          "reversals/create",
-          # POSLink
-          "poslink/stores/get",
-          "poslink/stores/id/terminals/get",
-          "poslink/payment-requests/create",
-          "poslink/payment-requests/id/get",
-          "poslink/payment-requests/id/update",
-          "poslink/payment-requests/get",
-          "poslink/refunds/create",
-          "poslink/receipt-requests/create",
-          "poslink/receipt-requests/id/status/get"
+          # POSLink: the scopes ePOS registration returns
+          "payment_requests",
+          "payment_requests/id",
+          "stores/id/terminals",
+          "refunds"
         ]
 
   OAuth tokens are fetched automatically and refreshed before expiry.
-  Only request the scopes your application needs.
+  Only request the scopes your application needs. The README's scope
+  reference shows which function needs which.
 
   The library talks to Teya's production API unless you set
   `environment: :staging`. Set `:base_url` or `:token_url` to use other URLs.

@@ -51,8 +51,14 @@ config :teya, environment: :staging
 
 To use other URLs, such as a proxy, set `:base_url` or `:token_url`. Each
 wins over the environment's. The environment may be given as text, such as
-`System.get_env("TEYA_ENV", "production")`. Like the credentials, it is read
-when the application starts, so changing it takes a restart.
+`System.get_env("TEYA_ENV", "production")`.
+
+Set these before the application starts, and do not change them while it
+runs. The auth process reads the credentials and the token URL once, when it
+starts, and keeps the token it fetched. API calls read `:environment` and
+`:base_url` on every request. So a change while the application runs sends
+API calls to the new host with a token from the old one, which Teya refuses.
+To switch, change the settings and restart the application.
 
 These settings are optional:
 

@@ -23,8 +23,11 @@ defmodule Teya.Config do
 
   The API and token URLs come from `:environment`, `:production` (the
   default) or `:staging`. Set `:base_url` or `:token_url` to use another.
-  Like the credentials, the token URL is read once, when the application
-  starts, so changing the environment takes a restart.
+  Set these before the application starts. The auth process reads the
+  credentials and the token URL once, when it starts, and keeps the token it
+  fetched, while API calls read `:environment` and `:base_url` on every
+  request. Changing them while the application runs sends API calls to the
+  new host with a token from the old one. To switch, restart the application.
   """
 
   alias Teya.HTTP

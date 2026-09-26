@@ -144,6 +144,10 @@ defmodule Teya.POSLink.Payment do
   - `{:error, {:exit, reason}}` — the task reading the stream crashed
   - `{:error, reason}` — any other failure, such as a `Req.TransportError`
 
+  Raises `ArgumentError`, before opening any stream, for an id that cannot be
+  part of a path: `nil`, empty, `"."`, `".."`, or anything but text or an
+  integer. That is a mistake in the calling code, not something the API said.
+
   ## Examples
 
       {:ok, payment} = Teya.POSLink.Payment.get(payment_request_id)
@@ -263,6 +267,10 @@ defmodule Teya.POSLink.Payment do
   Spawns a supervised task under `Teya.TaskSupervisor` that opens the SSE
   stream for `payment_request_id` and forwards parsed events as messages to
   `pid` (defaults to `self()`).
+
+  Raises `ArgumentError` in the calling process, before starting the task, for
+  an id that cannot be part of a path: `nil`, empty, `"."`, `".."`, or
+  anything but text or an integer. Every other failure arrives as a message.
 
   ## Messages sent to `pid`
 

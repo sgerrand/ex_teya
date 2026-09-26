@@ -39,15 +39,16 @@ defmodule Teya.Client do
   # say, raises: it would leave "//" in the path and call some other route.
   # So do "." and "..", which encoding leaves as they are, and which a proxy
   # or server may read as "this level" and "the level above".
-  def segment(value) do
-    case to_string(value) do
-      text when text in ["", ".", ".."] ->
-        raise ArgumentError,
-              "a request path segment cannot be empty, \".\" or \"..\", got: #{inspect(value)}"
+  # Anything but text or an integer, a map say, raises too.
+  def segment(value) when is_integer(value), do: segment(Integer.to_string(value))
 
-      text ->
-        URI.encode(text, &URI.char_unreserved?/1)
-    end
+  def segment(value) when is_binary(value) and value not in ["", ".", ".."],
+    do: URI.encode(value, &URI.char_unreserved?/1)
+
+  def segment(value) do
+    raise ArgumentError,
+          "a request path segment must be text or an integer, and cannot be empty, " <>
+            "\".\" or \"..\", got: #{inspect(value)}"
   end
 
   defp send_request(method, path, opts, token) do

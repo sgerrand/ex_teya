@@ -5,6 +5,8 @@ defmodule Teya.PathSegmentTest do
   # caller's process.
   use Teya.APICase, async: false
 
+  import Teya.POSLink.SubscribeCase, only: [stub_sse: 1]
+
   alias Teya.{Capture, Checkout, PayByLink, Receipt, Token, Transaction}
   alias Teya.POSLink.{Payment, Store}
   alias Teya.POSLink.Receipt, as: POSLinkReceipt
@@ -42,14 +44,24 @@ defmodule Teya.PathSegmentTest do
     ]
   end
 
-  defp stub_stream(expected_path, event) do
-    Req.Test.stub(Teya.POSLink.Subscriber, fn conn ->
-      assert conn.request_path == expected_path
+  # The stub runs in the task reading the stream, where a failed assertion
+  # would only show up as a missing message. So it reports the path it was
+  # asked for, and the test checks it.
+  defp stub_stream do
+    test = self()
+
+    stub_sse(fn conn ->
+      send(test, {:requested_path, conn.request_path})
 
       conn
       |> Plug.Conn.put_resp_content_type("text/event-stream")
-      |> Plug.Conn.send_resp(200, "event: #{event}\ndata: {\"status\":\"NEW\"}\n\n")
+      |> Plug.Conn.send_resp(200, "event: full\ndata: {\"status\":\"NEW\"}\n\n")
     end)
+  end
+
+  defp assert_requested(expected_path) do
+    assert_receive {:requested_path, path}, 500
+    assert path == expected_path
   end
 
   test "every request encodes the id in its path" do
@@ -65,25 +77,37 @@ defmodule Teya.PathSegmentTest do
     end
   end
 
+  test "an integer id is sent as its digits" do
+    stub_api(fn conn ->
+      assert conn.request_path == "/v2/checkout/sessions/42"
+      json_response(conn, 200, %{"ok" => true})
+    end)
+
+    assert {:ok, _} = Checkout.get_session(42)
+  end
+
   test "Payment.get/2 encodes the id in its stream's path" do
-    stub_stream("/poslink/v3/payment-requests/#{@encoded}", "full")
+    stub_stream()
 
     assert {:ok, %{"status" => "NEW"}} = Payment.get(@id)
+    assert_requested("/poslink/v3/payment-requests/#{@encoded}")
   end
 
   test "Payment.subscribe/2 encodes the id, and sends messages with the id as given" do
-    stub_stream("/poslink/v3/payment-requests/#{@encoded}", "full")
+    stub_stream()
 
     {:ok, _task} = Payment.subscribe(@id)
 
+    assert_requested("/poslink/v3/payment-requests/#{@encoded}")
     assert_receive {:poslink_payment, @id, "full", %{"status" => "NEW"}}, 500
   end
 
   test "Receipt.subscribe_status/2 encodes the id, and sends messages with the id as given" do
-    stub_stream("/poslink/v1/receipt-requests/#{@encoded}/status", "full")
+    stub_stream()
 
     {:ok, _task} = POSLinkReceipt.subscribe_status(@id)
 
+    assert_requested("/poslink/v1/receipt-requests/#{@encoded}/status")
     assert_receive {:poslink_receipt, @id, "full", %{"status" => "NEW"}}, 500
   end
 
@@ -92,7 +116,7 @@ defmodule Teya.PathSegmentTest do
 
     calls = Enum.map(requests(), &elem(&1, 1)) ++ streams()
 
-    for call <- calls, id <- [nil, "", ".", ".."] do
+    for call <- calls, id <- [nil, "", ".", "..", %{"id" => "x"}] do
       # A stream function raising here, not in its task, is the point: the
       # mistake shows where it was made.
       assert_raise ArgumentError, ~r/path segment/, fn -> call.(id) end

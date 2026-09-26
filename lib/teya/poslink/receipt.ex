@@ -73,6 +73,10 @@ defmodule Teya.POSLink.Receipt do
   stream for `receipt_id` and forwards parsed events as messages to `pid`
   (defaults to `self()`).
 
+  Raises `ArgumentError` in the calling process, before starting the task, for
+  an id that cannot be part of a path: `nil`, empty, `"."`, `".."`, or
+  anything but text or an integer. Every other failure arrives as a message.
+
   ## Messages sent to `pid`
 
   - `{:poslink_receipt, id, event_type, data}` — a status event where:

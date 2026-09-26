@@ -48,8 +48,9 @@ lib/teya/
                         first/4 returns the first event of a given name;
                         frames are decoded by the req_server_sent_events plugin
   checkout.ex         — POST/GET /v2/checkout/sessions
-  transaction.ex      — POST/GET /v3/transactions/online
-  pay_by_link.ex      — POST/GET/PATCH /v2/payment-links
+  transaction.ex      — POST /v3/transactions/online, GET /v2/transactions/online/{id}
+  pay_by_link.ex      — POST /v2/payment-links, GET /v1/payment-links/{id},
+                        PATCH /v2/payment-links/{id}
   capture.ex          — POST /v1/transactions/{id}/capture
   refund.ex           — POST /v3/refunds
   receipt.ex          — POST /v1/transactions/{id}/receipts

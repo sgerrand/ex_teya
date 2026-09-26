@@ -90,6 +90,6 @@ defmodule Teya.Transaction do
   """
   @spec get(String.t(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def get(authentication_id, opts \\ []) do
-    Client.request(:get, "/v2/transactions/online/#{authentication_id}", opts)
+    Client.request(:get, "/v2/transactions/online/#{Client.segment(authentication_id)}", opts)
   end
 end

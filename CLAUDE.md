@@ -38,7 +38,9 @@ lib/teya/
   auth.ex             — GenServer: token cache and proactive refresh; fetches
                         run in tasks, and waiting callers share one fetch
   client.ex           — HTTP layer: calls Auth.token/0, adds Bearer header,
-                        auto-generates Idempotency-Key on POST/PATCH
+                        auto-generates Idempotency-Key on POST/PATCH;
+                        segment/1 encodes each id put into a path (every
+                        path builder must use it, before any task starts)
   http.ex             — shared by every module that makes a request: the user
                         agent, and each request kind's options with their
                         fallback to :req_options

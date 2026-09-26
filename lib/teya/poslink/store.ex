@@ -46,7 +46,7 @@ defmodule Teya.POSLink.Store do
   """
   @spec list_terminals(String.t(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def list_terminals(store_id, opts \\ []) do
-    Client.request(:get, "/poslink/v1/stores/#{store_id}/terminals", opts)
+    Client.request(:get, "/poslink/v1/stores/#{Client.segment(store_id)}/terminals", opts)
   end
 
   @doc """

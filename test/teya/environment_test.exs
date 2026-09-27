@@ -5,6 +5,14 @@ defmodule Teya.EnvironmentTest do
 
   alias Teya.{Checkout, Config, HTTP, TestEnv}
 
+  # Stores `url` as the base URL the application started with, and puts
+  # back the one it had when the test ends.
+  defp started_with_base_url(url) do
+    before = HTTP.base_url()
+    HTTP.put_base_url(url)
+    on_exit(fn -> HTTP.put_base_url(before) end)
+  end
+
   # The test config sets both URLs. Unset them, so the environment decides.
   defp unset_urls do
     TestEnv.put(:base_url, nil)
@@ -14,7 +22,7 @@ defmodule Teya.EnvironmentTest do
   test "uses Teya's production URLs by default" do
     unset_urls()
 
-    assert HTTP.base_url() == "https://api.teya.com"
+    assert HTTP.configured_base_url() == "https://api.teya.com"
     assert HTTP.token_url() == "https://id.teya.com/oauth/v2/oauth-token"
   end
 
@@ -22,7 +30,7 @@ defmodule Teya.EnvironmentTest do
     unset_urls()
     TestEnv.put(:environment, :staging)
 
-    assert HTTP.base_url() == "https://api.teya.xyz"
+    assert HTTP.configured_base_url() == "https://api.teya.xyz"
     assert HTTP.token_url() == "https://id.teya.xyz/oauth/v2/oauth-token"
 
     assert Config.from_env().token_url == "https://id.teya.xyz/oauth/v2/oauth-token"
@@ -32,14 +40,14 @@ defmodule Teya.EnvironmentTest do
     unset_urls()
     TestEnv.put(:environment, "staging")
 
-    assert HTTP.base_url() == "https://api.teya.xyz"
+    assert HTTP.configured_base_url() == "https://api.teya.xyz"
   end
 
   test "treats an empty URL as not set" do
     TestEnv.put(:base_url, "")
     TestEnv.put(:token_url, "")
 
-    assert HTTP.base_url() == "https://api.teya.com"
+    assert HTTP.configured_base_url() == "https://api.teya.com"
     assert HTTP.token_url() == "https://id.teya.com/oauth/v2/oauth-token"
   end
 
@@ -108,9 +116,10 @@ defmodule Teya.EnvironmentTest do
     end
   end
 
-  test "an API call goes to the environment's host" do
+  test "an API call goes to the host of the environment the application started in" do
     unset_urls()
     TestEnv.put(:environment, :staging)
+    started_with_base_url(HTTP.configured_base_url())
 
     stub_api(fn conn ->
       assert conn.host == "api.teya.xyz"
@@ -120,12 +129,45 @@ defmodule Teya.EnvironmentTest do
     assert {:ok, _} = Checkout.get_session("cs-1")
   end
 
+  test "a change to the environment while running does not move API calls" do
+    unset_urls()
+    TestEnv.put(:environment, :staging)
+
+    # The auth process still holds the test's token URL and token, so calls
+    # must stay on the host the application started with.
+    stub_api(fn conn ->
+      assert conn.host == "api.teya.test"
+      json_response(conn, 200, %{"ok" => true})
+    end)
+
+    assert {:ok, _} = Checkout.get_session("cs-1")
+  end
+
+  test "the application resolves the base URL when it starts" do
+    started_with_base_url(HTTP.base_url())
+    TestEnv.put(:base_url, "https://proxy.example")
+
+    # Already running, so this only resolves the URLs again, as a boot would.
+    assert {:error, {:already_started, _pid}} = Teya.Application.start(:normal, [])
+    assert HTTP.base_url() == "https://proxy.example"
+  end
+
+  test "an environment it does not know stops the application at boot" do
+    started_with_base_url(HTTP.base_url())
+    unset_urls()
+    TestEnv.put(:environment, :sandbox)
+
+    assert_raise ArgumentError, ~r/:environment must be/, fn ->
+      Teya.Application.start(:normal, [])
+    end
+  end
+
   test ":base_url and :token_url win over the environment" do
     TestEnv.put(:environment, :staging)
     TestEnv.put(:base_url, "https://proxy.example")
     TestEnv.put(:token_url, "https://proxy.example/token")
 
-    assert HTTP.base_url() == "https://proxy.example"
+    assert HTTP.configured_base_url() == "https://proxy.example"
     assert HTTP.token_url() == "https://proxy.example/token"
   end
 
@@ -144,7 +186,7 @@ defmodule Teya.EnvironmentTest do
     assert_raise ArgumentError,
                  ~r/:environment must be :production or :staging, got: :sandbox/,
                  fn ->
-                   HTTP.base_url()
+                   HTTP.configured_base_url()
                  end
   end
 end

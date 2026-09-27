@@ -64,7 +64,11 @@ lib/teya/
                         fallback to :req_options, and base_url/0 and
                         token_url/0 (:base_url/:token_url, else the
                         :environment's URLs; the only place they are
-                        written out)
+                        written out). base_url/0 is resolved once at boot
+                        (Application.start/2 stores it in a persistent term,
+                        with the auth processes' token URLs), so a config
+                        change while running cannot split host and token;
+                        configured_base_url/0 reads the live config
   sse.ex              — SSE helpers: subscribe/6 starts a task that sends each
                         event to a process, with the task's ref;
                         first/4 returns the first event of a given name;

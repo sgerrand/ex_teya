@@ -35,10 +35,6 @@ defmodule Teya.SSE do
   # anything real while still bounding what a runaway body can hold.
   @max_frame_bytes 1_048_576
 
-  # How long a subscribe task waits to be told its ref. It is sent straight
-  # after the task starts, so this is only a backstop.
-  @ref_wait_ms 5_000
-
   @doc false
   # Starts a subscribe task for `url` and returns `{:ok, task}`. Every message
   # it sends `pid` carries `task.ref`, so two streams for the same id can be
@@ -63,21 +59,24 @@ defmodule Teya.SSE do
   end
 
   @doc false
-  # The subscribe task: waits for its ref, then streams. If the caller dies
-  # before sending it, nobody can hold the ref, since subscribe/6 never
-  # returned it, so the task streams anyway with nil as the ref: a recipient
-  # other than the caller that matches any ref still hears from the stream,
-  # as an unlinked task would carry on for it before refs were added. The
-  # same goes if the ref never comes at all.
-  def subscription(url, set, id, pid, tags, caller, wait_ms \\ @ref_wait_ms) do
+  # The subscribe task: waits for its ref, then streams. The caller sends
+  # the ref as soon as subscribe/6 has the task, so it comes unless the
+  # caller dies first, and the monitor tells which. There is no timeout: a
+  # caller that is only slow still sends the ref it returns, and streaming
+  # without it would send messages that ref can never match.
+  #
+  # If the caller dies first, nobody can hold the ref, since subscribe/6
+  # never returned it, so the task streams anyway with nil as the ref: a
+  # recipient other than the caller that matches any ref still hears from
+  # the stream, as an unlinked task would carry on for it before refs were
+  # added.
+  def subscription(url, set, id, pid, tags, caller) do
     monitor = Process.monitor(caller)
 
     ref =
       receive do
         {:teya_subscription_ref, ref} -> ref
         {:DOWN, ^monitor, :process, _pid, _reason} -> nil
-      after
-        wait_ms -> nil
       end
 
     Process.demonitor(monitor, [:flush])

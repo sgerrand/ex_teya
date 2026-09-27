@@ -21,6 +21,10 @@ defmodule Teya.Config do
           "token/delete"
         ]
 
+  More sets of credentials can be named under `:credentials`, each with its
+  own `:client_id`, `:client_secret` and `:scopes`; see the README.
+  `:default` names the top-level credentials, so no set can use it.
+
   The API and token URLs come from `:environment`, `:production` (the
   default) or `:staging`. Set `:base_url` or `:token_url` to use another.
   Set these before the application starts. The auth process reads the
@@ -35,15 +39,18 @@ defmodule Teya.Config do
   require Logger
 
   @type t :: %__MODULE__{
+          name: atom() | nil,
           client_id: String.t(),
           client_secret: String.t(),
           token_url: String.t(),
           scopes: [String.t()]
         }
 
-  defstruct [:client_id, :client_secret, :token_url, scopes: []]
+  # name is nil for the top-level credentials, or a set's name.
+  defstruct [:name, :client_id, :client_secret, :token_url, scopes: []]
 
   @doc false
+  # The top-level credentials.
   def from_env do
     %__MODULE__{
       client_id: Application.fetch_env!(:teya, :client_id),
@@ -54,18 +61,79 @@ defmodule Teya.Config do
     |> validate!()
   end
 
+  @doc false
+  # A named set from `:credentials`.
+  def from_env(name) do
+    set = Keyword.fetch!(sets(), name)
+
+    %__MODULE__{
+      name: name,
+      client_id: Keyword.get(set, :client_id),
+      client_secret: Keyword.get(set, :client_secret),
+      token_url: HTTP.token_url(),
+      scopes: Keyword.get(set, :scopes, [])
+    }
+    |> validate!()
+  end
+
+  @doc false
+  # The named sets, as configured, checked so that a mistake stops the
+  # application at boot with a clear message. The messages never show a
+  # set's values, which hold its secret.
+  def sets do
+    case Application.get_env(:teya, :credentials, []) do
+      sets when is_list(sets) -> check_sets!(sets)
+      _other -> raise ArgumentError, "Teya: :credentials must be a keyword list of named sets"
+    end
+  end
+
+  # nil and :default name the top-level credentials.
+  @reserved [nil, :default]
+
+  defp check_sets!(sets) do
+    Enum.each(sets, fn
+      {name, set} when is_atom(name) and name not in @reserved and is_list(set) ->
+        if not Keyword.keyword?(set),
+          do:
+            raise(ArgumentError, "Teya: the #{inspect(name)} credentials must be a keyword list")
+
+      {name, _set} when name in @reserved ->
+        raise ArgumentError,
+              "Teya: #{inspect(name)} names the top-level credentials; give the set another name"
+
+      _entry ->
+        raise ArgumentError,
+              "Teya: :credentials must be a keyword list of sets named with atoms"
+    end)
+
+    names = Keyword.keys(sets)
+
+    if length(Enum.uniq(names)) != length(names),
+      do: raise(ArgumentError, "Teya: a name appears twice under :credentials")
+
+    sets
+  end
+
   defp validate!(%__MODULE__{} = config) do
+    where = where(config.name)
+
     if blank?(config.client_id),
-      do: raise(ArgumentError, "Teya: :client_id must be a non-empty string")
+      do: raise(ArgumentError, "Teya: :client_id#{where} must be a non-empty string")
 
     if blank?(config.client_secret),
-      do: raise(ArgumentError, "Teya: :client_secret must be a non-empty string")
+      do: raise(ArgumentError, "Teya: :client_secret#{where} must be a non-empty string")
 
     if config.scopes == [],
-      do: Logger.warning("Teya: no :scopes configured — token requests will request no scopes")
+      do:
+        Logger.warning(
+          "Teya: no :scopes configured#{where} — token requests will request no scopes"
+        )
 
     config
   end
+
+  defp where(nil), do: ""
+  defp where(name), do: " in the #{inspect(name)} credentials"
 
   defp blank?(nil), do: true
   defp blank?(""), do: true

@@ -9,11 +9,12 @@ defmodule Teya.DCC do
   the offer's `quote_id` and amount in the `dcc` field of
   `Teya.CardPresent.create/2` or `Teya.Moto.create/2`.
 
-  It needs the library's credentials (`:client_id` and `:client_secret`), with
-  the `fx/dcc/create` scope among the `:scopes` they ask for. Add that scope
-  only once Teya has granted it to your client: the library asks for all its
-  scopes in one token request, and a scope the client lacks can make that
-  request fail with `invalid_scope`, stopping every call, not only DCC.
+  It uses the `:online` set of credentials, or the top-level ones, with the
+  `fx/dcc/create` scope among the `:scopes` they ask for. Add that scope only
+  once Teya has granted it to your client: each set asks for all its scopes
+  in one token request, and a scope the client lacks can make that request
+  fail with `invalid_scope`, stopping every call that uses those
+  credentials, not only DCC.
 
   The FX spec documents no `Idempotency-Key` for this endpoint, so none is
   sent, and a repeated call creates a new quote. That is harmless: use the

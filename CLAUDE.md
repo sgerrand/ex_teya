@@ -31,18 +31,23 @@ The library is an OTP application (`Teya.Application`) that starts a `Task.Super
 
 ```text
 lib/teya/
-  application.ex      — starts Teya.TaskSupervisor (always) and Teya.Auth (if :client_id set)
-  config.ex           — %Teya.Config{} struct + Config.from_env/0
+  application.ex      — starts Teya.TaskSupervisor, a Teya.Auth for the top-level
+                        credentials (if :client_id set), and one per named set
+                        under :credentials, each under a name of its own
+  config.ex           — %Teya.Config{} struct; from_env/0 (top-level credentials),
+                        from_env/1 (a named set), sets/0
   error.ex            — %Teya.Error{code, message, status, invalid_parameters, reason}
                         returned on every failed request. reason is set when
                         there was no usable answer: {:no_token, cause} (from
-                        Auth.token/0; nothing sent), a network exception, or
+                        Auth.token/1; nothing sent), a network exception, or
                         a function's own atom. Client and Auth decode JSON
                         themselves (HTTP.decode_json/1) so a garbled body keeps
                         its status and none of its bytes
   auth.ex             — GenServer: token cache and proactive refresh; fetches
                         run in tasks, and waiting callers share one fetch
-  client.ex           — HTTP layer: calls Auth.token/0, adds Bearer header,
+  client.ex           — HTTP layer: picks a set of credentials (Auth.set_for/2:
+                        :credentials option, else :poslink or :online by
+                        path, else top-level), calls Auth.token/1, adds Bearer header,
                         auto-generates Idempotency-Key on POST/PATCH;
                         segment/1 encodes each id put into a path (every
                         path builder must use it, before any task starts);
@@ -155,7 +160,7 @@ one is fetched when the next caller needs it.
 
 If a background refresh (`handle_info(:refresh, state)`) fails, the GenServer
 retries after 1 second, doubling each time up to 1 minute — it does **not**
-crash. `Auth.token/0` keeps returning the cached token, even while refreshes
+crash. `Auth.token/1` keeps returning the cached token, even while refreshes
 fail, until 5 seconds before it expires, and only then fetches synchronously.
 The gap keeps a request from reaching Teya with a token that has just run out.
 
@@ -178,15 +183,30 @@ task catches its own errors, so no crash report — which could carry the
 request and the client secret — is logged. A token that lives 5 seconds or
 less is given to the callers who waited for it and never cached.
 
-`Auth.token/0` returns `{:error, %Teya.Error{}}` for any exit from the call, not
-only a timeout, including when no `:client_id` is configured and so the auth
-process is not running.
+`Auth.token/1` returns `{:error, %Teya.Error{}}` for any exit from the call, not
+only a timeout, including when those credentials are not configured and so
+their auth process is not running.
+
+There is one auth process per set of credentials: the top-level one named
+`Teya.Auth`, and one per set under `:credentials`, named after it, such as
+`Teya.Auth.store_b` (`Module.concat(Teya.Auth, name)`). There is no shared
+registry, so no auth process depends on another process: one that fails is
+restarted alone. Each has
+its own token, refresh and failure state, and everything above applies to
+each. `Auth.set_for/2` picks the set for a call from the names the
+application started with (`Auth.put_started_sets/1`, a `:persistent_term`),
+not the live config.
 
 In tests, a fetch finishes after the call that started it returns, so a test
 that sends `:refresh` must wait for the fetch to settle before reading the
 state (see `refresh/1` in `auth_test.exs`). Test setup that resets the auth
 state must also reset `fetch` and `waiters`, or a fetch left from an earlier
 test makes callers wait on a task that is not theirs.
+
+The test config names no sets, so tests run against the top-level
+`Teya.Auth`. A test that needs sets (see `credentials_test.exs`) records them
+with `Auth.put_started_sets/1` and starts their auth processes with
+`start_supervised!/1`, so each test's sets are stopped when it ends.
 
 ## Documentation conventions
 

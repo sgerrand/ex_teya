@@ -132,6 +132,7 @@ defmodule Teya.POSLink.Payment do
     `:infinity` waits for as long as the stream stays open without one, which
     for a stream that sends only partial updates can be the life of the
     payment
+  - `:credentials` — the named set of credentials to use, as for every call
 
   ## Errors
 
@@ -151,7 +152,8 @@ defmodule Teya.POSLink.Payment do
 
   Raises `ArgumentError`, before opening any stream, for an id that cannot be
   part of a path: `nil`, empty, `"."`, `".."`, or anything but text or an
-  integer. That is a mistake in the calling code, not something the API said.
+  integer, or for `:credentials` that are not configured. That is a mistake
+  in the calling code, not something the API said.
 
   ## Examples
 
@@ -164,10 +166,11 @@ defmodule Teya.POSLink.Payment do
 
     caller = self()
     url = stream_url(payment_request_id)
+    set = Auth.set_for(opts, :poslink)
 
     task =
       Task.Supervisor.async_nolink(Teya.TaskSupervisor, fn ->
-        SSE.guard(fn -> fetch_snapshot(url, caller) end)
+        SSE.guard(fn -> fetch_snapshot(url, set, caller) end)
       end)
 
     case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
@@ -194,8 +197,8 @@ defmodule Teya.POSLink.Payment do
   # Only a "full" event is a snapshot: a "diff" carries just the fields that
   # changed, and returning one as the payment would leave out identifiers the
   # caller needs, such as gateway_payment_id for a refund.
-  defp fetch_snapshot(url, caller) do
-    with {:ok, token} <- Auth.token() do
+  defp fetch_snapshot(url, set, caller) do
+    with {:ok, token} <- Auth.token(set) do
       case SSE.first(url, token, "full", caller) do
         :none ->
           {:error, Error.from_reason(:no_snapshot, "the stream closed without a snapshot")}
@@ -285,11 +288,13 @@ defmodule Teya.POSLink.Payment do
 
   Spawns a supervised task under `Teya.TaskSupervisor` that opens the SSE
   stream for `payment_request_id` and forwards parsed events as messages to
-  `pid` (defaults to `self()`).
+  `pid` (defaults to `self()`). `opts` takes `:credentials`, the named set of
+  credentials to use, as for every call.
 
   Raises `ArgumentError` in the calling process, before starting the task, for
   an id that cannot be part of a path: `nil`, empty, `"."`, `".."`, or
-  anything but text or an integer. Every other failure arrives as a message.
+  anything but text or an integer, or for credentials that are not
+  configured. Every other failure arrives as a message.
 
   ## Messages sent to `pid`
 
@@ -327,14 +332,25 @@ defmodule Teya.POSLink.Payment do
           handle_error(reason)
       end
   """
-  @spec subscribe(String.t(), pid()) :: {:ok, Task.t()}
-  def subscribe(payment_request_id, pid \\ self()) do
+  @spec subscribe(String.t(), pid() | keyword(), keyword()) :: {:ok, Task.t()}
+  def subscribe(payment_request_id, pid_or_opts \\ self())
+
+  # Options with no pid, such as subscribe(id, credentials: :store_b), are
+  # for the calling process.
+  def subscribe(payment_request_id, opts) when is_list(opts),
+    do: subscribe(payment_request_id, self(), opts)
+
+  def subscribe(payment_request_id, pid) when is_pid(pid),
+    do: subscribe(payment_request_id, pid, [])
+
+  def subscribe(payment_request_id, pid, opts) when is_pid(pid) and is_list(opts) do
     url = stream_url(payment_request_id)
+    set = Auth.set_for(opts, :poslink)
 
     task =
       Task.Supervisor.async_nolink(Teya.TaskSupervisor, fn ->
         SSE.guard(
-          fn -> stream_payment(url, payment_request_id, pid) end,
+          fn -> stream_payment(url, set, payment_request_id, pid) end,
           pid,
           :poslink_payment_error,
           payment_request_id
@@ -344,8 +360,8 @@ defmodule Teya.POSLink.Payment do
     {:ok, task}
   end
 
-  defp stream_payment(url, id, pid) do
-    case Auth.token() do
+  defp stream_payment(url, set, id, pid) do
+    case Auth.token(set) do
       {:ok, token} ->
         SSE.stream(url, token, id, :poslink_payment, :poslink_payment_error, pid)
 

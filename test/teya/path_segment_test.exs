@@ -190,11 +190,13 @@ defmodule Teya.PathSegmentTest do
     Client.request(:get, "/v1/Tokens_x/" <> id, opts)
     Client.request(:get, Path.join(["/poslink/v1/stores", store_id, "terminals"]), opts)
     Client.request(:get, Enum.join(["", "v1", "tokens", id], "/"), opts)
+    Client.request(:get, "\#{prefix}/tokens/\#{id}", opts)
+    Client.request(:get, "\#{prefix}tokens/\#{id}", opts)
     user_agent = "teya-elixir/\#{version}"
     """
 
     ast = Code.string_to_quoted!(code)
-    assert Enum.count(nodes(ast), &(built_path?(&1) or joined_path?(&1))) == 6
+    assert Enum.count(nodes(ast), &(built_path?(&1) or joined_path?(&1))) == 8
   end
 
   test "the path check leaves a pattern that matches a path's start alone" do
@@ -215,14 +217,17 @@ defmodule Teya.PathSegmentTest do
       (path_literal?(left) and value?(right)) or
         (path_literal?(right) and value?(left))
 
-  # "...#{value}..." with a part that starts a path, such as "/v1/tokens/",
-  # before a value: an interpolated path, whether the string starts with it
-  # or with a value such as the base URL. A "/" inside other text, as in
-  # "teya-elixir/#{version}", starts no path.
+  # "...#{value}..." with a path part before a value: an interpolated path.
+  # A part is a path part if it starts with "/", such as "/v1/tokens/", or
+  # if it holds a "/" and follows a value, as "tokens/" does in
+  # "#{prefix}tokens/#{id}", so a string that starts with a value such as a
+  # prefix or the base URL is caught too. A "/" in a string's own leading
+  # text, as in "teya-elixir/#{version}", starts no path.
   defp built_path?({:<<>>, _meta, parts}) do
     parts
-    |> Enum.drop_while(&(not path_literal?(&1)))
-    |> Enum.any?(&(not is_binary(&1)))
+    |> Enum.with_index()
+    |> Enum.drop_while(fn {part, index} -> not path_part?(part, index) end)
+    |> Enum.any?(fn {part, _index} -> not is_binary(part) end)
   end
 
   defp built_path?(_node), do: false
@@ -237,6 +242,9 @@ defmodule Teya.PathSegmentTest do
   defp joined_path?(_node), do: false
 
   defp path_literal?(value), do: is_binary(value) and String.starts_with?(value, "/")
+
+  defp path_part?(part, index),
+    do: path_literal?(part) or (index > 0 and is_binary(part) and String.contains?(part, "/"))
 
   defp value?(value) when is_binary(value), do: false
 

@@ -45,6 +45,21 @@ defmodule Teya.Auth do
     GenServer.start_link(__MODULE__, config, name: server(name))
   end
 
+  @doc """
+  The API's base URL for a set of credentials: the one its auth process
+  resolved when it started, with the token URL it fetches tokens from. A
+  request sent with this set's token goes to this host, so the two always
+  come from the same environment, whatever the config says now.
+
+  With no auth process for the set, which no token could come from either,
+  it is the base URL as configured now.
+  """
+  def base_url(set \\ nil) do
+    GenServer.call(server(set), :base_url)
+  catch
+    :exit, _reason -> HTTP.base_url()
+  end
+
   defp server(nil), do: __MODULE__
   defp server(name), do: Module.concat(__MODULE__, name)
 
@@ -172,6 +187,8 @@ defmodule Teya.Auth do
   end
 
   @impl true
+  def handle_call(:base_url, _from, state), do: {:reply, state.config.base_url, state}
+
   def handle_call({:token, gives_up_at}, from, state) do
     now = System.monotonic_time(:millisecond)
 

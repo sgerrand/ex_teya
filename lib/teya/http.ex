@@ -21,23 +21,9 @@ defmodule Teya.HTTP do
     }
   }
 
-  @base_url_key {__MODULE__, :base_url}
-
   @doc false
-  # The API's base URL, as the application resolved it when it started, in
-  # the same moment the auth processes read their token URL. Every request
-  # uses this, so a change to :environment or :base_url while the
-  # application runs cannot send one environment's token to another's API:
-  # it takes effect, for both, on the next start.
-  def base_url, do: :persistent_term.get(@base_url_key, nil) || configured_base_url()
-
-  @doc false
-  # The API's base URL as configured now: :base_url if set, otherwise the
-  # :environment's.
-  def configured_base_url, do: url(:base_url)
-
-  @doc false
-  def put_base_url(url), do: :persistent_term.put(@base_url_key, url)
+  # The API's base URL: :base_url if set, otherwise the :environment's.
+  def base_url, do: url(:base_url)
 
   @doc false
   # The token endpoint: :token_url if set, otherwise the :environment's.

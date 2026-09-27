@@ -165,8 +165,8 @@ defmodule Teya.POSLink.Payment do
     timeout = Keyword.get(opts, :timeout, 30_000)
 
     caller = self()
-    url = stream_url(payment_request_id)
     set = Auth.set_for(opts, :poslink)
+    url = stream_url(payment_request_id, set)
 
     task =
       Task.Supervisor.async_nolink(Teya.TaskSupervisor, fn ->
@@ -350,13 +350,13 @@ defmodule Teya.POSLink.Payment do
     do: subscribe(payment_request_id, pid, [])
 
   def subscribe(payment_request_id, pid, opts) when is_pid(pid) and is_list(opts) do
-    url = stream_url(payment_request_id)
     set = Auth.set_for(opts, :poslink)
+    url = stream_url(payment_request_id, set)
 
     SSE.subscribe(url, set, payment_request_id, pid, :poslink_payment, :poslink_payment_error)
   end
 
   # Built by the caller, before any task starts, so an id that cannot be a
   # path segment raises where the mistake was made.
-  defp stream_url(id), do: Client.url({"/poslink/v3/payment-requests/:id", id: id})
+  defp stream_url(id, set), do: Client.url({"/poslink/v3/payment-requests/:id", id: id}, set)
 end

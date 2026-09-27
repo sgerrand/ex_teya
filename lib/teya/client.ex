@@ -60,7 +60,7 @@ defmodule Teya.Client do
   options every resource function passes along. Takes the same options.
   """
   def request_with_token(token, method, path, opts) when is_binary(token) and token != "",
-    do: send_request(method, path(path), opts, token)
+    do: send_request(method, path(path), opts, token, base_url: HTTP.base_url())
 
   @doc """
   Makes a POST that carries no `Idempotency-Key` header.
@@ -114,11 +114,14 @@ defmodule Teya.Client do
 
   @doc false
   # The full URL for a path, for requests that do not go through request/3,
-  # such as the POSLink streams.
-  def url(path), do: full_url(path(path))
-
-  # The one place the base URL and a built path are joined.
-  defp full_url(built_path), do: HTTP.base_url() <> built_path
+  # such as the POSLink streams: on the host of the set of credentials whose
+  # token the request will carry.
+  # The path is built first, so a bad id raises before anything is asked of
+  # the auth process.
+  def url(path, set) do
+    path = path(path)
+    Auth.base_url(set) <> path
+  end
 
   # The values as a map from name to value. Anything but a keyword list, or
   # a name given twice, is a mistake: a map or list of other shapes would
@@ -176,8 +179,10 @@ defmodule Teya.Client do
     path = path(path)
     set = Auth.set_for(opts, api(path))
 
-    with {:ok, token} <- Auth.token(set),
-         do: send_request(method, path, opts, token, [credentials: set] ++ settings)
+    with {:ok, token} <- Auth.token(set) do
+      settings = [credentials: set, base_url: Auth.base_url(set)] ++ settings
+      send_request(method, path, opts, token, settings)
+    end
   end
 
   # POSLink has credentials of its own, from ePOS registration. Everything
@@ -188,15 +193,16 @@ defmodule Teya.Client do
   # settings, for this library's callers only:
   # - :credentials — the token came from the auth process for this set
   #   (nil for the top-level credentials), so a retry asks it again
+  # - :base_url — the host the token belongs to (see Auth.base_url/1)
   # - :retry — Req's :retry option, unless :req_options sets one
   # - :idempotency_key — false sends no Idempotency-Key, even on a POST
-  defp send_request(method, path, opts, token, settings \\ []) do
+  defp send_request(method, path, opts, token, settings) do
     req_opts = Application.get_env(:teya, :req_options, [])
 
     req =
       [
         method: method,
-        url: full_url(path),
+        url: Keyword.fetch!(settings, :base_url) <> path,
         # Req's own option, which gives way to a user-agent set in
         # :req_options, as an option or a header.
         user_agent: HTTP.user_agent(),

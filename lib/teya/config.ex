@@ -27,10 +27,11 @@ defmodule Teya.Config do
 
   The API and token URLs come from `:environment`, `:production` (the
   default) or `:staging`. Set `:base_url` or `:token_url` to use another.
-  These are read once, when the application starts: the credentials, the
-  token URL and the API's base URL alike. A change while it runs has no
-  effect until the next start, so a request's host always matches the
-  environment its token came from. To switch, restart the application.
+  Each set of credentials reads these once, when its auth process starts:
+  its token URL and its API's base URL are resolved together, and every
+  request made with its token goes to that host. A change while the
+  application runs has no effect until the next start, so a token is never
+  sent to another environment's host. To switch, restart the application.
   """
 
   alias Teya.HTTP
@@ -42,11 +43,14 @@ defmodule Teya.Config do
           client_id: String.t(),
           client_secret: String.t(),
           token_url: String.t(),
+          base_url: String.t(),
           scopes: [String.t()]
         }
 
-  # name is nil for the top-level credentials, or a set's name.
-  defstruct [:name, :client_id, :client_secret, :token_url, scopes: []]
+  # name is nil for the top-level credentials, or a set's name. token_url
+  # and base_url are resolved together, so a token and the host it is sent
+  # to always come from the same environment.
+  defstruct [:name, :client_id, :client_secret, :token_url, :base_url, scopes: []]
 
   @doc false
   # The top-level credentials.
@@ -55,6 +59,7 @@ defmodule Teya.Config do
       client_id: Application.fetch_env!(:teya, :client_id),
       client_secret: Application.fetch_env!(:teya, :client_secret),
       token_url: HTTP.token_url(),
+      base_url: HTTP.base_url(),
       scopes: Application.get_env(:teya, :scopes, [])
     }
     |> validate!()
@@ -70,6 +75,7 @@ defmodule Teya.Config do
       client_id: Keyword.get(set, :client_id),
       client_secret: Keyword.get(set, :client_secret),
       token_url: HTTP.token_url(),
+      base_url: HTTP.base_url(),
       scopes: Keyword.get(set, :scopes, [])
     }
     |> validate!()

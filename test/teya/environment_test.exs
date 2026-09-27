@@ -5,14 +5,6 @@ defmodule Teya.EnvironmentTest do
 
   alias Teya.{Checkout, Config, HTTP, TestEnv}
 
-  # Stores `url` as the base URL the application started with, and puts
-  # back the one it had when the test ends.
-  defp started_with_base_url(url) do
-    before = HTTP.base_url()
-    HTTP.put_base_url(url)
-    on_exit(fn -> HTTP.put_base_url(before) end)
-  end
-
   # The test config sets both URLs. Unset them, so the environment decides.
   defp unset_urls do
     TestEnv.put(:base_url, nil)
@@ -22,7 +14,7 @@ defmodule Teya.EnvironmentTest do
   test "uses Teya's production URLs by default" do
     unset_urls()
 
-    assert HTTP.configured_base_url() == "https://api.teya.com"
+    assert HTTP.base_url() == "https://api.teya.com"
     assert HTTP.token_url() == "https://id.teya.com/oauth/v2/oauth-token"
   end
 
@@ -30,7 +22,7 @@ defmodule Teya.EnvironmentTest do
     unset_urls()
     TestEnv.put(:environment, :staging)
 
-    assert HTTP.configured_base_url() == "https://api.teya.xyz"
+    assert HTTP.base_url() == "https://api.teya.xyz"
     assert HTTP.token_url() == "https://id.teya.xyz/oauth/v2/oauth-token"
 
     assert Config.from_env().token_url == "https://id.teya.xyz/oauth/v2/oauth-token"
@@ -40,14 +32,14 @@ defmodule Teya.EnvironmentTest do
     unset_urls()
     TestEnv.put(:environment, "staging")
 
-    assert HTTP.configured_base_url() == "https://api.teya.xyz"
+    assert HTTP.base_url() == "https://api.teya.xyz"
   end
 
   test "treats an empty URL as not set" do
     TestEnv.put(:base_url, "")
     TestEnv.put(:token_url, "")
 
-    assert HTTP.configured_base_url() == "https://api.teya.com"
+    assert HTTP.base_url() == "https://api.teya.com"
     assert HTTP.token_url() == "https://id.teya.com/oauth/v2/oauth-token"
   end
 
@@ -116,49 +108,74 @@ defmodule Teya.EnvironmentTest do
     end
   end
 
-  test "an API call goes to the host of the environment the application started in" do
-    unset_urls()
-    TestEnv.put(:environment, :staging)
-    started_with_base_url(HTTP.configured_base_url())
+  describe "the host a request goes to" do
+    # Starts a set of credentials as the application would at boot, under
+    # the environment configured now, with a token cached.
+    defp start_set(name) do
+      TestEnv.put(:credentials, [
+        {name, [client_id: "id", client_secret: "secret", scopes: ["s"]]}
+      ])
 
-    stub_api(fn conn ->
-      assert conn.host == "api.teya.xyz"
-      json_response(conn, 200, %{"ok" => true})
-    end)
+      before = :persistent_term.get({Teya.Auth, :started_sets}, [])
+      Teya.Auth.put_started_sets([name])
+      on_exit(fn -> Teya.Auth.put_started_sets(before) end)
 
-    assert {:ok, _} = Checkout.get_session("cs-1")
-  end
+      pid = start_supervised!({Teya.Auth, Config.from_env(name)})
 
-  test "a change to the environment while running does not move API calls" do
-    unset_urls()
-    TestEnv.put(:environment, :staging)
+      :sys.replace_state(pid, fn state ->
+        now = System.monotonic_time(:second)
+        %{state | token: "#{name}-token", expires_at: now + 3600, usable_until: now + 3600}
+      end)
+    end
 
-    # The auth process still holds the test's token URL and token, so calls
-    # must stay on the host the application started with.
-    stub_api(fn conn ->
-      assert conn.host == "api.teya.test"
-      json_response(conn, 200, %{"ok" => true})
-    end)
+    defp stub_expecting(host, token) do
+      stub_api(fn conn ->
+        assert conn.host == host
+        assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer #{token}"]
+        json_response(conn, 200, %{"ok" => true})
+      end)
+    end
 
-    assert {:ok, _} = Checkout.get_session("cs-1")
-  end
+    test "is the host of the environment its credentials started in" do
+      unset_urls()
+      TestEnv.put(:environment, :staging)
+      start_set(:stage)
 
-  test "the application resolves the base URL when it starts" do
-    started_with_base_url(HTTP.base_url())
-    TestEnv.put(:base_url, "https://proxy.example")
+      # The staging set's token goes to the staging host...
+      stub_expecting("api.teya.xyz", "stage-token")
+      assert {:ok, _} = Checkout.get_session("cs-1", credentials: :stage)
 
-    # Already running, so this only resolves the URLs again, as a boot would.
-    assert {:error, {:already_started, _pid}} = Teya.Application.start(:normal, [])
-    assert HTTP.base_url() == "https://proxy.example"
-  end
+      # ...and the top-level token, from the test config at boot, to its own.
+      stub_expecting("api.teya.test", "test_access_token")
+      assert {:ok, _} = Checkout.get_session("cs-1")
+    end
 
-  test "an environment it does not know stops the application at boot" do
-    started_with_base_url(HTTP.base_url())
-    unset_urls()
-    TestEnv.put(:environment, :sandbox)
+    test "does not move when the environment changes while running" do
+      start_set(:stage)
 
-    assert_raise ArgumentError, ~r/:environment must be/, fn ->
-      Teya.Application.start(:normal, [])
+      unset_urls()
+      TestEnv.put(:environment, :staging)
+
+      stub_expecting("api.teya.test", "stage-token")
+      assert {:ok, _} = Checkout.get_session("cs-1", credentials: :stage)
+    end
+
+    test "is the stream's host too" do
+      unset_urls()
+      TestEnv.put(:environment, :staging)
+      start_set(:stage)
+      # Changed after the set started, so the config now and the set differ.
+      TestEnv.put(:environment, :production)
+
+      assert Teya.Client.url({"/poslink/v3/payment-requests/:id", id: "pr-1"}, :stage) ==
+               "https://api.teya.xyz/poslink/v3/payment-requests/pr-1"
+    end
+
+    test "with no auth process for the set, is the one configured now" do
+      unset_urls()
+      TestEnv.put(:environment, :staging)
+
+      assert Teya.Auth.base_url(:nobody) == "https://api.teya.xyz"
     end
   end
 
@@ -167,7 +184,7 @@ defmodule Teya.EnvironmentTest do
     TestEnv.put(:base_url, "https://proxy.example")
     TestEnv.put(:token_url, "https://proxy.example/token")
 
-    assert HTTP.configured_base_url() == "https://proxy.example"
+    assert HTTP.base_url() == "https://proxy.example"
     assert HTTP.token_url() == "https://proxy.example/token"
   end
 
@@ -186,7 +203,7 @@ defmodule Teya.EnvironmentTest do
     assert_raise ArgumentError,
                  ~r/:environment must be :production or :staging, got: :sandbox/,
                  fn ->
-                   HTTP.configured_base_url()
+                   HTTP.base_url()
                  end
   end
 end

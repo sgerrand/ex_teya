@@ -4,10 +4,6 @@ defmodule Teya.Application do
 
   @impl true
   def start(_type, _args) do
-    # Resolved here, with the auth processes' token URLs, so an unknown
-    # :environment stops the application at boot and every request uses the
-    # environment the application started in.
-    Teya.HTTP.put_base_url(Teya.HTTP.configured_base_url())
     auth_children = auth_children()
     Teya.Auth.put_started_sets(for {name, _set} <- Teya.Config.sets(), do: name)
 

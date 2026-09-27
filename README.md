@@ -106,12 +106,12 @@ To use other URLs, such as a proxy, set `:base_url` or `:token_url`. Each
 wins over the environment's. The environment may be given as text, such as
 `System.get_env("TEYA_ENV", "production")`.
 
-The library reads these settings once, when the application starts: the
-credentials, the token URL and the API's base URL alike. So a change while
-it runs has no effect until the next start, and the host a request goes to
-always matches the environment its token came from. To switch, change the
-settings and restart the application. An `:environment` it does not know
-stops the application at boot.
+Each set of credentials reads these settings once, when the application
+starts it: its token URL and its API host come from the same environment,
+and every request made with its token goes to its host. So a change while
+the application runs has no effect until the next start, and a token is
+never sent to another environment's host. To switch, change the settings and
+restart the application.
 
 These settings are optional:
 

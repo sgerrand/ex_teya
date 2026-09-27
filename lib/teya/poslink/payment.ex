@@ -23,7 +23,7 @@ defmodule Teya.POSLink.Payment do
   - If the **caller process dies**, the task continues running until the SSE
     stream ends or errors, then exits normally.
   - If the **SSE stream disconnects** mid-payment (network error, server
-    restart), the task sends `{:poslink_payment_error, id, reason}` and exits.
+    restart), the task sends `{:poslink_payment_error, ref, id, reason}` and exits.
     There is no automatic reconnection. To recover, call `get/2` to fetch the
     current status, or call `subscribe/2` again to open a fresh stream. A new
     stream always starts with a full snapshot of the payment request.
@@ -298,11 +298,17 @@ defmodule Teya.POSLink.Payment do
 
   ## Messages sent to `pid`
 
-  - `{:poslink_payment, id, event_type, data}` — a status event where:
+  Every message carries `ref`, the `ref` of the `%Task{}` this returns, so
+  two subscriptions to the same payment can be told apart. Pin it when you
+  match. If `pid` is not the caller, pass the ref on to it. The ref is `nil`
+  only if the caller died before the task could be told it: nobody holds it
+  then, and the stream still runs for a recipient that matches any ref.
+
+  - `{:poslink_payment, ref, id, event_type, data}` — a status event where:
     - `id` is the `payment_request_id`
     - `event_type` is `"full"` (complete snapshot) or `"diff"` (partial update)
     - `data` is the decoded JSON map (e.g. `%{"status" => "SUCCESSFUL", ...}`)
-  - `{:poslink_payment_error, id, reason}` — the stream ended with an error;
+  - `{:poslink_payment_error, ref, id, reason}` — the stream ended with an error;
     `reason` is a `%Teya.Error{}`. It has a `status` when the API or the
     token endpoint refused the request. For a network error its `status` is
     `nil` and its `reason` holds the exception, such as
@@ -319,16 +325,16 @@ defmodule Teya.POSLink.Payment do
 
   ## Example
 
-      {:ok, _task} = Teya.POSLink.Payment.subscribe(payment_request_id)
+      {:ok, %Task{ref: ref}} = Teya.POSLink.Payment.subscribe(payment_request_id)
 
       receive do
-        {:poslink_payment, ^payment_request_id, "full", %{"status" => "SUCCESSFUL"} = data} ->
+        {:poslink_payment, ^ref, ^payment_request_id, "full", %{"status" => "SUCCESSFUL"} = data} ->
           handle_success(data)
 
-        {:poslink_payment, ^payment_request_id, _type, %{"status" => "FAILED"} = data} ->
+        {:poslink_payment, ^ref, ^payment_request_id, _type, %{"status" => "FAILED"} = data} ->
           handle_failure(data)
 
-        {:poslink_payment_error, ^payment_request_id, reason} ->
+        {:poslink_payment_error, ^ref, ^payment_request_id, reason} ->
           handle_error(reason)
       end
   """
@@ -347,27 +353,7 @@ defmodule Teya.POSLink.Payment do
     url = stream_url(payment_request_id)
     set = Auth.set_for(opts, :poslink)
 
-    task =
-      Task.Supervisor.async_nolink(Teya.TaskSupervisor, fn ->
-        SSE.guard(
-          fn -> stream_payment(url, set, payment_request_id, pid) end,
-          pid,
-          :poslink_payment_error,
-          payment_request_id
-        )
-      end)
-
-    {:ok, task}
-  end
-
-  defp stream_payment(url, set, id, pid) do
-    case Auth.token(set) do
-      {:ok, token} ->
-        SSE.stream(url, token, id, :poslink_payment, :poslink_payment_error, pid)
-
-      {:error, reason} ->
-        send(pid, {:poslink_payment_error, id, reason})
-    end
+    SSE.subscribe(url, set, payment_request_id, pid, :poslink_payment, :poslink_payment_error)
   end
 
   # Built by the caller, before any task starts, so an id that cannot be a

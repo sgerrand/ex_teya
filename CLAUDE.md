@@ -61,7 +61,8 @@ lib/teya/
                         token_url/0 (:base_url/:token_url, else the
                         :environment's URLs; the only place they are
                         written out)
-  sse.ex              — SSE helpers: stream/6 sends each event to a process,
+  sse.ex              — SSE helpers: subscribe/6 starts a task that sends each
+                        event to a process, with the task's ref;
                         first/4 returns the first event of a given name;
                         frames are decoded by the req_server_sent_events plugin
   checkout.ex         — POST/GET /v2/checkout/sessions
@@ -92,16 +93,26 @@ lib/teya/
 
 ### POSLink streaming (Approach 2: task + message-passing)
 
-`Payment.subscribe/2` and `Receipt.subscribe_status/2` use
+`Payment.subscribe/3` and `Receipt.subscribe_status/3` call
+`Teya.SSE.subscribe/6`, which uses
 `Task.Supervisor.async_nolink(Teya.TaskSupervisor, ...)` to open an SSE
-connection (`Req.get/2` with `into: :self`) and forward parsed events as
-messages to the caller:
+connection (`Req.get/2` with an `into:` handler) and forward parsed events as
+messages to `pid`, the caller by default. The task always returns `:ok`, so
+its reply to the caller never repeats an error sent to `pid`:
 
-- `{:poslink_payment, id, event_type, data}` / `{:poslink_payment_error, id, reason}`
-- `{:poslink_receipt, id, event_type, data}` / `{:poslink_receipt_error, id, reason}`
+- `{:poslink_payment, ref, id, event_type, data}` / `{:poslink_payment_error, ref, id, reason}`
+- `{:poslink_receipt, ref, id, event_type, data}` / `{:poslink_receipt_error, ref, id, reason}`
+
+`ref` is the `ref` of the `%Task{}` the subscribe function returns, so two
+streams for the same id can be told apart. A task cannot see its own ref, so
+`Teya.SSE.subscribe/6` sends it to the task once started, and the task waits
+for it before opening the stream, with no timeout: a live caller always sends
+it. If the caller dies first (the task monitors it), the task streams anyway
+with `nil` as the ref, as an unlinked task would have carried on before refs
+were added.
 
 SSE bytes are decoded by the `req_server_sent_events` plugin, which both
-`Teya.SSE.stream/6` and `Teya.SSE.first/4` attach. They read their request
+`Teya.SSE.subscribe/6` and `Teya.SSE.first/4` attach. They read their request
 options from `:sse_req_options`, falling back to `:req_options`. `event_type` is `"full"` (complete snapshot) or
 `"diff"` (partial update), and is `nil` for a frame with no event line. `data`
 is a decoded JSON map.

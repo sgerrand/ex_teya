@@ -21,7 +21,7 @@ defmodule Teya.POSLink.Receipt do
   - If the **caller process dies**, the task continues running until the SSE
     stream ends or errors, then exits normally.
   - If the **SSE stream disconnects** (network error, server restart), the task
-    sends `{:poslink_receipt_error, id, reason}` and exits. There is no
+    sends `{:poslink_receipt_error, ref, id, reason}` and exits. There is no
     automatic reconnection. Call `subscribe_status/2` again to open a fresh
     stream.
   """
@@ -80,11 +80,17 @@ defmodule Teya.POSLink.Receipt do
 
   ## Messages sent to `pid`
 
-  - `{:poslink_receipt, id, event_type, data}` — a status event where:
+  Every message carries `ref`, the `ref` of the `%Task{}` this returns, so
+  two subscriptions to the same receipt can be told apart. Pin it when you
+  match. If `pid` is not the caller, pass the ref on to it. The ref is `nil`
+  only if the caller died before the task could be told it: nobody holds it
+  then, and the stream still runs for a recipient that matches any ref.
+
+  - `{:poslink_receipt, ref, id, event_type, data}` — a status event where:
     - `id` is the `receipt_id`
     - `event_type` is `"full"` (complete snapshot) or `"diff"` (partial update)
     - `data` is the decoded JSON map (e.g. `%{"status" => "PRINTED", ...}`)
-  - `{:poslink_receipt_error, id, reason}` — the stream ended with an error;
+  - `{:poslink_receipt_error, ref, id, reason}` — the stream ended with an error;
     `reason` is a `%Teya.Error{}`. It has a `status` when the API or the
     token endpoint refused the request. For a network error its `status` is
     `nil` and its `reason` holds the exception, such as
@@ -94,16 +100,16 @@ defmodule Teya.POSLink.Receipt do
 
   ## Example
 
-      {:ok, _task} = Teya.POSLink.Receipt.subscribe_status(receipt_id)
+      {:ok, %Task{ref: ref}} = Teya.POSLink.Receipt.subscribe_status(receipt_id)
 
       receive do
-        {:poslink_receipt, ^receipt_id, "full", %{"status" => "PRINTED"}} ->
+        {:poslink_receipt, ^ref, ^receipt_id, "full", %{"status" => "PRINTED"}} ->
           :ok
 
-        {:poslink_receipt, ^receipt_id, _type, %{"status" => "FAILED"}} ->
+        {:poslink_receipt, ^ref, ^receipt_id, _type, %{"status" => "FAILED"}} ->
           handle_print_failure()
 
-        {:poslink_receipt_error, ^receipt_id, reason} ->
+        {:poslink_receipt_error, ^ref, ^receipt_id, reason} ->
           handle_error(reason)
       end
   """
@@ -124,26 +130,6 @@ defmodule Teya.POSLink.Receipt do
     url = HTTP.base_url() <> "/poslink/v1/receipt-requests/#{Client.segment(receipt_id)}/status"
     set = Auth.set_for(opts, :poslink)
 
-    task =
-      Task.Supervisor.async_nolink(Teya.TaskSupervisor, fn ->
-        SSE.guard(
-          fn -> stream_receipt(url, set, receipt_id, pid) end,
-          pid,
-          :poslink_receipt_error,
-          receipt_id
-        )
-      end)
-
-    {:ok, task}
-  end
-
-  defp stream_receipt(url, set, id, pid) do
-    case Auth.token(set) do
-      {:ok, token} ->
-        SSE.stream(url, token, id, :poslink_receipt, :poslink_receipt_error, pid)
-
-      {:error, reason} ->
-        send(pid, {:poslink_receipt_error, id, reason})
-    end
+    SSE.subscribe(url, set, receipt_id, pid, :poslink_receipt, :poslink_receipt_error)
   end
 end

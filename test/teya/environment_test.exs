@@ -3,7 +3,10 @@ defmodule Teya.EnvironmentTest do
   # :base_url or :token_url is set.
   use Teya.APICase, async: false
 
+  import Teya.POSLink.SubscribeCase, only: [stub_sse: 1]
+
   alias Teya.{Checkout, Config, HTTP, TestEnv}
+  alias Teya.POSLink.{Epos, Payment}
 
   # The test config sets both URLs. Unset them, so the environment decides.
   defp unset_urls do
@@ -167,15 +170,28 @@ defmodule Teya.EnvironmentTest do
       # Changed after the set started, so the config now and the set differ.
       TestEnv.put(:environment, :production)
 
-      assert Teya.Client.url({"/poslink/v3/payment-requests/:id", id: "pr-1"}, :stage) ==
-               "https://api.teya.xyz/poslink/v3/payment-requests/pr-1"
+      stub_sse(fn conn ->
+        assert conn.host == "api.teya.xyz"
+        assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer stage-token"]
+
+        conn
+        |> Plug.Conn.put_resp_content_type("text/event-stream")
+        |> Plug.Conn.send_resp(200, "event: full\ndata: {\"status\":\"NEW\"}\n\n")
+      end)
+
+      assert {:ok, %{"status" => "NEW"}} =
+               Payment.get("pr-1", credentials: :stage)
     end
 
-    test "with no auth process for the set, is the one configured now" do
+    # Registration carries a signed-in user's token, which the library did
+    # not fetch and no set of credentials holds, so it has no startup host to
+    # keep to: it goes to the host configured when it is called.
+    test "for ePOS registration, is the one configured when it is called" do
       unset_urls()
       TestEnv.put(:environment, :staging)
+      stub_expecting("api.teya.xyz", "user-jwt")
 
-      assert Teya.Auth.base_url(:nobody) == "https://api.teya.xyz"
+      assert {:ok, _} = Epos.register(%{}, user_token: "user-jwt")
     end
   end
 

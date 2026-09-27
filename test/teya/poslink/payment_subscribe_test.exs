@@ -66,7 +66,7 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
 
       Task.async(fn ->
         Teya.SSE.subscription(
-          "https://api.teya.test/poslink/v3/payment-requests/pr-uuid-51",
+          "/poslink/v3/payment-requests/pr-uuid-51",
           nil,
           "pr-uuid-51",
           recipient,

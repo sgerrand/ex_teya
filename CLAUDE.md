@@ -66,9 +66,11 @@ lib/teya/
                         :environment's URLs; the only place they are
                         written out). Both read the live config; each
                         %Teya.Config{} resolves them together when its auth
-                        process starts, and requests use Auth.base_url/1, the
-                        host of the set whose token they carry, so a config
-                        change while running cannot split host and token
+                        process starts. Auth.session/1 hands out a token and
+                        that host in one reply, and requests and streams use
+                        both, so a config change while running cannot split
+                        host and token. request_with_token/4 (ePOS
+                        registration) has no set, so it uses the live host
   sse.ex              — SSE helpers: subscribe/6 starts a task that sends each
                         event to a process, with the task's ref;
                         first/4 returns the first event of a given name;

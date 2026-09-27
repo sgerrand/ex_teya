@@ -45,21 +45,6 @@ defmodule Teya.Auth do
     GenServer.start_link(__MODULE__, config, name: server(name))
   end
 
-  @doc """
-  The API's base URL for a set of credentials: the one its auth process
-  resolved when it started, with the token URL it fetches tokens from. A
-  request sent with this set's token goes to this host, so the two always
-  come from the same environment, whatever the config says now.
-
-  With no auth process for the set, which no token could come from either,
-  it is the base URL as configured now.
-  """
-  def base_url(set \\ nil) do
-    GenServer.call(server(set), :base_url)
-  catch
-    :exit, _reason -> HTTP.base_url()
-  end
-
   defp server(nil), do: __MODULE__
   defp server(name), do: Module.concat(__MODULE__, name)
 
@@ -142,8 +127,19 @@ defmodule Teya.Auth do
   takes longer than `:token_timeout_ms`, or the auth process is not running.
   """
   def token(set \\ nil) do
+    with {:ok, token, _base_url} <- session(set), do: {:ok, token}
+  end
+
+  @doc """
+  Returns `{:ok, access_token, base_url}`: a token and the API host it
+  belongs to, from one answer of the set's auth process. The host is the one
+  it resolved when it started, with the token URL it fetches tokens from, so
+  a request sent to it with this token always stays in one environment,
+  whatever the config says now. Errors are as for `token/1`.
+  """
+  def session(set \\ nil) do
     case call_for_token(set) do
-      {:ok, _token} = ok -> ok
+      {:ok, _token, _base_url} = ok -> ok
       # Nothing was sent to Teya, so the caller may send it again.
       {:error, %Error{} = error} -> {:error, %{error | reason: {:no_token, error.reason}}}
       {:error, other} -> {:error, Error.from_reason({:no_token, other}, "no access token")}
@@ -186,15 +182,15 @@ defmodule Teya.Auth do
     {:ok, %__MODULE__{config: config}}
   end
 
+  # A token is always handed out with the host it belongs to, in the one
+  # reply, so no caller can pair it with a host from another moment.
   @impl true
-  def handle_call(:base_url, _from, state), do: {:reply, state.config.base_url, state}
-
   def handle_call({:token, gives_up_at}, from, state) do
     now = System.monotonic_time(:millisecond)
 
     cond do
       usable?(state) ->
-        {:reply, {:ok, state.token}, state}
+        {:reply, {:ok, state.token, state.config.base_url}, state}
 
       recently_failed?(state) ->
         {:reply, {:error, state.failure}, state}
@@ -300,7 +296,7 @@ defmodule Teya.Auth do
       else: Logger.debug("#{label(state)}: token fetched, expires in #{lifetime}s")
 
     Process.cancel_timer(fetch.timer)
-    reply_all(state.waiters, {:ok, token})
+    reply_all(state.waiters, {:ok, token, state.config.base_url})
     %{store_token(state, token, expires_at, lifetime) | fetch: nil, waiters: []}
   end
 

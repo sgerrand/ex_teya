@@ -112,17 +112,6 @@ defmodule Teya.Client do
   def path(other),
     do: raise(ArgumentError, "a path is text or {template, values}, got: #{inspect(other)}")
 
-  @doc false
-  # The full URL for a path, for requests that do not go through request/3,
-  # such as the POSLink streams: on the host of the set of credentials whose
-  # token the request will carry.
-  # The path is built first, so a bad id raises before anything is asked of
-  # the auth process.
-  def url(path, set) do
-    path = path(path)
-    Auth.base_url(set) <> path
-  end
-
   # The values as a map from name to value. Anything but a keyword list, or
   # a name given twice, is a mistake: a map or list of other shapes would
   # fail somewhere less clear, and a repeated name would quietly lose one of
@@ -179,8 +168,8 @@ defmodule Teya.Client do
     path = path(path)
     set = Auth.set_for(opts, api(path))
 
-    with {:ok, token} <- Auth.token(set) do
-      settings = [credentials: set, base_url: Auth.base_url(set)] ++ settings
+    with {:ok, token, base_url} <- Auth.session(set) do
+      settings = [credentials: set, base_url: base_url] ++ settings
       send_request(method, path, opts, token, settings)
     end
   end
@@ -193,7 +182,7 @@ defmodule Teya.Client do
   # settings, for this library's callers only:
   # - :credentials — the token came from the auth process for this set
   #   (nil for the top-level credentials), so a retry asks it again
-  # - :base_url — the host the token belongs to (see Auth.base_url/1)
+  # - :base_url — the host the token belongs to (see Auth.session/1)
   # - :retry — Req's :retry option, unless :req_options sets one
   # - :idempotency_key — false sends no Idempotency-Key, even on a POST
   defp send_request(method, path, opts, token, settings) do

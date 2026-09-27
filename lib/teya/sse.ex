@@ -36,7 +36,9 @@ defmodule Teya.SSE do
   @max_frame_bytes 1_048_576
 
   @doc false
-  # Starts a subscribe task for `url` and returns `{:ok, task}`. Every message
+  # Starts a subscribe task for `path`, built with Client.path/1, and returns
+  # `{:ok, task}`. The task sends it to the host of the set whose token it
+  # carries. Every message
   # it sends `pid` carries `task.ref`, so two streams for the same id can be
   # told apart:
   #
@@ -46,12 +48,12 @@ defmodule Teya.SSE do
   # A task cannot see its own ref, which belongs to the caller's monitor, so
   # the caller sends it once the task has started, and the task waits for it
   # before it opens the stream.
-  def subscribe(url, set, id, pid, ok_tag, error_tag) do
+  def subscribe(path, set, id, pid, ok_tag, error_tag) do
     caller = self()
 
     task =
       Task.Supervisor.async_nolink(Teya.TaskSupervisor, fn ->
-        subscription(url, set, id, pid, {ok_tag, error_tag}, caller)
+        subscription(path, set, id, pid, {ok_tag, error_tag}, caller)
       end)
 
     send(task.pid, {:teya_subscription_ref, task.ref})
@@ -70,7 +72,7 @@ defmodule Teya.SSE do
   # recipient other than the caller that matches any ref still hears from
   # the stream, as an unlinked task would carry on for it before refs were
   # added.
-  def subscription(url, set, id, pid, tags, caller) do
+  def subscription(path, set, id, pid, tags, caller) do
     monitor = Process.monitor(caller)
 
     ref =
@@ -81,15 +83,17 @@ defmodule Teya.SSE do
 
     Process.demonitor(monitor, [:flush])
     {_ok_tag, error_tag} = tags
-    guard(fn -> run_subscription(url, set, {ref, id}, pid, tags) end, pid, error_tag, {ref, id})
+    guard(fn -> run_subscription(path, set, {ref, id}, pid, tags) end, pid, error_tag, {ref, id})
   end
 
   # Returns :ok however it ends. The task's result goes to the caller as
   # its reply, so an error returned here would reach the caller a second
   # time, in another shape, and reach it even when it is not `pid`.
-  defp run_subscription(url, set, {ref, id}, pid, {ok_tag, error_tag}) do
-    case Auth.token(set) do
-      {:ok, token} -> stream(url, token, {ref, id}, ok_tag, error_tag, pid)
+  # The host comes with the token, in one answer from the set's auth
+  # process, and is joined to the path only then.
+  defp run_subscription(path, set, {ref, id}, pid, {ok_tag, error_tag}) do
+    case Auth.session(set) do
+      {:ok, token, base_url} -> stream(base_url <> path, token, {ref, id}, ok_tag, error_tag, pid)
       {:error, error} -> send(pid, {error_tag, ref, id, error})
     end
 

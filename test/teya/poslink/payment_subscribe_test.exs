@@ -30,6 +30,8 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       stub_sse(fn conn -> error_response(conn, 404, "NOT_FOUND", "No such payment") end)
 
       recipient = spawn(fn -> Process.sleep(:infinity) end)
+      # Unlinked, so it would outlive a failing test without this.
+      on_exit(fn -> Process.exit(recipient, :kill) end)
       :erlang.trace(recipient, true, [:receive])
 
       {:ok, %Task{ref: ref} = task} = Payment.subscribe("pr-uuid-52", recipient)
@@ -40,7 +42,6 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
 
       # The caller gets only the task's plain reply.
       assert Task.await(task) == :ok
-      Process.exit(recipient, :kill)
     end
 
     test "tells two subscriptions to the same payment apart by their refs" do

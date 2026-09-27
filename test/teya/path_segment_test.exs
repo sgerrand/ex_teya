@@ -141,7 +141,12 @@ defmodule Teya.PathSegmentTest do
         {{"/v1/tokens/:id", id: "t", store_id: "s"}, ~r/no placeholder for \["store_id"\]/},
         {"/v1/tokens/tok-1?x=1", ~r/not a plain path/},
         {"/v1/tokens/" <> "Tok_1", ~r/not a plain path/},
-        {{"/v1/Tokens/:id", id: "t"}, ~r/not a plain path/}
+        {{"/v1/Tokens/:id", id: "t"}, ~r/not a plain path/},
+        {{"/v1/tokens/:id", %{id: "t"}}, ~r/must be a keyword list/},
+        {{"/v1/tokens/:id", ["t"]}, ~r/must be a keyword list/},
+        {{"/v1/tokens/:id", [{"id", "t"}]}, ~r/must be a keyword list/},
+        {{"/v1/tokens/:id", id: "a", id: "b"}, ~r/given twice/},
+        {:not_a_path, ~r/a path is text or \{template, values\}/}
       ]
 
       for {path, message} <- cases do
@@ -154,17 +159,23 @@ defmodule Teya.PathSegmentTest do
   # value interpolated into or joined onto a path string skips it, so no
   # module may build a path that way. The check reads the parsed code, not
   # the text, so an expression split across lines is caught all the same.
+  @lib Path.expand("../../lib", __DIR__)
+
   test "no module builds a request path by interpolation or concatenation" do
+    files = Path.wildcard(Path.join(@lib, "**/*.ex"))
+    # With no files found the check would pass having looked at nothing.
+    assert length(files) > 20
+
     offenders =
-      for file <- Path.wildcard("lib/**/*.ex"),
+      for file <- files,
           node <- file |> File.read!() |> Code.string_to_quoted!() |> nodes(),
-          built_path?(node),
-          do: "#{file}:#{node |> elem(1) |> Keyword.get(:line)}"
+          built_path?(node) or (Path.basename(file) != "client.ex" and joined_path?(node)),
+          do: "#{Path.relative_to(file, @lib)}:#{node |> elem(1) |> Keyword.get(:line)}"
 
     assert offenders == []
   end
 
-  test "the path check catches a path joined across lines" do
+  test "the path check catches each way of building a path by hand" do
     code = """
     Client.request(
       :get,
@@ -175,9 +186,20 @@ defmodule Teya.PathSegmentTest do
     Client.request(:get, "/v1/tokens/\#{
       token_id
     }", opts)
+    url = "\#{HTTP.base_url()}/poslink/v1/receipt-requests/\#{receipt_id}/status"
+    Client.request(:get, "/v1/Tokens_x/" <> id, opts)
+    Client.request(:get, Path.join(["/poslink/v1/stores", store_id, "terminals"]), opts)
+    Client.request(:get, Enum.join(["", "v1", "tokens", id], "/"), opts)
+    user_agent = "teya-elixir/\#{version}"
     """
 
-    assert code |> Code.string_to_quoted!() |> nodes() |> Enum.count(&built_path?/1) == 2
+    ast = Code.string_to_quoted!(code)
+    assert Enum.count(nodes(ast), &(built_path?(&1) or joined_path?(&1))) == 6
+  end
+
+  test "the path check leaves a pattern that matches a path's start alone" do
+    ast = Code.string_to_quoted!(~S[defp api("/poslink/" <> _rest), do: :poslink])
+    refute Enum.any?(nodes(ast), &(built_path?(&1) or joined_path?(&1)))
   end
 
   defp nodes(ast) do
@@ -185,17 +207,41 @@ defmodule Teya.PathSegmentTest do
     found
   end
 
-  # "/..." <> value, or value <> "/...": a literal path with a value joined on.
+  # "/..." <> value, or value <> "/...": a literal path with a value joined
+  # on. A pattern such as "/poslink/" <> _rest matches a path, and builds
+  # none, so an underscored name on the other side is left alone.
   defp built_path?({:<>, _meta, [left, right]}),
     do:
-      (path_literal?(left) and not is_binary(right)) or
-        (path_literal?(right) and not is_binary(left))
+      (path_literal?(left) and value?(right)) or
+        (path_literal?(right) and value?(left))
 
-  # "/...#{value}...": an interpolated string that starts as a path.
-  defp built_path?({:<<>>, _meta, [first | _rest] = parts}),
-    do: path_literal?(first) and Enum.any?(parts, &(not is_binary(&1)))
+  # "...#{value}..." with a part that starts a path, such as "/v1/tokens/",
+  # before a value: an interpolated path, whether the string starts with it
+  # or with a value such as the base URL. A "/" inside other text, as in
+  # "teya-elixir/#{version}", starts no path.
+  defp built_path?({:<<>>, _meta, parts}) do
+    parts
+    |> Enum.drop_while(&(not path_literal?(&1)))
+    |> Enum.any?(&(not is_binary(&1)))
+  end
 
   defp built_path?(_node), do: false
 
+  # Path.join/1,2 or Enum.join/2 with "/": a path put together from parts.
+  # Client.path/1 is the one place allowed to do that.
+  defp joined_path?({{:., _, [{:__aliases__, _, [:Path]}, :join]}, _meta, _args}), do: true
+
+  defp joined_path?({{:., _, [{:__aliases__, _, [:Enum]}, :join]}, _meta, [_list, "/"]}),
+    do: true
+
+  defp joined_path?(_node), do: false
+
   defp path_literal?(value), do: is_binary(value) and String.starts_with?(value, "/")
+
+  defp value?(value) when is_binary(value), do: false
+
+  defp value?({name, _meta, context}) when is_atom(name) and is_atom(context),
+    do: not String.starts_with?(Atom.to_string(name), "_")
+
+  defp value?(_other), do: true
 end

@@ -89,9 +89,9 @@ defmodule Teya.Client do
   # Raises ArgumentError for a mistake in the calling code: a value with no
   # placeholder, a placeholder with no value, or text that is not a plain
   # path, which is how an interpolated value would show up.
-  def path({template, values}) when is_binary(template) and is_list(values) do
+  def path({template, values}) when is_binary(template) do
     plain!(template, @template)
-    values = Map.new(values, fn {name, value} -> {Atom.to_string(name), value} end)
+    values = names!(values, template)
 
     {parts, used} =
       template
@@ -109,10 +109,32 @@ defmodule Teya.Client do
 
   def path(path) when is_binary(path), do: plain!(path, @plain)
 
+  def path(other),
+    do: raise(ArgumentError, "a path is text or {template, values}, got: #{inspect(other)}")
+
   @doc false
   # The full URL for a path, for requests that do not go through request/3,
   # such as the POSLink streams.
-  def url(path), do: HTTP.base_url() <> path(path)
+  def url(path), do: full_url(path(path))
+
+  # The one place the base URL and a built path are joined.
+  defp full_url(built_path), do: HTTP.base_url() <> built_path
+
+  # The values as a map from name to value. Anything but a keyword list, or
+  # a name given twice, is a mistake: a map or list of other shapes would
+  # fail somewhere less clear, and a repeated name would quietly lose one of
+  # its values. Nothing about a value is shown, as it may be a secret.
+  defp names!(values, template) do
+    if not Keyword.keyword?(values),
+      do: raise(ArgumentError, "the values for #{template} must be a keyword list")
+
+    names = Keyword.keys(values)
+
+    if length(Enum.uniq(names)) != length(names),
+      do: raise(ArgumentError, "a name is given twice in the values for #{template}")
+
+    Map.new(values, fn {name, value} -> {Atom.to_string(name), value} end)
+  end
 
   defp plain!(path, pattern) do
     if String.match?(path, pattern) do
@@ -160,7 +182,8 @@ defmodule Teya.Client do
 
   # POSLink has credentials of its own, from ePOS registration. Everything
   # else uses the Developer Portal client.
-  defp api(path), do: if(String.starts_with?(path, "/poslink/"), do: :poslink, else: :online)
+  defp api("/poslink/" <> _rest), do: :poslink
+  defp api(_path), do: :online
 
   # settings, for this library's callers only:
   # - :credentials — the token came from the auth process for this set
@@ -168,13 +191,12 @@ defmodule Teya.Client do
   # - :retry — Req's :retry option, unless :req_options sets one
   # - :idempotency_key — false sends no Idempotency-Key, even on a POST
   defp send_request(method, path, opts, token, settings \\ []) do
-    base_url = HTTP.base_url()
     req_opts = Application.get_env(:teya, :req_options, [])
 
     req =
       [
         method: method,
-        url: base_url <> path,
+        url: full_url(path),
         # Req's own option, which gives way to a user-agent set in
         # :req_options, as an option or a header.
         user_agent: HTTP.user_agent(),

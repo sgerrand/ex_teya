@@ -49,8 +49,12 @@ lib/teya/
                         :credentials option, else :poslink or :online by
                         path, else top-level), calls Auth.token/1, adds Bearer header,
                         auto-generates Idempotency-Key on POST/PATCH;
-                        segment/1 encodes each id put into a path (every
-                        path builder must use it, before any task starts);
+                        every path is a plain string or {template, values},
+                        such as {"/v1/tokens/:id", id: token_id}; path/1 and
+                        url/1 encode each value (never interpolate a value
+                        into a path: a test in path_segment_test.exs fails
+                        the build if lib/ does; build stream URLs before any
+                        task starts);
                         idempotent_post/2 for a POST whose spec documents
                         Idempotency-Key, retried when :retry_idempotent_posts
                         is set; post_without_idempotency_key/2 for a POST

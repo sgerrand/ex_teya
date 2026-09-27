@@ -60,7 +60,7 @@ defmodule Teya.Client do
   options every resource function passes along. Takes the same options.
   """
   def request_with_token(token, method, path, opts) when is_binary(token) and token != "",
-    do: send_request(method, path, opts, token)
+    do: send_request(method, path(path), opts, token)
 
   @doc """
   Makes a POST that carries no `Idempotency-Key` header.
@@ -75,19 +75,95 @@ defmodule Teya.Client do
     authed_request(:post, path, opts, idempotency_key: false)
   end
 
+  # Lower-case letters, digits and hyphens, as every Teya path is made of.
+  @plain ~r{\A(/[a-z0-9-]+)+\z}
+  @template ~r{\A(/([a-z0-9-]+|:[a-z_]+))+\z}
+
   @doc false
+  # The one way a request path is built, so no value reaches a path without
+  # being encoded. A path is either text with no values in it, such as
+  # "/v2/checkout/sessions", or {template, values}, such as
+  # {"/v2/checkout/sessions/:id", id: session_id}: each :name segment takes
+  # its value from `values`, encoded as a single segment.
+  #
+  # Raises ArgumentError for a mistake in the calling code: a value with no
+  # placeholder, a placeholder with no value, or text that is not a plain
+  # path, which is how an interpolated value would show up.
+  def path({template, values}) when is_binary(template) do
+    plain!(template, @template)
+    values = names!(values, template)
+
+    {parts, used} =
+      template
+      |> String.split("/")
+      |> Enum.map_reduce([], fn
+        ":" <> name, used -> {segment(value!(values, name, template)), [name | used]}
+        part, used -> {part, used}
+      end)
+
+    case Map.keys(values) -- used do
+      [] -> Enum.join(parts, "/")
+      extra -> raise ArgumentError, "#{template} has no placeholder for #{inspect(extra)}"
+    end
+  end
+
+  def path(path) when is_binary(path), do: plain!(path, @plain)
+
+  def path(other),
+    do: raise(ArgumentError, "a path is text or {template, values}, got: #{inspect(other)}")
+
+  @doc false
+  # The full URL for a path, for requests that do not go through request/3,
+  # such as the POSLink streams.
+  def url(path), do: full_url(path(path))
+
+  # The one place the base URL and a built path are joined.
+  defp full_url(built_path), do: HTTP.base_url() <> built_path
+
+  # The values as a map from name to value. Anything but a keyword list, or
+  # a name given twice, is a mistake: a map or list of other shapes would
+  # fail somewhere less clear, and a repeated name would quietly lose one of
+  # its values. Nothing about a value is shown, as it may be a secret.
+  defp names!(values, template) do
+    if not Keyword.keyword?(values),
+      do: raise(ArgumentError, "the values for #{template} must be a keyword list")
+
+    names = Keyword.keys(values)
+
+    if length(Enum.uniq(names)) != length(names),
+      do: raise(ArgumentError, "a name is given twice in the values for #{template}")
+
+    Map.new(values, fn {name, value} -> {Atom.to_string(name), value} end)
+  end
+
+  defp plain!(path, pattern) do
+    if String.match?(path, pattern) do
+      path
+    else
+      raise ArgumentError,
+            "#{inspect(path)} is not a plain path: give any values as {template, values}"
+    end
+  end
+
+  defp value!(values, name, template) do
+    case Map.fetch(values, name) do
+      {:ok, value} -> value
+      :error -> raise ArgumentError, "no value given for :#{name} in #{template}"
+    end
+  end
+
   # Encodes one segment of a request path, so a value holding "/", "?", "#"
   # or a space cannot change which endpoint is called. An empty one, from nil
   # say, raises: it would leave "//" in the path and call some other route.
   # So do "." and "..", which encoding leaves as they are, and which a proxy
   # or server may read as "this level" and "the level above".
   # Anything but text or an integer, a map say, raises too.
-  def segment(value) when is_integer(value), do: segment(Integer.to_string(value))
+  defp segment(value) when is_integer(value), do: segment(Integer.to_string(value))
 
-  def segment(value) when is_binary(value) and value not in ["", ".", ".."],
+  defp segment(value) when is_binary(value) and value not in ["", ".", ".."],
     do: URI.encode(value, &URI.char_unreserved?/1)
 
-  def segment(value) do
+  defp segment(value) do
     raise ArgumentError,
           "a request path segment must be text or an integer, and cannot be empty, " <>
             "\".\" or \"..\", got: #{inspect(value)}"
@@ -97,6 +173,7 @@ defmodule Teya.Client do
   # The set of credentials is picked before anything else, so an unknown
   # name raises in the caller.
   defp authed_request(method, path, opts, settings) do
+    path = path(path)
     set = Auth.set_for(opts, api(path))
 
     with {:ok, token} <- Auth.token(set),
@@ -114,13 +191,12 @@ defmodule Teya.Client do
   # - :retry — Req's :retry option, unless :req_options sets one
   # - :idempotency_key — false sends no Idempotency-Key, even on a POST
   defp send_request(method, path, opts, token, settings \\ []) do
-    base_url = HTTP.base_url()
     req_opts = Application.get_env(:teya, :req_options, [])
 
     req =
       [
         method: method,
-        url: base_url <> path,
+        url: full_url(path),
         # Req's own option, which gives way to a user-agent set in
         # :req_options, as an option or a header.
         user_agent: HTTP.user_agent(),

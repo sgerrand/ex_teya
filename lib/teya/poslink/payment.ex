@@ -29,7 +29,7 @@ defmodule Teya.POSLink.Payment do
     stream always starts with a full snapshot of the payment request.
   """
 
-  alias Teya.{Auth, Client, Error, HTTP, SSE}
+  alias Teya.{Auth, Client, Error, SSE}
 
   @doc """
   Creates a payment request at a terminal.
@@ -101,7 +101,7 @@ defmodule Teya.POSLink.Payment do
 
     Client.request(
       :patch,
-      "/poslink/v2/payment-requests/#{Client.segment(payment_request_id)}",
+      {"/poslink/v2/payment-requests/:id", id: payment_request_id},
       Keyword.put(opts, :body, body)
     )
   end
@@ -233,7 +233,7 @@ defmodule Teya.POSLink.Payment do
   """
   @spec receipt_text(String.t(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def receipt_text(payment_request_id, opts \\ []) do
-    path = "/poslink/v3/payment-requests/#{Client.segment(payment_request_id)}/receipt-text"
+    path = {"/poslink/v3/payment-requests/:id/receipt-text", id: payment_request_id}
 
     case Client.request(:get, path, opts) do
       {:ok, body} when is_binary(body) -> receipt_from_text(body)
@@ -358,8 +358,5 @@ defmodule Teya.POSLink.Payment do
 
   # Built by the caller, before any task starts, so an id that cannot be a
   # path segment raises where the mistake was made.
-  defp stream_url(id) do
-    HTTP.base_url() <>
-      "/poslink/v3/payment-requests/#{Client.segment(id)}"
-  end
+  defp stream_url(id), do: Client.url({"/poslink/v3/payment-requests/:id", id: id})
 end

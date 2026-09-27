@@ -158,6 +158,26 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       assert %Error{code: nil, status: 500, message: "the reply could not be read"} = error
     end
 
+    test "reads a JSON error whatever its content type says" do
+      for content_type <- [nil, "text/plain"] do
+        stub_sse(fn conn ->
+          conn =
+            if content_type, do: Plug.Conn.put_resp_content_type(conn, content_type), else: conn
+
+          Plug.Conn.send_resp(
+            conn,
+            404,
+            ~s({"code":"NOT_FOUND","description":"No such payment request"})
+          )
+        end)
+
+        {:ok, _task} = Payment.subscribe("pr-uuid-45", self())
+
+        assert_receive {:poslink_payment_error, "pr-uuid-45", error}, 500
+        assert %Error{code: "NOT_FOUND", status: 404, message: "No such payment request"} = error
+      end
+    end
+
     test "cuts a body without splitting a character in two" do
       payment_id = "pr-uuid-14"
       # Lands inside the two bytes of an "é".

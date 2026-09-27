@@ -216,7 +216,7 @@ defmodule Teya.SSE do
   end
 
   defp error_from_response(resp) do
-    case HTTP.decode_json(resp) do
+    case HTTP.decode_json(resp, unlabelled: true) do
       {:ok, resp} -> Error.from_response(resp)
       {:unreadable, resp} -> Error.unreadable(resp)
     end

@@ -61,17 +61,29 @@ defmodule Teya.HTTP do
   # holds the whole body, which can carry a credential. Here the status
   # survives, and such a body comes back as :unreadable, for the caller to
   # report without any of it.
-  def decode_json(%Req.Response{body: body} = resp) do
+  #
+  # With `unlabelled: true`, a body that is not labelled as JSON is decoded
+  # too when it is valid JSON, and otherwise left as text. A POSLink stream's
+  # error body is read that way, since its content type is not always set.
+  def decode_json(%Req.Response{body: body} = resp, opts \\ []) do
     # A body still marked as encoded was not decompressed, so it is passed on
     # as it is, as Req itself does.
-    if is_binary(body) and body != "" and json?(resp) and
-         Req.Response.get_header(resp, "content-encoding") == [] do
-      case Jason.decode(body) do
-        {:ok, decoded} -> {:ok, %{resp | body: decoded}}
-        {:error, _error} -> {:unreadable, resp}
-      end
-    else
-      {:ok, resp}
+    decodable? =
+      is_binary(body) and body != "" and
+        Req.Response.get_header(resp, "content-encoding") == []
+
+    cond do
+      not decodable? -> {:ok, resp}
+      json?(resp) -> decode(resp, {:unreadable, resp})
+      opts[:unlabelled] -> decode(resp, {:ok, resp})
+      true -> {:ok, resp}
+    end
+  end
+
+  defp decode(resp, on_error) do
+    case Jason.decode(resp.body) do
+      {:ok, decoded} -> {:ok, %{resp | body: decoded}}
+      {:error, _error} -> on_error
     end
   end
 

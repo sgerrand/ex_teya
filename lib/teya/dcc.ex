@@ -9,7 +9,13 @@ defmodule Teya.DCC do
   the offer's `quote_id` and amount in the `dcc` field of
   `Teya.CardPresent.create/2` or `Teya.Moto.create/2`.
 
-  Needs the `fx/dcc/create` scope.
+  It needs the library's credentials (`:client_id` and `:client_secret`), with
+  the `fx/dcc/create` scope among the `:scopes` they ask for.
+
+  The FX spec documents no `Idempotency-Key` for this endpoint, so none is
+  sent, and a repeated call creates a new quote. That is harmless: use the
+  offer the cardholder saw. For the same reason, `:retry_idempotent_posts`
+  does not retry it.
   """
 
   alias Teya.Client
@@ -67,13 +73,14 @@ defmodule Teya.DCC do
           }
           Teya.CardPresent.create(Map.put(card_present_params, "dcc", dcc_params))
 
-        {:error, %Teya.Error{code: code}} when code in ["NON_ELIGIBLE_CARD", "SAME_CURRENCY"] ->
-          # card not eligible — proceed without DCC
+        {:error, _reason} ->
+          # no offer, for whatever reason (card not eligible, DCC turned off,
+          # amount too small, network error): proceed without DCC
           Teya.CardPresent.create(card_present_params)
       end
   """
   @spec quote(map(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def quote(params, opts \\ []) do
-    Client.request(:post, "/fx/v1/dcc/offers", Keyword.put(opts, :body, params))
+    Client.post_without_idempotency_key("/fx/v1/dcc/offers", Keyword.put(opts, :body, params))
   end
 end

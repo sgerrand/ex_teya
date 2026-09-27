@@ -331,8 +331,9 @@ response["status"]  # "SUCCESS" | "FAILURE" | "PENDING" | "ACKNOWLEDGED"
 
 Before a card-present transaction, check whether the cardholder's card is
 eligible for DCC and get an offer at the current rate. Teya keeps the quote
-behind the offer, and the payment refers to it by `quote_id`. This needs the
-`fx/dcc/create` scope.
+behind the offer, and the payment refers to it by `quote_id`. This uses the
+library's credentials, and needs the `fx/dcc/create` scope among its
+`:scopes`.
 
 ```elixir
 case Teya.DCC.quote(%{
@@ -353,8 +354,9 @@ case Teya.DCC.quote(%{
     }
     Teya.CardPresent.create(Map.put(card_present_params, "dcc", dcc_params))
 
-  {:error, %Teya.Error{code: code}} when code in ["NON_ELIGIBLE_CARD", "SAME_CURRENCY"] ->
-    # Card not eligible — proceed without DCC
+  {:error, _reason} ->
+    # No offer, for whatever reason (card not eligible, DCC turned off, amount
+    # too small, network error): proceed without DCC
     Teya.CardPresent.create(card_present_params)
 end
 ```

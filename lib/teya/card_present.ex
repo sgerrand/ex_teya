@@ -42,7 +42,7 @@ defmodule Teya.CardPresent do
   - `card_data` — `%{"number" => "...", "expiry_month" => "MM", "expiry_year" => "YYYY"}`
   - `dcc` — `%{"quote_id" => offer["quote_id"], "cardholder_amount" =>
     %{"amount" => 1000, "currency" => "EUR"}}`, from `Teya.DCC.quote/2`.
-    The spec takes `"quoted_at"` in place of `"quote_id"` too
+    It needs `"quote_id"` or `"quoted_at"` (the time of the quote), or both.
 
   ## Options
 

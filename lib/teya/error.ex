@@ -15,8 +15,9 @@ defmodule Teya.Error do
   such as `"invalid_client"` and `"invalid_scope"`.
 
   `invalid_parameters` lists the request fields the API rejected, when it says
-  which. Each entry is a map, usually with `"name"` and `"reason"` keys; read
-  them with `Map.get/2`, since the API does not promise every entry has both.
+  which. Each entry is a map, usually with `"name"` and `"reason"` keys. The
+  FX API (`Teya.DCC`) names the field `"path"` instead. Read them with
+  `Map.get/2`, since the API does not promise every entry has either.
   """
 
   @type t :: %__MODULE__{
@@ -39,8 +40,12 @@ defmodule Teya.Error do
       # Teya names it "description". A gateway in front may say "message".
       message: text(body["description"]) || text(body["message"]),
       status: status,
-      # The FX API calls the list "invalid_params".
-      invalid_parameters: invalid_parameters(body["invalid_parameters"] || body["invalid_params"])
+      # The FX API calls the list "invalid_params". The first that is a list
+      # wins, so something else under one name cannot hide the other.
+      invalid_parameters:
+        [body["invalid_parameters"], body["invalid_params"]]
+        |> Enum.find(&is_list/1)
+        |> invalid_parameters()
     }
   end
 

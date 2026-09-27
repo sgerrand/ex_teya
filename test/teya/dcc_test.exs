@@ -1,13 +1,15 @@
 defmodule Teya.DCCTest do
   use Teya.APICase, async: false
 
-  describe "quote/1" do
+  describe "quote/2" do
     test "returns an exchange rate offer for an eligible card" do
       stub_api(fn conn ->
         assert conn.method == "POST"
         assert Plug.Conn.get_req_header(conn, "user-agent") == [Teya.HTTP.user_agent()]
         assert conn.request_path == "/fx/v1/dcc/offers"
         assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer test_access_token"]
+        # The FX spec documents no Idempotency-Key for this endpoint.
+        assert Plug.Conn.get_req_header(conn, "idempotency-key") == []
 
         {:ok, body, conn} = Plug.Conn.read_body(conn)
 
@@ -128,6 +130,41 @@ defmodule Teya.DCCTest do
 
       assert {:error, %Teya.Error{invalid_parameters: [%{"path" => "card_first9"}]}} =
                Teya.DCC.quote(%{"card_first9" => "41"})
+    end
+
+    test "keeps the invalid_params list when invalid_parameters is not a list" do
+      stub_api(fn conn ->
+        json_response(conn, 400, %{
+          "code" => "BAD_REQUEST",
+          "invalid_parameters" => "see invalid_params",
+          "invalid_params" => [%{"path" => "base_amount", "reason" => "negative"}]
+        })
+      end)
+
+      assert {:error, %Teya.Error{invalid_parameters: [%{"path" => "base_amount"}]}} =
+               Teya.DCC.quote(%{"base_amount" => -1})
+    end
+  end
+
+  describe "idempotency key" do
+    test "is not sent, even when the caller gives one" do
+      stub_api(fn conn ->
+        assert Plug.Conn.get_req_header(conn, "idempotency-key") == []
+        json_response(conn, 200, %{"quote_id" => "q-1"})
+      end)
+
+      assert {:ok, _} = Teya.DCC.quote(%{"store_id" => "s-1"}, idempotency_key: "order-1")
+    end
+
+    test "is not sent when one is set in :req_options" do
+      Teya.TestEnv.add(:req_options, headers: [{"idempotency-key", "configured"}])
+
+      stub_api(fn conn ->
+        assert Plug.Conn.get_req_header(conn, "idempotency-key") == []
+        json_response(conn, 200, %{"quote_id" => "q-1"})
+      end)
+
+      assert {:ok, _} = Teya.DCC.quote(%{"store_id" => "s-1"})
     end
   end
 end

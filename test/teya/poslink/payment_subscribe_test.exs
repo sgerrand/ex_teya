@@ -41,22 +41,42 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       refute_receive {:poslink_payment, _ref, ^payment_id, _type, _data}, 100
     end
 
-    test "a task that is never told its ref ends without streaming" do
-      stub_sse(fn _conn -> flunk("no stream should be opened") end)
+    # The task body as subscribe/2 runs it, for a caller that may not send
+    # the ref. The recipient is the test process.
+    defp run_subscription_task(caller, wait_ms) do
+      recipient = self()
 
-      task =
-        Task.async(fn ->
-          Teya.SSE.subscription(
-            "https://api.teya.test/poslink/v3/payment-requests/pr-uuid-51",
-            nil,
-            "pr-uuid-51",
-            self(),
-            {:poslink_payment, :poslink_payment_error},
-            10
-          )
-        end)
+      Task.async(fn ->
+        Teya.SSE.subscription(
+          "https://api.teya.test/poslink/v3/payment-requests/pr-uuid-51",
+          nil,
+          "pr-uuid-51",
+          recipient,
+          {:poslink_payment, :poslink_payment_error},
+          caller,
+          wait_ms
+        )
+      end)
+    end
 
-      assert Task.await(task) == :ok
+    test "streams with no ref when the caller died before sending it" do
+      stub_payment_sse(sse_event("full", %{"status" => "NEW"}))
+      caller = spawn(fn -> :ok end)
+      ref = Process.monitor(caller)
+      assert_receive {:DOWN, ^ref, :process, ^caller, _reason}
+
+      Task.await(run_subscription_task(caller, 5_000))
+
+      # Nobody holds a ref, but a recipient matching any ref still hears it.
+      assert_receive {:poslink_payment, nil, "pr-uuid-51", "full", %{"status" => "NEW"}}, 500
+    end
+
+    test "streams with no ref when the ref never comes" do
+      stub_payment_sse(sse_event("full", %{"status" => "NEW"}))
+
+      Task.await(run_subscription_task(self(), 10))
+
+      assert_receive {:poslink_payment, nil, "pr-uuid-51", "full", %{"status" => "NEW"}}, 500
     end
 
     test "returns {:ok, task}" do

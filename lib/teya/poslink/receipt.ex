@@ -82,7 +82,9 @@ defmodule Teya.POSLink.Receipt do
 
   Every message carries `ref`, the `ref` of the `%Task{}` this returns, so
   two subscriptions to the same receipt can be told apart. Pin it when you
-  match. If `pid` is not the caller, pass the ref on to it.
+  match. If `pid` is not the caller, pass the ref on to it. The ref is `nil`
+  only if the caller died before the task could be told it: nobody holds it
+  then, and the stream still runs for a recipient that matches any ref.
 
   - `{:poslink_receipt, ref, id, event_type, data}` — a status event where:
     - `id` is the `receipt_id`

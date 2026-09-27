@@ -6,9 +6,10 @@ defmodule Teya.SSE do
   stream into events, and JSON-decodes the `data` field of each one. There are
   two ways to read a stream:
 
-  - `stream/6` follows it to the end and sends each event to a process as
-    `{ok_tag, id, event_type, data}`. Non-200 responses and transport errors
-    are sent as `{error_tag, id, reason}`.
+  - `subscribe/6` starts a task that follows it to the end and sends each
+    event to a process as `{ok_tag, ref, id, event_type, data}`, where `ref`
+    is the `ref` of the `%Task{}` it returns. Non-200 responses, transport
+    errors and crashes are sent as `{error_tag, ref, id, %Teya.Error{}}`.
   - `first/4` sends nothing. It reads up to the first event with a given name,
     closes the stream there, and returns that event's data.
 
@@ -35,8 +36,7 @@ defmodule Teya.SSE do
   @max_frame_bytes 1_048_576
 
   # How long a subscribe task waits to be told its ref. It is sent straight
-  # after the task starts, so it only fails to come if the caller died in
-  # between, and then the task ends rather than wait for ever.
+  # after the task starts, so this is only a backstop.
   @ref_wait_ms 5_000
 
   @doc false
@@ -51,9 +51,11 @@ defmodule Teya.SSE do
   # the caller sends it once the task has started, and the task waits for it
   # before it opens the stream.
   def subscribe(url, set, id, pid, ok_tag, error_tag) do
+    caller = self()
+
     task =
       Task.Supervisor.async_nolink(Teya.TaskSupervisor, fn ->
-        subscription(url, set, id, pid, {ok_tag, error_tag})
+        subscription(url, set, id, pid, {ok_tag, error_tag}, caller)
       end)
 
     send(task.pid, {:teya_subscription_ref, task.ref})
@@ -61,19 +63,26 @@ defmodule Teya.SSE do
   end
 
   @doc false
-  # The subscribe task: waits for its ref, then streams.
-  def subscription(url, set, id, pid, {_ok_tag, error_tag} = tags, wait_ms \\ @ref_wait_ms) do
-    receive do
-      {:teya_subscription_ref, ref} ->
-        guard(
-          fn -> run_subscription(url, set, {ref, id}, pid, tags) end,
-          pid,
-          error_tag,
-          {ref, id}
-        )
-    after
-      wait_ms -> :ok
-    end
+  # The subscribe task: waits for its ref, then streams. If the caller dies
+  # before sending it, nobody can hold the ref, since subscribe/6 never
+  # returned it, so the task streams anyway with nil as the ref: a recipient
+  # other than the caller that matches any ref still hears from the stream,
+  # as an unlinked task would carry on for it before refs were added. The
+  # same goes if the ref never comes at all.
+  def subscription(url, set, id, pid, tags, caller, wait_ms \\ @ref_wait_ms) do
+    monitor = Process.monitor(caller)
+
+    ref =
+      receive do
+        {:teya_subscription_ref, ref} -> ref
+        {:DOWN, ^monitor, :process, _pid, _reason} -> nil
+      after
+        wait_ms -> nil
+      end
+
+    Process.demonitor(monitor, [:flush])
+    {_ok_tag, error_tag} = tags
+    guard(fn -> run_subscription(url, set, {ref, id}, pid, tags) end, pid, error_tag, {ref, id})
   end
 
   defp run_subscription(url, set, {ref, id}, pid, {ok_tag, error_tag}) do

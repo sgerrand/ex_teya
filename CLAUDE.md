@@ -103,7 +103,9 @@ messages to the caller:
 `ref` is the `ref` of the `%Task{}` the subscribe function returns, so two
 streams for the same id can be told apart. A task cannot see its own ref, so
 `Teya.SSE.subscribe/6` sends it to the task once started, and the task waits
-for it (5s at most) before opening the stream.
+for it before opening the stream. If the caller dies first (the task
+monitors it), or 5s pass, the task streams anyway with `nil` as the ref, as an
+unlinked task would have carried on before refs were added.
 
 SSE bytes are decoded by the `req_server_sent_events` plugin, which both
 `Teya.SSE.stream/6` and `Teya.SSE.first/4` attach. They read their request

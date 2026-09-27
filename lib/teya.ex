@@ -89,7 +89,7 @@ defmodule Teya do
 
   | Module | Purpose |
   |---|---|
-  | `Teya.DCC` | BIN eligibility check and exchange rate quote (no OAuth required) |
+  | `Teya.DCC` | BIN eligibility check and an exchange rate offer, with a quote to pay against |
 
   ### POSLink
 

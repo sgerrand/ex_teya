@@ -39,7 +39,8 @@ defmodule Teya.Error do
       # Teya names it "description". A gateway in front may say "message".
       message: text(body["description"]) || text(body["message"]),
       status: status,
-      invalid_parameters: invalid_parameters(body["invalid_parameters"])
+      # The FX API calls the list "invalid_params".
+      invalid_parameters: invalid_parameters(body["invalid_parameters"] || body["invalid_params"])
     }
   end
 

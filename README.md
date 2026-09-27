@@ -104,6 +104,12 @@ The specification names no scopes for `Teya.CardPresent.create/2`,
 answers `invalid_scope`, or these calls answer 401 or 403, ask Teya which
 scopes your credentials need.
 
+#### Dynamic Currency Conversion scopes
+
+| Scope | Library function |
+| --- | --- |
+| `fx/dcc/create` | `Teya.DCC.quote/2` |
+
 #### POSLink scopes
 
 | Scope | Library function |
@@ -324,8 +330,9 @@ response["status"]  # "SUCCESS" | "FAILURE" | "PENDING" | "ACKNOWLEDGED"
 ### Dynamic Currency Conversion (DCC)
 
 Before a card-present transaction, check whether the cardholder's card is
-eligible for DCC and retrieve a rate quote. No OAuth credentials are required
-for this endpoint.
+eligible for DCC and get an offer at the current rate. Teya keeps the quote
+behind the offer, and the payment refers to it by `quote_id`. This needs the
+`fx/dcc/create` scope.
 
 ```elixir
 case Teya.DCC.quote(%{
@@ -338,7 +345,7 @@ case Teya.DCC.quote(%{
     # Offer the cardholder: pay offer["cardholder_amount"] offer["cardholder_currency"]
     # If accepted, include the quote in the card-present transaction:
     dcc_params = %{
-      "quoted_at"         => offer["quoted_at"],
+      "quote_id"          => offer["quote_id"],
       "cardholder_amount" => %{
         "amount"   => offer["cardholder_amount"],
         "currency" => offer["cardholder_currency"]
@@ -627,9 +634,8 @@ look like a retry of the first. Token requests are always sent as a form,
 whatever content type is set.
 
 Token requests and SSE streams use `:auth_req_options` and `:sse_req_options`
-when you set them, and `:req_options` when you do not. DCC quotes use only
-`:dcc_req_options`: the endpoint takes no token, so the options for
-authenticated API calls do not apply to it.
+when you set them, and `:req_options` when you do not. Every other call, DCC
+offers included, uses `:req_options`.
 
 ## Troubleshooting
 

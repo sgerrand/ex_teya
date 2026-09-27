@@ -153,10 +153,9 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
 
       assert_receive {:poslink_payment_error, ^payment_id, error}, 500
 
-      # Cut mid-JSON, so it no longer decodes: the status survives, the code
-      # does not, and only what fitted in the cap is quoted.
-      assert %Error{code: nil, status: 500} = error
-      assert error.message =~ "INTERNAL_SERVER_ERROR"
+      # Cut mid-JSON, so it no longer decodes: the status survives, and none
+      # of the body is kept, as it could hold a card number or a credential.
+      assert %Error{code: nil, status: 500, message: "the reply could not be read"} = error
     end
 
     test "cuts a body without splitting a character in two" do
@@ -164,13 +163,11 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       # Lands inside the two bytes of an "é".
       put_error_body_cap(50)
 
+      # Plain text, which is quoted into the error, unlike JSON cut short.
       stub_sse(fn conn ->
         conn
-        |> Plug.Conn.put_status(500)
-        |> Req.Test.json(%{
-          "code" => "INTERNAL_SERVER_ERROR",
-          "description" => String.duplicate("é", 100)
-        })
+        |> Plug.Conn.put_resp_content_type("text/plain")
+        |> Plug.Conn.send_resp(500, "Server error: " <> String.duplicate("é", 100))
       end)
 
       {:ok, _task} = Payment.subscribe(payment_id, self())
@@ -179,7 +176,7 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       assert %Error{status: 500} = error
 
       # Readable text, not a dump of raw bytes.
-      assert error.message =~ "INTERNAL_SERVER_ERROR"
+      assert error.message =~ "Server error"
       refute error.message =~ "<<"
     end
 
@@ -541,16 +538,65 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
 
       {elapsed_us, result} = :timer.tc(fn -> Payment.get("pr-uuid-28", timeout: 10_000) end)
 
-      assert {:error, %Teya.Error{reason: {:exit, RuntimeError}}} =
-               result
+      assert {:error, %Teya.Error{reason: {:crashed, RuntimeError}}} = result
 
       assert elapsed_us < 5_000_000
     end
 
-    test "keeps the exit reason of a stream that exits without an exception" do
-      stub_sse(fn _conn -> exit(:boom) end)
+    test "keeps only the name of an Erlang error, whose value could hold the token" do
+      # Built at runtime: the compiler rejects a match it can see will fail.
+      failed = Enum.random([{:error, "secret-token"}])
+      stub_sse(fn _conn -> {:ok, _} = failed end)
 
-      assert {:error, %Teya.Error{reason: {:exit, :boom}}} = Payment.get("pr-uuid-40")
+      assert {:error, %Teya.Error{reason: {:crashed, MatchError}} = error} =
+               Payment.get("pr-uuid-40")
+
+      refute inspect(error) =~ "secret-token"
+    end
+
+    test "keeps only the kind of an exit or throw" do
+      for {crash, kind} <- [
+            {fn -> exit({:boom, "secret-token"}) end, :exit},
+            {fn -> throw("secret-token") end, :throw}
+          ] do
+        stub_sse(fn _conn -> crash.() end)
+
+        assert {:error, %Teya.Error{reason: {:crashed, ^kind}} = error} =
+                 Payment.get("pr-uuid-41")
+
+        refute inspect(error) =~ "secret-token"
+      end
+    end
+
+    test "reports a task killed from outside by its exit reason" do
+      for {signal, name} <- [{:kill, :killed}, {{:shutdown, "secret-token"}, :other}] do
+        stub_sse(fn _conn -> Process.exit(self(), signal) end)
+
+        assert {:error, %Teya.Error{reason: {:exit, ^name}} = error} = Payment.get("pr-uuid-42")
+        refute inspect(error) =~ "secret-token"
+      end
+    end
+
+    test "subscribe/2 sends a crash as an error message, with no crash report" do
+      stub_sse(fn _conn -> raise "secret-token" end)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          {:ok, _task} = Payment.subscribe("pr-uuid-44")
+
+          assert_receive {:poslink_payment_error, "pr-uuid-44",
+                          %Error{reason: {:crashed, RuntimeError}}},
+                         500
+        end)
+
+      refute log =~ "secret-token"
+    end
+
+    test "logs no crash report for a crashed stream" do
+      stub_sse(fn _conn -> raise "secret-token" end)
+
+      log = ExUnit.CaptureLog.capture_log(fn -> Payment.get("pr-uuid-43") end)
+      refute log =~ "secret-token"
     end
 
     test "accepts :infinity as the timeout" do

@@ -151,6 +151,27 @@ defmodule Teya.ClientTest do
       end
     end
 
+    test "decodes JSON whatever the case of its content type" do
+      stub_api(fn conn ->
+        conn
+        |> Plug.Conn.put_resp_header("content-type", "Application/JSON")
+        |> Plug.Conn.send_resp(200, ~s({"ok":true}))
+      end)
+
+      assert {:ok, %{"ok" => true}} = Teya.Client.request(:get, "/v1/test")
+    end
+
+    test "leaves a body still marked as encoded as it is, as Req does" do
+      stub_api(fn conn ->
+        conn
+        |> Plug.Conn.put_resp_content_type("application/json")
+        |> Plug.Conn.put_resp_header("content-encoding", "x-unknown")
+        |> Plug.Conn.send_resp(200, "still encoded")
+      end)
+
+      assert {:ok, "still encoded"} = Teya.Client.request(:get, "/v1/test")
+    end
+
     test "leaves a reply that is not JSON as text" do
       stub_api(fn conn ->
         conn |> Plug.Conn.put_resp_content_type("text/plain") |> Plug.Conn.send_resp(200, "ok")

@@ -62,7 +62,10 @@ defmodule Teya.HTTP do
   # survives, and such a body comes back as :unreadable, for the caller to
   # report without any of it.
   def decode_json(%Req.Response{body: body} = resp) do
-    if is_binary(body) and body != "" and json?(resp) do
+    # A body still marked as encoded was not decompressed, so it is passed on
+    # as it is, as Req itself does.
+    if is_binary(body) and body != "" and json?(resp) and
+         Req.Response.get_header(resp, "content-encoding") == [] do
       case Jason.decode(body) do
         {:ok, decoded} -> {:ok, %{resp | body: decoded}}
         {:error, _error} -> {:unreadable, resp}
@@ -73,7 +76,9 @@ defmodule Teya.HTTP do
   end
 
   defp json?(resp) do
-    resp |> Req.Response.get_header("content-type") |> Enum.any?(&String.contains?(&1, "json"))
+    resp
+    |> Req.Response.get_header("content-type")
+    |> Enum.any?(&(&1 |> String.downcase() |> String.contains?("json")))
   end
 
   @doc false

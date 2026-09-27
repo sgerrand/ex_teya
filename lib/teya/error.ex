@@ -23,7 +23,8 @@ defmodule Teya.Error do
   Every failed request returns this struct. When Teya answered, `status` is
   its HTTP status and `code` its error code. A 2xx status means Teya acted
   on the request but its reply, JSON that would not decode, could not be
-  read; none of that reply is kept.
+  read; none of that reply is kept. That rule does not hold when `reason` is
+  `{:no_token, _}`: then the status is the token endpoint's.
 
   `reason` says what went wrong when there was no usable answer, and is
   `nil` otherwise:
@@ -38,7 +39,8 @@ defmodule Teya.Error do
     acted on the request, so check before sending a payment again with a new
     idempotency key.
   - an atom or tuple, with `status` `nil` — a failure a function documents,
-    such as `:timeout` from `Teya.POSLink.Payment.get/2`.
+    such as `:timeout` from `Teya.POSLink.Payment.get/2` or `{:crashed,
+    name}` from a POSLink stream whose task crashed.
 
       case Teya.Checkout.create_session(params) do
         {:ok, session} -> session
@@ -62,17 +64,30 @@ defmodule Teya.Error do
   # For a failure with no answer from Teya: a network error, say. `context`
   # says what failed. The exceptions kept whole say what went wrong and hold
   # nothing that was received. Any other may, as Req.DecompressError keeps
-  # the body, so only its name is kept.
-  @kept_exceptions [Req.TransportError, Req.HTTPError, ReqServerSentEvents.FrameTooLargeError]
+  # the body, so only its name is kept. So may a Req.HTTPError whose reason
+  # is more than a word, such as {:unexpected_data, bytes}.
+  @kept_exceptions [Req.TransportError, ReqServerSentEvents.FrameTooLargeError]
 
   def from_reason(%module{} = exception, context)
       when is_exception(exception) and module in @kept_exceptions,
-      do: %__MODULE__{message: context <> ": " <> Exception.message(exception), reason: exception}
+      do: kept(exception, context)
+
+  def from_reason(%Req.HTTPError{reason: reason} = exception, context) when is_atom(reason),
+    do: kept(exception, context)
 
   def from_reason(%module{} = exception, context) when is_exception(exception),
     do: %__MODULE__{message: context, reason: module}
 
   def from_reason(reason, context), do: %__MODULE__{message: context, reason: reason}
+
+  defp kept(exception, context),
+    do: %__MODULE__{message: context <> ": " <> Exception.message(exception), reason: exception}
+
+  @doc false
+  # Teya answered, but in JSON that will not decode. None of the body is
+  # kept: it could hold a card number or a credential.
+  def unreadable(%{status: status}),
+    do: %__MODULE__{status: status, message: "the reply could not be read"}
 
   @doc false
   # A Teya error names a code; the description and the list of rejected fields

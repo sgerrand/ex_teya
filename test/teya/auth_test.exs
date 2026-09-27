@@ -590,6 +590,19 @@ defmodule Teya.AuthTest do
                Teya.Auth.token()
     end
 
+    test "marks a failure held in any other form as no token", %{auth_pid: auth_pid} do
+      :sys.replace_state(auth_pid, fn state ->
+        %{
+          state
+          | failed_at: System.monotonic_time(:millisecond),
+            failure: %Req.TransportError{reason: :closed}
+        }
+      end)
+
+      assert {:error, %Teya.Error{reason: {:no_token, %Req.TransportError{reason: :closed}}}} =
+               Teya.Auth.token()
+    end
+
     test "keeps the status but none of a token reply whose JSON will not decode", %{
       auth_pid: auth_pid
     } do

@@ -81,6 +81,7 @@ defmodule Teya.Auth do
       {:ok, _token} = ok -> ok
       # Nothing was sent to Teya, so the caller may send it again.
       {:error, %Error{} = error} -> {:error, %{error | reason: {:no_token, error.reason}}}
+      {:error, other} -> {:error, Error.from_reason({:no_token, other}, "no access token")}
     end
   end
 

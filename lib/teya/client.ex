@@ -143,10 +143,8 @@ defmodule Teya.Client do
   defp result({:ok, %{status: status} = resp}) when status in 200..299, do: {:ok, resp.body}
   defp result({:ok, resp}), do: {:error, Error.from_response(resp)}
 
-  # Teya answered, but in JSON that will not decode. None of the body is
-  # kept. A 2xx status says Teya acted on the request all the same.
-  defp result({:unreadable, %{status: status}}),
-    do: {:error, %Error{status: status, message: "the reply could not be read"}}
+  # A 2xx status says Teya acted on the request all the same.
+  defp result({:unreadable, resp}), do: {:error, Error.unreadable(resp)}
 
   # Retries can run for minutes, past the life of the token the first
   # attempt was sent with, so each retry asks the auth process for its

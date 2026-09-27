@@ -235,6 +235,16 @@ defmodule Teya.ErrorTest do
                Teya.Error.from_reason(error, "the request failed")
     end
 
+    test "keeps an HTTP error whole only when its reason is a single word" do
+      plain = %Req.HTTPError{protocol: :http2, reason: :unprocessed}
+      assert %Teya.Error{reason: ^plain} = Teya.Error.from_reason(plain, "the request failed")
+
+      with_bytes = %Req.HTTPError{protocol: :http1, reason: {:unexpected_data, "token=SECRET"}}
+
+      assert %Teya.Error{message: "the request failed", reason: Req.HTTPError} =
+               Teya.Error.from_reason(with_bytes, "the request failed")
+    end
+
     test "gives anything else the context as its message" do
       assert %Teya.Error{message: "the request failed", reason: :closed} =
                Teya.Error.from_reason(:closed, "the request failed")

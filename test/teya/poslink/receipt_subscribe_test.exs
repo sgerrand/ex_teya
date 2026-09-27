@@ -87,6 +87,16 @@ defmodule Teya.POSLink.ReceiptSubscribeTest do
                      500
     end
 
+    test "sends a crash as an error message" do
+      stub_sse(fn _conn -> raise "secret-token" end)
+
+      {:ok, _task} = Receipt.subscribe_status("receipt-uuid-9")
+
+      assert_receive {:poslink_receipt_error, "receipt-uuid-9",
+                      %Error{reason: {:crashed, RuntimeError}}},
+                     500
+    end
+
     test "sends poslink_receipt_error when the token fetch fails" do
       receipt_id = "receipt-uuid-5"
 

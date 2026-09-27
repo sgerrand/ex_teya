@@ -47,7 +47,7 @@ defmodule Teya.POSLink.Store do
   """
   @spec list_terminals(String.t(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def list_terminals(store_id, opts \\ []) do
-    Client.request(:get, "/poslink/v1/stores/#{Client.segment(store_id)}/terminals", opts)
+    Client.request(:get, {"/poslink/v1/stores/:store_id/terminals", store_id: store_id}, opts)
   end
 
   @doc """
@@ -71,8 +71,8 @@ defmodule Teya.POSLink.Store do
           {:ok, map()} | {:error, Teya.Error.t()}
   def terminal_configs(store_id, terminal_id, opts \\ []) do
     path =
-      "/poslink/v1/stores/#{Client.segment(store_id)}" <>
-        "/terminals/#{Client.segment(terminal_id)}/configs"
+      {"/poslink/v1/stores/:store_id/terminals/:terminal_id/configs",
+       store_id: store_id, terminal_id: terminal_id}
 
     Client.request(:get, path, opts)
   end
@@ -105,7 +105,7 @@ defmodule Teya.POSLink.Store do
       when is_binary(value) or is_boolean(value) or is_integer(value) do
     Client.request(
       :put,
-      "/poslink/v1/stores/#{Client.segment(store_id)}/configs/#{Client.segment(config_key)}",
+      {"/poslink/v1/stores/:store_id/configs/:key", store_id: store_id, key: config_key},
       Keyword.put(opts, :body, %{"value" => to_string(value)})
     )
   end

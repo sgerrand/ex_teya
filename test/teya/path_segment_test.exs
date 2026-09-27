@@ -122,4 +122,44 @@ defmodule Teya.PathSegmentTest do
       assert_raise ArgumentError, ~r/path segment/, fn -> call.(id) end
     end
   end
+
+  describe "Client.path/1" do
+    alias Teya.Client
+
+    test "takes a plain path as it is, and encodes each value in a template" do
+      assert Client.path("/v2/checkout/sessions") == "/v2/checkout/sessions"
+
+      assert Client.path(
+               {"/poslink/v1/stores/:store_id/configs/:key", store_id: "s 1", key: "A/B"}
+             ) ==
+               "/poslink/v1/stores/s%201/configs/A%2FB"
+    end
+
+    test "raises for a mistake in the calling code" do
+      cases = [
+        {{"/v1/tokens/:id", []}, ~r/no value given for :id/},
+        {{"/v1/tokens/:id", id: "t", store_id: "s"}, ~r/no placeholder for \["store_id"\]/},
+        {"/v1/tokens/tok-1?x=1", ~r/not a plain path/},
+        {"/v1/tokens/" <> "Tok_1", ~r/not a plain path/},
+        {{"/v1/Tokens/:id", id: "t"}, ~r/not a plain path/}
+      ]
+
+      for {path, message} <- cases do
+        assert_raise ArgumentError, message, fn -> Client.path(path) end
+      end
+    end
+  end
+
+  # Encoding in Client.path/1 only helps if every path goes through it. A
+  # value interpolated or appended into a path string skips it, so no module
+  # may build a path that way.
+  test "no module builds a request path by interpolation or concatenation" do
+    offenders =
+      for file <- Path.wildcard("lib/**/*.ex"),
+          {line, number} <- file |> File.read!() |> String.split("\n") |> Enum.with_index(1),
+          String.match?(line, ~r{"/[^"]*#\{}) or String.match?(line, ~r{"/[a-z0-9/:_-]*"\s*<>}),
+          do: "#{file}:#{number}: #{String.trim(line)}"
+
+    assert offenders == []
+  end
 end

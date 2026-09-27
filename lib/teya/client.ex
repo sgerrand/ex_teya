@@ -60,7 +60,7 @@ defmodule Teya.Client do
   options every resource function passes along. Takes the same options.
   """
   def request_with_token(token, method, path, opts) when is_binary(token) and token != "",
-    do: send_request(method, path, opts, token)
+    do: send_request(method, path(path), opts, token)
 
   @doc """
   Makes a POST that carries no `Idempotency-Key` header.
@@ -75,19 +75,73 @@ defmodule Teya.Client do
     authed_request(:post, path, opts, idempotency_key: false)
   end
 
+  # Lower-case letters, digits and hyphens, as every Teya path is made of.
+  @plain ~r{\A(/[a-z0-9-]+)+\z}
+  @template ~r{\A(/([a-z0-9-]+|:[a-z_]+))+\z}
+
   @doc false
+  # The one way a request path is built, so no value reaches a path without
+  # being encoded. A path is either text with no values in it, such as
+  # "/v2/checkout/sessions", or {template, values}, such as
+  # {"/v2/checkout/sessions/:id", id: session_id}: each :name segment takes
+  # its value from `values`, encoded as a single segment.
+  #
+  # Raises ArgumentError for a mistake in the calling code: a value with no
+  # placeholder, a placeholder with no value, or text that is not a plain
+  # path, which is how an interpolated value would show up.
+  def path({template, values}) when is_binary(template) and is_list(values) do
+    plain!(template, @template)
+    values = Map.new(values, fn {name, value} -> {Atom.to_string(name), value} end)
+
+    {parts, used} =
+      template
+      |> String.split("/")
+      |> Enum.map_reduce([], fn
+        ":" <> name, used -> {segment(value!(values, name, template)), [name | used]}
+        part, used -> {part, used}
+      end)
+
+    case Map.keys(values) -- used do
+      [] -> Enum.join(parts, "/")
+      extra -> raise ArgumentError, "#{template} has no placeholder for #{inspect(extra)}"
+    end
+  end
+
+  def path(path) when is_binary(path), do: plain!(path, @plain)
+
+  @doc false
+  # The full URL for a path, for requests that do not go through request/3,
+  # such as the POSLink streams.
+  def url(path), do: HTTP.base_url() <> path(path)
+
+  defp plain!(path, pattern) do
+    if String.match?(path, pattern) do
+      path
+    else
+      raise ArgumentError,
+            "#{inspect(path)} is not a plain path: give any values as {template, values}"
+    end
+  end
+
+  defp value!(values, name, template) do
+    case Map.fetch(values, name) do
+      {:ok, value} -> value
+      :error -> raise ArgumentError, "no value given for :#{name} in #{template}"
+    end
+  end
+
   # Encodes one segment of a request path, so a value holding "/", "?", "#"
   # or a space cannot change which endpoint is called. An empty one, from nil
   # say, raises: it would leave "//" in the path and call some other route.
   # So do "." and "..", which encoding leaves as they are, and which a proxy
   # or server may read as "this level" and "the level above".
   # Anything but text or an integer, a map say, raises too.
-  def segment(value) when is_integer(value), do: segment(Integer.to_string(value))
+  defp segment(value) when is_integer(value), do: segment(Integer.to_string(value))
 
-  def segment(value) when is_binary(value) and value not in ["", ".", ".."],
+  defp segment(value) when is_binary(value) and value not in ["", ".", ".."],
     do: URI.encode(value, &URI.char_unreserved?/1)
 
-  def segment(value) do
+  defp segment(value) do
     raise ArgumentError,
           "a request path segment must be text or an integer, and cannot be empty, " <>
             "\".\" or \"..\", got: #{inspect(value)}"
@@ -97,6 +151,7 @@ defmodule Teya.Client do
   # The set of credentials is picked before anything else, so an unknown
   # name raises in the caller.
   defp authed_request(method, path, opts, settings) do
+    path = path(path)
     set = Auth.set_for(opts, api(path))
 
     with {:ok, token} <- Auth.token(set),
@@ -105,8 +160,7 @@ defmodule Teya.Client do
 
   # POSLink has credentials of its own, from ePOS registration. Everything
   # else uses the Developer Portal client.
-  defp api("/poslink/" <> _rest), do: :poslink
-  defp api(_path), do: :online
+  defp api(path), do: if(String.starts_with?(path, "/poslink/"), do: :poslink, else: :online)
 
   # settings, for this library's callers only:
   # - :credentials — the token came from the auth process for this set

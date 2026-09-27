@@ -26,7 +26,7 @@ defmodule Teya.SSE do
   """
 
   alias ReqServerSentEvents.Frame
-  alias Teya.{Error, HTTP}
+  alias Teya.{Auth, Error, HTTP}
 
   @default_max_error_body_bytes 65_536
 
@@ -34,12 +34,60 @@ defmodule Teya.SSE do
   # anything real while still bounding what a runaway body can hold.
   @max_frame_bytes 1_048_576
 
+  # How long a subscribe task waits to be told its ref. It is sent straight
+  # after the task starts, so it only fails to come if the caller died in
+  # between, and then the task ends rather than wait for ever.
+  @ref_wait_ms 5_000
+
   @doc false
-  def stream(url, token, id, ok_tag, error_tag, pid) do
+  # Starts a subscribe task for `url` and returns `{:ok, task}`. Every message
+  # it sends `pid` carries `task.ref`, so two streams for the same id can be
+  # told apart:
+  #
+  #     {ok_tag, ref, id, event, data}
+  #     {error_tag, ref, id, %Teya.Error{}}
+  #
+  # A task cannot see its own ref, which belongs to the caller's monitor, so
+  # the caller sends it once the task has started, and the task waits for it
+  # before it opens the stream.
+  def subscribe(url, set, id, pid, ok_tag, error_tag) do
+    task =
+      Task.Supervisor.async_nolink(Teya.TaskSupervisor, fn ->
+        subscription(url, set, id, pid, {ok_tag, error_tag})
+      end)
+
+    send(task.pid, {:teya_subscription_ref, task.ref})
+    {:ok, task}
+  end
+
+  @doc false
+  # The subscribe task: waits for its ref, then streams.
+  def subscription(url, set, id, pid, {_ok_tag, error_tag} = tags, wait_ms \\ @ref_wait_ms) do
+    receive do
+      {:teya_subscription_ref, ref} ->
+        guard(
+          fn -> run_subscription(url, set, {ref, id}, pid, tags) end,
+          pid,
+          error_tag,
+          {ref, id}
+        )
+    after
+      wait_ms -> :ok
+    end
+  end
+
+  defp run_subscription(url, set, {ref, id}, pid, {ok_tag, error_tag}) do
+    case Auth.token(set) do
+      {:ok, token} -> stream(url, token, {ref, id}, ok_tag, error_tag, pid)
+      {:error, error} -> send(pid, {error_tag, ref, id, error})
+    end
+  end
+
+  defp stream(url, token, {ref, id}, ok_tag, error_tag, pid) do
     # Only a 200 response reaches this handler: collect_error_body/1 keeps
     # every other status's bytes for the error instead.
     handler = fn {:sse_event, %Frame{} = frame}, {req, resp} ->
-      with {event, data} <- decode_frame(frame), do: send(pid, {ok_tag, id, event, data})
+      with {event, data} <- decode_frame(frame), do: send(pid, {ok_tag, ref, id, event, data})
       {:cont, {req, resp}}
     end
 
@@ -48,10 +96,10 @@ defmodule Teya.SSE do
         :ok
 
       {:ok, resp} ->
-        send(pid, {error_tag, id, error_from_response(resp)})
+        send(pid, {error_tag, ref, id, error_from_response(resp)})
 
       {:error, reason} ->
-        send(pid, {error_tag, id, Error.from_reason(reason, "the stream failed")})
+        send(pid, {error_tag, ref, id, Error.from_reason(reason, "the stream failed")})
     end
   end
 
@@ -237,10 +285,10 @@ defmodule Teya.SSE do
   @doc false
   # The same for a subscribe task, whose crash is sent to `pid` as the
   # stream's error message.
-  def guard(fun, pid, error_tag, id) do
+  def guard(fun, pid, error_tag, {ref, id}) do
     fun.()
   catch
-    kind, reason -> send(pid, {error_tag, id, crashed(kind, reason)})
+    kind, reason -> send(pid, {error_tag, ref, id, crashed(kind, reason)})
   end
 
   defp crashed(kind, reason),

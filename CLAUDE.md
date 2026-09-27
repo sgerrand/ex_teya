@@ -97,8 +97,13 @@ lib/teya/
 connection (`Req.get/2` with `into: :self`) and forward parsed events as
 messages to the caller:
 
-- `{:poslink_payment, id, event_type, data}` / `{:poslink_payment_error, id, reason}`
-- `{:poslink_receipt, id, event_type, data}` / `{:poslink_receipt_error, id, reason}`
+- `{:poslink_payment, ref, id, event_type, data}` / `{:poslink_payment_error, ref, id, reason}`
+- `{:poslink_receipt, ref, id, event_type, data}` / `{:poslink_receipt_error, ref, id, reason}`
+
+`ref` is the `ref` of the `%Task{}` the subscribe function returns, so two
+streams for the same id can be told apart. A task cannot see its own ref, so
+`Teya.SSE.subscribe/6` sends it to the task once started, and the task waits
+for it (5s at most) before opening the stream.
 
 SSE bytes are decoded by the `req_server_sent_events` plugin, which both
 `Teya.SSE.stream/6` and `Teya.SSE.first/4` attach. They read their request

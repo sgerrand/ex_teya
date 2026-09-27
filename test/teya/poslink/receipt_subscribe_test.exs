@@ -25,8 +25,8 @@ defmodule Teya.POSLink.ReceiptSubscribeTest do
       receipt_id = "receipt-uuid-1"
       stub_receipt_sse(receipt_id, sse_event("full", %{"status" => "ENQUEUED"}))
 
-      assert {:ok, %Task{}} = Receipt.subscribe_status(receipt_id, self())
-      assert_receive {:poslink_receipt, ^receipt_id, _, _}, 500
+      assert {:ok, %Task{ref: ref}} = Receipt.subscribe_status(receipt_id, self())
+      assert_receive {:poslink_receipt, ^ref, ^receipt_id, _, _}, 500
     end
 
     test "sends a full event to the caller" do
@@ -34,9 +34,9 @@ defmodule Teya.POSLink.ReceiptSubscribeTest do
       data = %{"status" => "PRINTED", "receipt_id" => receipt_id}
       stub_receipt_sse(receipt_id, sse_event("full", data))
 
-      {:ok, _task} = Receipt.subscribe_status(receipt_id, self())
+      {:ok, %Task{ref: ref}} = Receipt.subscribe_status(receipt_id, self())
 
-      assert_receive {:poslink_receipt, ^receipt_id, "full", received_data}, 500
+      assert_receive {:poslink_receipt, ^ref, ^receipt_id, "full", received_data}, 500
       assert received_data["status"] == "PRINTED"
     end
 
@@ -50,11 +50,11 @@ defmodule Teya.POSLink.ReceiptSubscribeTest do
 
       stub_receipt_sse(receipt_id, body)
 
-      {:ok, _task} = Receipt.subscribe_status(receipt_id, self())
+      {:ok, %Task{ref: ref}} = Receipt.subscribe_status(receipt_id, self())
 
-      assert_receive {:poslink_receipt, ^receipt_id, "full", %{"status" => "ENQUEUED"}}, 500
-      assert_receive {:poslink_receipt, ^receipt_id, "diff", %{"status" => "PRINTING"}}, 500
-      assert_receive {:poslink_receipt, ^receipt_id, "diff", %{"status" => "PRINTED"}}, 500
+      assert_receive {:poslink_receipt, ^ref, ^receipt_id, "full", %{"status" => "ENQUEUED"}}, 500
+      assert_receive {:poslink_receipt, ^ref, ^receipt_id, "diff", %{"status" => "PRINTING"}}, 500
+      assert_receive {:poslink_receipt, ^ref, ^receipt_id, "diff", %{"status" => "PRINTED"}}, 500
     end
 
     test "sends poslink_receipt_error on non-200 response" do
@@ -66,9 +66,9 @@ defmodule Teya.POSLink.ReceiptSubscribeTest do
         |> Req.Test.json(%{"code" => "NOT_FOUND", "description" => "Receipt not found"})
       end)
 
-      {:ok, _task} = Receipt.subscribe_status(receipt_id, self())
+      {:ok, %Task{ref: ref}} = Receipt.subscribe_status(receipt_id, self())
 
-      assert_receive {:poslink_receipt_error, ^receipt_id, error}, 500
+      assert_receive {:poslink_receipt_error, ^ref, ^receipt_id, error}, 500
 
       assert %Error{code: "NOT_FOUND", message: "Receipt not found", status: 404} = error
     end
@@ -80,9 +80,9 @@ defmodule Teya.POSLink.ReceiptSubscribeTest do
         Req.Test.transport_error(conn, :closed)
       end)
 
-      {:ok, _task} = Receipt.subscribe_status(receipt_id, self())
+      {:ok, %Task{ref: ref}} = Receipt.subscribe_status(receipt_id, self())
 
-      assert_receive {:poslink_receipt_error, ^receipt_id,
+      assert_receive {:poslink_receipt_error, ^ref, ^receipt_id,
                       %Teya.Error{reason: %Req.TransportError{reason: :closed}}},
                      500
     end
@@ -90,9 +90,9 @@ defmodule Teya.POSLink.ReceiptSubscribeTest do
     test "sends a crash as an error message" do
       stub_sse(fn _conn -> raise "secret-token" end)
 
-      {:ok, _task} = Receipt.subscribe_status("receipt-uuid-9")
+      {:ok, %Task{ref: ref}} = Receipt.subscribe_status("receipt-uuid-9")
 
-      assert_receive {:poslink_receipt_error, "receipt-uuid-9",
+      assert_receive {:poslink_receipt_error, ^ref, "receipt-uuid-9",
                       %Error{reason: {:crashed, RuntimeError}}},
                      500
     end
@@ -104,9 +104,9 @@ defmodule Teya.POSLink.ReceiptSubscribeTest do
         Req.Test.transport_error(conn, :econnrefused)
       end)
 
-      {:ok, _task} = Receipt.subscribe_status(receipt_id, self())
+      {:ok, %Task{ref: ref}} = Receipt.subscribe_status(receipt_id, self())
 
-      assert_receive {:poslink_receipt_error, ^receipt_id,
+      assert_receive {:poslink_receipt_error, ^ref, ^receipt_id,
                       %Teya.Error{reason: {:no_token, %Req.TransportError{reason: :econnrefused}}}},
                      500
     end

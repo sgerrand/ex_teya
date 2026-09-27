@@ -473,16 +473,16 @@ params = %{
 }
 
 {:ok, %{"payment_request_id" => id}} = Teya.POSLink.Payment.create(params)
-{:ok, _task} = Teya.POSLink.Payment.subscribe(id, self())
+{:ok, %Task{ref: ref}} = Teya.POSLink.Payment.subscribe(id, self())
 
 receive do
-  {:poslink_payment, ^id, "full", %{"status" => "SUCCESSFUL"} = data} ->
+  {:poslink_payment, ^ref, ^id, "full", %{"status" => "SUCCESSFUL"} = data} ->
     # payment complete — data contains full transaction metadata
-  {:poslink_payment, ^id, _type, %{"status" => "FAILED"}} ->
+  {:poslink_payment, ^ref, ^id, _type, %{"status" => "FAILED"}} ->
     # card declined or terminal error
-  {:poslink_payment, ^id, _type, %{"status" => status}} when status in ["NEW", "IN_PROGRESS"] ->
+  {:poslink_payment, ^ref, ^id, _type, %{"status" => status}} when status in ["NEW", "IN_PROGRESS"] ->
     # intermediate state — keep waiting
-  {:poslink_payment_error, ^id, reason} ->
+  {:poslink_payment_error, ^ref, ^id, reason} ->
     # connection or auth failure
 end
 ```
@@ -491,9 +491,13 @@ end
 and sends messages until the server closes the stream. The second argument is
 the recipient pid and defaults to `self()`.
 
+Every message carries the task's `ref`, so two subscriptions to the same
+payment, such as a second one opened after a drop, can be told apart: pin
+`^ref` when you match. If the recipient is not the caller, pass it the ref.
+
 > **Task lifecycle:** The spawned task is not linked to the caller and is not
 > restarted by the supervisor. If the SSE stream drops mid-payment (network
-> error, server restart), the task sends `{:poslink_payment_error, id, reason}`
+> error, server restart), the task sends `{:poslink_payment_error, ref, id, reason}`
 > and exits — there is no automatic reconnection. To recover, call
 > `Teya.POSLink.Payment.get/2` to fetch the current status, or call
 > `subscribe/2` again with the same `payment_request_id`.
@@ -530,12 +534,12 @@ Submit a receipt print job and stream its printer status:
     "content"     => %{"type" => "JSON", "data" => %{"total" => "£10.00"}}
   })
 
-{:ok, _task} = Teya.POSLink.Receipt.subscribe_status(receipt_id, self())
+{:ok, %Task{ref: ref}} = Teya.POSLink.Receipt.subscribe_status(receipt_id, self())
 
 receive do
-  {:poslink_receipt, ^receipt_id, _type, %{"status" => "PRINTED"}} -> :ok
-  {:poslink_receipt, ^receipt_id, _type, %{"status" => "FAILED"}}  -> handle_failure()
-  {:poslink_receipt_error, ^receipt_id, reason}                    -> handle_error(reason)
+  {:poslink_receipt, ^ref, ^receipt_id, _type, %{"status" => "PRINTED"}} -> :ok
+  {:poslink_receipt, ^ref, ^receipt_id, _type, %{"status" => "FAILED"}}  -> handle_failure()
+  {:poslink_receipt_error, ^ref, ^receipt_id, reason}                    -> handle_error(reason)
 end
 ```
 
@@ -748,7 +752,7 @@ complete a 3DS challenge before the payment is authorised. Redirect them to
 
 ### SSE stream disconnects mid-payment
 
-If a `{:poslink_payment_error, id, _reason}` message arrives before a terminal
+If a `{:poslink_payment_error, ref, id, _reason}` message arrives before a terminal
 status (`"SUCCESSFUL"`, `"FAILED"`, `"CANCELLED"`), the SSE connection dropped.
 The payment may or may not have completed on the terminal. Check the current
 state with `Teya.POSLink.Payment.get/2`, then

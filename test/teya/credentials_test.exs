@@ -159,22 +159,22 @@ defmodule Teya.CredentialsTest do
       stub_stream_expecting_token("store_b-token")
       assert {:ok, %{"status" => "NEW"}} = Payment.get("pr-1", credentials: :store_b)
 
-      {:ok, _task} = Payment.subscribe("pr-2", self(), credentials: :store_b)
-      assert_receive {:poslink_payment, "pr-2", "full", _data}, 500
+      {:ok, %Task{ref: ref}} = Payment.subscribe("pr-2", self(), credentials: :store_b)
+      assert_receive {:poslink_payment, ^ref, "pr-2", "full", _data}, 500
 
-      {:ok, _task} = Receipt.subscribe_status("r-1", self(), credentials: :store_b)
-      assert_receive {:poslink_receipt, "r-1", "full", _data}, 500
+      {:ok, %Task{ref: ref}} = Receipt.subscribe_status("r-1", self(), credentials: :store_b)
+      assert_receive {:poslink_receipt, ^ref, "r-1", "full", _data}, 500
     end
 
     test "take options in place of a pid, for the calling process" do
       start_sets([:poslink, :store_b])
       stub_stream_expecting_token("store_b-token")
 
-      {:ok, _task} = Payment.subscribe("pr-3", credentials: :store_b)
-      assert_receive {:poslink_payment, "pr-3", "full", _data}, 500
+      {:ok, %Task{ref: ref}} = Payment.subscribe("pr-3", credentials: :store_b)
+      assert_receive {:poslink_payment, ^ref, "pr-3", "full", _data}, 500
 
-      {:ok, _task} = Receipt.subscribe_status("r-2", credentials: :store_b)
-      assert_receive {:poslink_receipt, "r-2", "full", _data}, 500
+      {:ok, %Task{ref: ref}} = Receipt.subscribe_status("r-2", credentials: :store_b)
+      assert_receive {:poslink_receipt, ^ref, "r-2", "full", _data}, 500
     end
   end
 

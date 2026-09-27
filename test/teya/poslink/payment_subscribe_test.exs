@@ -26,11 +26,44 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
   end
 
   describe "subscribe/2" do
+    test "tells two subscriptions to the same payment apart by their refs" do
+      payment_id = "pr-uuid-50"
+      stub_payment_sse(sse_event("full", %{"status" => "NEW"}))
+
+      {:ok, %Task{ref: first}} = Payment.subscribe(payment_id)
+      {:ok, %Task{ref: second}} = Payment.subscribe(payment_id)
+      assert first != second
+
+      assert_receive {:poslink_payment, ^first, ^payment_id, "full", _data}, 500
+      assert_receive {:poslink_payment, ^second, ^payment_id, "full", _data}, 500
+
+      # One event each: neither stream's events arrive under the other's ref.
+      refute_receive {:poslink_payment, _ref, ^payment_id, _type, _data}, 100
+    end
+
+    test "a task that is never told its ref ends without streaming" do
+      stub_sse(fn _conn -> flunk("no stream should be opened") end)
+
+      task =
+        Task.async(fn ->
+          Teya.SSE.subscription(
+            "https://api.teya.test/poslink/v3/payment-requests/pr-uuid-51",
+            nil,
+            "pr-uuid-51",
+            self(),
+            {:poslink_payment, :poslink_payment_error},
+            10
+          )
+        end)
+
+      assert Task.await(task) == :ok
+    end
+
     test "returns {:ok, task}" do
       stub_payment_sse(sse_event("full", %{"status" => "NEW"}))
 
-      assert {:ok, %Task{}} = Payment.subscribe("pr-uuid-1", self())
-      assert_receive {:poslink_payment, "pr-uuid-1", _, _}, 500
+      assert {:ok, %Task{ref: ref}} = Payment.subscribe("pr-uuid-1", self())
+      assert_receive {:poslink_payment, ^ref, "pr-uuid-1", _, _}, 500
     end
 
     test "sends a full event to the caller" do
@@ -38,9 +71,9 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       data = %{"status" => "SUCCESSFUL", "payment_request_id" => payment_id}
       stub_payment_sse(sse_event("full", data))
 
-      {:ok, _task} = Payment.subscribe(payment_id, self())
+      {:ok, %Task{ref: ref}} = Payment.subscribe(payment_id, self())
 
-      assert_receive {:poslink_payment, ^payment_id, "full", received_data}, 500
+      assert_receive {:poslink_payment, ^ref, ^payment_id, "full", received_data}, 500
       assert received_data["status"] == "SUCCESSFUL"
     end
 
@@ -48,9 +81,9 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       payment_id = "pr-uuid-2"
       stub_payment_sse(sse_event("diff", %{"status" => "IN_PROGRESS"}))
 
-      {:ok, _task} = Payment.subscribe(payment_id, self())
+      {:ok, %Task{ref: ref}} = Payment.subscribe(payment_id, self())
 
-      assert_receive {:poslink_payment, ^payment_id, "diff", data}, 500
+      assert_receive {:poslink_payment, ^ref, ^payment_id, "diff", data}, 500
       assert data["status"] == "IN_PROGRESS"
     end
 
@@ -64,11 +97,15 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
 
       stub_payment_sse(body)
 
-      {:ok, _task} = Payment.subscribe(payment_id, self())
+      {:ok, %Task{ref: ref}} = Payment.subscribe(payment_id, self())
 
-      assert_receive {:poslink_payment, ^payment_id, "full", %{"status" => "NEW"}}, 500
-      assert_receive {:poslink_payment, ^payment_id, "diff", %{"status" => "IN_PROGRESS"}}, 500
-      assert_receive {:poslink_payment, ^payment_id, "diff", %{"status" => "SUCCESSFUL"}}, 500
+      assert_receive {:poslink_payment, ^ref, ^payment_id, "full", %{"status" => "NEW"}}, 500
+
+      assert_receive {:poslink_payment, ^ref, ^payment_id, "diff", %{"status" => "IN_PROGRESS"}},
+                     500
+
+      assert_receive {:poslink_payment, ^ref, ^payment_id, "diff", %{"status" => "SUCCESSFUL"}},
+                     500
     end
 
     test "sends poslink_payment_error on non-200 response" do
@@ -80,9 +117,9 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
         |> Req.Test.json(%{"code" => "NOT_FOUND", "description" => "Payment not found"})
       end)
 
-      {:ok, _task} = Payment.subscribe(payment_id, self())
+      {:ok, %Task{ref: ref}} = Payment.subscribe(payment_id, self())
 
-      assert_receive {:poslink_payment_error, ^payment_id, error}, 500
+      assert_receive {:poslink_payment_error, ^ref, ^payment_id, error}, 500
 
       assert %Error{code: "NOT_FOUND", message: "Payment not found", status: 404} = error
     end
@@ -94,9 +131,9 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
         Plug.Conn.send_resp(conn, 502, "upstream unavailable")
       end)
 
-      {:ok, _task} = Payment.subscribe(payment_id, self())
+      {:ok, %Task{ref: ref}} = Payment.subscribe(payment_id, self())
 
-      assert_receive {:poslink_payment_error, ^payment_id, error}, 500
+      assert_receive {:poslink_payment_error, ^ref, ^payment_id, error}, 500
       assert %Error{code: nil, status: 502} = error
       assert error.message =~ "upstream unavailable"
     end
@@ -110,9 +147,9 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
         |> Req.Test.json(%{"code" => "ACCEPTED", "description" => "Stream not ready"})
       end)
 
-      {:ok, _task} = Payment.subscribe(payment_id, self())
+      {:ok, %Task{ref: ref}} = Payment.subscribe(payment_id, self())
 
-      assert_receive {:poslink_payment_error, ^payment_id, error}, 500
+      assert_receive {:poslink_payment_error, ^ref, ^payment_id, error}, 500
       assert %Error{code: "ACCEPTED", message: "Stream not ready", status: 202} = error
     end
 
@@ -130,9 +167,9 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
         })
       end)
 
-      {:ok, _task} = Payment.subscribe(payment_id, self())
+      {:ok, %Task{ref: ref}} = Payment.subscribe(payment_id, self())
 
-      assert_receive {:poslink_payment_error, ^payment_id, error}, 500
+      assert_receive {:poslink_payment_error, ^ref, ^payment_id, error}, 500
       assert %Error{code: "BAD_REQUEST", message: "Invalid input", status: 400} = error
     end
 
@@ -149,9 +186,9 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
         })
       end)
 
-      {:ok, _task} = Payment.subscribe(payment_id, self())
+      {:ok, %Task{ref: ref}} = Payment.subscribe(payment_id, self())
 
-      assert_receive {:poslink_payment_error, ^payment_id, error}, 500
+      assert_receive {:poslink_payment_error, ^ref, ^payment_id, error}, 500
 
       # Cut mid-JSON, so it no longer decodes: the status survives, and none
       # of the body is kept, as it could hold a card number or a credential.
@@ -171,9 +208,9 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
           )
         end)
 
-        {:ok, _task} = Payment.subscribe("pr-uuid-45", self())
+        {:ok, %Task{ref: ref}} = Payment.subscribe("pr-uuid-45", self())
 
-        assert_receive {:poslink_payment_error, "pr-uuid-45", error}, 500
+        assert_receive {:poslink_payment_error, ^ref, "pr-uuid-45", error}, 500
         assert %Error{code: "NOT_FOUND", status: 404, message: "No such payment request"} = error
       end
     end
@@ -190,9 +227,9 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
         |> Plug.Conn.send_resp(500, "Server error: " <> String.duplicate("é", 100))
       end)
 
-      {:ok, _task} = Payment.subscribe(payment_id, self())
+      {:ok, %Task{ref: ref}} = Payment.subscribe(payment_id, self())
 
-      assert_receive {:poslink_payment_error, ^payment_id, error}, 500
+      assert_receive {:poslink_payment_error, ^ref, ^payment_id, error}, 500
       assert %Error{status: 500} = error
 
       # Readable text, not a dump of raw bytes.
@@ -213,9 +250,9 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
         end)
       end)
 
-      {:ok, _task} = Payment.subscribe(payment_id, self())
+      {:ok, %Task{ref: ref}} = Payment.subscribe(payment_id, self())
 
-      assert_receive {:poslink_payment_error, ^payment_id, error}, 500
+      assert_receive {:poslink_payment_error, ^ref, ^payment_id, error}, 500
       assert error.message =~ "aaa"
       assert error.message =~ "bbb"
       refute error.message =~ "ddd"
@@ -231,9 +268,9 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
         |> Req.Test.json(%{"code" => "INTERNAL_SERVER_ERROR", "description" => "Boom"})
       end)
 
-      {:ok, _task} = Payment.subscribe(payment_id, self())
+      {:ok, %Task{ref: ref}} = Payment.subscribe(payment_id, self())
 
-      assert_receive {:poslink_payment_error, ^payment_id, error}, 500
+      assert_receive {:poslink_payment_error, ^ref, ^payment_id, error}, 500
       assert %Error{code: "INTERNAL_SERVER_ERROR", message: "Boom", status: 500} = error
     end
 
@@ -251,9 +288,9 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
         |> Plug.Conn.send_resp(500, body)
       end)
 
-      {:ok, _task} = Payment.subscribe(payment_id, self())
+      {:ok, %Task{ref: ref}} = Payment.subscribe(payment_id, self())
 
-      assert_receive {:poslink_payment_error, ^payment_id, error}, 2_000
+      assert_receive {:poslink_payment_error, ^ref, ^payment_id, error}, 2_000
       assert %Error{status: 500} = error
       assert byte_size(error.message) > 100
     end
@@ -272,9 +309,9 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
         conn
       end)
 
-      {:ok, _task} = Payment.subscribe(payment_id, self())
+      {:ok, %Task{ref: ref}} = Payment.subscribe(payment_id, self())
 
-      assert_receive {:poslink_payment_error, ^payment_id, error}, 500
+      assert_receive {:poslink_payment_error, ^ref, ^payment_id, error}, 500
       assert error.message =~ "aaaaaaaaa"
       refute error.message =~ "<<"
     end
@@ -291,9 +328,9 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
         Req.Test.transport_error(conn, :closed)
       end)
 
-      {:ok, _task} = Payment.subscribe(payment_id, self())
+      {:ok, %Task{ref: ref}} = Payment.subscribe(payment_id, self())
 
-      assert_receive {:poslink_payment_error, ^payment_id,
+      assert_receive {:poslink_payment_error, ^ref, ^payment_id,
                       %Teya.Error{reason: %Req.TransportError{reason: :closed}}},
                      2_000
 
@@ -310,9 +347,9 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
         |> Plug.Conn.send_resp(200, String.duplicate("x", 2_000_000))
       end)
 
-      {:ok, _task} = Payment.subscribe(payment_id, self())
+      {:ok, %Task{ref: ref}} = Payment.subscribe(payment_id, self())
 
-      assert_receive {:poslink_payment_error, ^payment_id,
+      assert_receive {:poslink_payment_error, ^ref, ^payment_id,
                       %Teya.Error{reason: %ReqServerSentEvents.FrameTooLargeError{}}},
                      2_000
     end
@@ -330,9 +367,9 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
         |> Plug.Conn.send_resp(200, sse_event("full", %{"status" => "NEW"}))
       end)
 
-      {:ok, _task} = Payment.subscribe(payment_id, self())
+      {:ok, %Task{ref: ref}} = Payment.subscribe(payment_id, self())
 
-      assert_receive {:poslink_payment, ^payment_id, "full", _data}, 500
+      assert_receive {:poslink_payment, ^ref, ^payment_id, "full", _data}, 500
     end
 
     test "sends no idempotency key configured for API calls" do
@@ -347,8 +384,8 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
         |> Plug.Conn.send_resp(200, sse_event("full", %{"status" => "NEW"}))
       end)
 
-      {:ok, _task} = Payment.subscribe(payment_id, self())
-      assert_receive {:poslink_payment, ^payment_id, "full", _data}, 500
+      {:ok, %Task{ref: ref}} = Payment.subscribe(payment_id, self())
+      assert_receive {:poslink_payment, ^ref, ^payment_id, "full", _data}, 500
     end
 
     test "sends poslink_payment_error on transport failure" do
@@ -358,9 +395,9 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
         Req.Test.transport_error(conn, :timeout)
       end)
 
-      {:ok, _task} = Payment.subscribe(payment_id, self())
+      {:ok, %Task{ref: ref}} = Payment.subscribe(payment_id, self())
 
-      assert_receive {:poslink_payment_error, ^payment_id,
+      assert_receive {:poslink_payment_error, ^ref, ^payment_id,
                       %Teya.Error{reason: %Req.TransportError{reason: :timeout}}},
                      500
     end
@@ -374,10 +411,10 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
 
       stub_payment_sse(body)
 
-      {:ok, _task} = Payment.subscribe(payment_id, self())
+      {:ok, %Task{ref: ref}} = Payment.subscribe(payment_id, self())
 
-      assert_receive {:poslink_payment, ^payment_id, "full", %{"status" => "NEW"}}, 500
-      refute_receive {:poslink_payment, ^payment_id, "full", _other}, 100
+      assert_receive {:poslink_payment, ^ref, ^payment_id, "full", %{"status" => "NEW"}}, 500
+      refute_receive {:poslink_payment, ^ref, ^payment_id, "full", _other}, 100
     end
 
     test "ignores keepalive frames that carry no data" do
@@ -390,10 +427,10 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
 
       stub_payment_sse(body)
 
-      {:ok, _task} = Payment.subscribe(payment_id, self())
+      {:ok, %Task{ref: ref}} = Payment.subscribe(payment_id, self())
 
-      assert_receive {:poslink_payment, ^payment_id, "full", %{"status" => "NEW"}}, 500
-      refute_receive {:poslink_payment, ^payment_id, _type, _data}, 100
+      assert_receive {:poslink_payment, ^ref, ^payment_id, "full", %{"status" => "NEW"}}, 500
+      refute_receive {:poslink_payment, ^ref, ^payment_id, _type, _data}, 100
     end
 
     test "sends poslink_payment_error when the token fetch fails" do
@@ -405,9 +442,9 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
         |> Req.Test.json(%{"error" => "invalid_client"})
       end)
 
-      {:ok, _task} = Payment.subscribe(payment_id, self())
+      {:ok, %Task{ref: ref}} = Payment.subscribe(payment_id, self())
 
-      assert_receive {:poslink_payment_error, ^payment_id, error}, 500
+      assert_receive {:poslink_payment_error, ^ref, ^payment_id, error}, 500
       assert %Error{code: "invalid_client", status: 401, reason: {:no_token, nil}} = error
     end
   end
@@ -445,8 +482,8 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       )
 
       assert {:ok, _snapshot} = Payment.get(payment_id)
-      refute_received {:poslink_payment, ^payment_id, _type, _data}
-      refute_received {:poslink_payment_error, ^payment_id, _reason}
+      refute_received {:poslink_payment, _ref, ^payment_id, _type, _data}
+      refute_received {:poslink_payment_error, _ref, ^payment_id, _reason}
     end
 
     test "leaves messages belonging to another subscription alone" do
@@ -454,13 +491,14 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       stub_payment_sse(sse_event("full", %{"status" => "NEW"}))
 
       # As if subscribe/2 were already streaming this payment to the caller.
-      send(self(), {:poslink_payment, payment_id, "full", %{"status" => "IN_PROGRESS"}})
-      send(self(), {:poslink_payment, payment_id, "diff", %{"status" => "SUCCESSFUL"}})
+      ref = make_ref()
+      send(self(), {:poslink_payment, ref, payment_id, "full", %{"status" => "IN_PROGRESS"}})
+      send(self(), {:poslink_payment, ref, payment_id, "diff", %{"status" => "SUCCESSFUL"}})
 
       assert {:ok, %{"status" => "NEW"}} = Payment.get(payment_id)
 
-      assert_received {:poslink_payment, ^payment_id, "full", %{"status" => "IN_PROGRESS"}}
-      assert_received {:poslink_payment, ^payment_id, "diff", %{"status" => "SUCCESSFUL"}}
+      assert_received {:poslink_payment, ^ref, ^payment_id, "full", %{"status" => "IN_PROGRESS"}}
+      assert_received {:poslink_payment, ^ref, ^payment_id, "diff", %{"status" => "SUCCESSFUL"}}
     end
 
     test "waits for a snapshot rather than returning a diff" do
@@ -602,9 +640,9 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
 
       log =
         ExUnit.CaptureLog.capture_log(fn ->
-          {:ok, _task} = Payment.subscribe("pr-uuid-44")
+          {:ok, %Task{ref: ref}} = Payment.subscribe("pr-uuid-44")
 
-          assert_receive {:poslink_payment_error, "pr-uuid-44",
+          assert_receive {:poslink_payment_error, ^ref, "pr-uuid-44",
                           %Error{reason: {:crashed, RuntimeError}}},
                          500
         end)

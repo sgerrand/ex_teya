@@ -43,7 +43,8 @@ lib/teya/
                         path builder must use it, before any task starts);
                         idempotent_post/2 for a POST whose spec documents
                         Idempotency-Key, retried when :retry_idempotent_posts
-                        is set
+                        is set; post_without_idempotency_key/2 for a POST
+                        whose spec does not document the key (DCC offers)
   http.ex             — shared by every module that makes a request: the user
                         agent, each request kind's options with their
                         fallback to :req_options, and base_url/0 and

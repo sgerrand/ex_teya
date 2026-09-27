@@ -104,6 +104,12 @@ The specification names no scopes for `Teya.CardPresent.create/2`,
 answers `invalid_scope`, or these calls answer 401 or 403, ask Teya which
 scopes your credentials need.
 
+#### Dynamic Currency Conversion scopes
+
+| Scope | Library function |
+| --- | --- |
+| `fx/dcc/create` | `Teya.DCC.quote/2` |
+
 #### POSLink scopes
 
 | Scope | Library function |
@@ -324,10 +330,16 @@ response["status"]  # "SUCCESS" | "FAILURE" | "PENDING" | "ACKNOWLEDGED"
 ### Dynamic Currency Conversion (DCC)
 
 Before a card-present transaction, check whether the cardholder's card is
-eligible for DCC and retrieve a rate quote. No OAuth credentials are required
-for this endpoint.
+eligible for DCC and get an offer at the current rate. Teya keeps the quote
+behind the offer, and the payment refers to it by `quote_id`. This uses the
+library's credentials, and needs the `fx/dcc/create` scope among its
+`:scopes`. Add that scope only once Teya has granted it to your client:
+asking for a scope the client lacks can fail the token request with
+`invalid_scope`, which stops every call, not only DCC.
 
 ```elixir
+require Logger
+
 case Teya.DCC.quote(%{
   "store_id"      => store_id,
   "card_first9"   => String.slice(card_number, 0, 9),
@@ -338,7 +350,7 @@ case Teya.DCC.quote(%{
     # Offer the cardholder: pay offer["cardholder_amount"] offer["cardholder_currency"]
     # If accepted, include the quote in the card-present transaction:
     dcc_params = %{
-      "quoted_at"         => offer["quoted_at"],
+      "quote_id"          => offer["quote_id"],
       "cardholder_amount" => %{
         "amount"   => offer["cardholder_amount"],
         "currency" => offer["cardholder_currency"]
@@ -346,8 +358,10 @@ case Teya.DCC.quote(%{
     }
     Teya.CardPresent.create(Map.put(card_present_params, "dcc", dcc_params))
 
-  {:error, %Teya.Error{code: code}} when code in ["NON_ELIGIBLE_CARD", "SAME_CURRENCY"] ->
-    # Card not eligible — proceed without DCC
+  {:error, reason} ->
+    # No offer: proceed without DCC. Log the reason, so a setup problem, such
+    # as a 403 for a missing scope, does not go unseen.
+    Logger.warning("no DCC offer: #{inspect(reason)}")
     Teya.CardPresent.create(card_present_params)
 end
 ```
@@ -493,6 +507,10 @@ POST and PATCH requests automatically include a random `Idempotency-Key` header.
 Teya.Checkout.create_session(params, idempotency_key: order_id)
 ```
 
+DCC offers (`Teya.DCC.quote/2`) are the exception: Teya documents no
+`Idempotency-Key` for them, so none is sent, and a repeated call creates a
+new quote.
+
 ### Retries
 
 GET requests are retried by default when they fail for a reason that may
@@ -582,7 +600,7 @@ All functions return `{:ok, body}` or `{:error, %Teya.Error{}}`:
 case Teya.Checkout.create_session(params) do
   {:ok, response} -> response
   {:error, %Teya.Error{code: "TOO_MANY_REQUESTS"}} -> {:error, :rate_limited}
-  {:error, %Teya.Error{code: "UNAUTHORISED"}} -> {:error, :unauthorized}
+  {:error, %Teya.Error{code: code}} when code in ["UNAUTHORISED", "UNAUTHORIZED"] -> {:error, :unauthorized}
   {:error, %Teya.Error{status: status}} -> {:error, status}
 end
 ```
@@ -627,9 +645,8 @@ look like a retry of the first. Token requests are always sent as a form,
 whatever content type is set.
 
 Token requests and SSE streams use `:auth_req_options` and `:sse_req_options`
-when you set them, and `:req_options` when you do not. DCC quotes use only
-`:dcc_req_options`: the endpoint takes no token, so the options for
-authenticated API calls do not apply to it.
+when you set them, and `:req_options` when you do not. Every other call, DCC
+offers included, uses `:req_options`.
 
 ## Troubleshooting
 

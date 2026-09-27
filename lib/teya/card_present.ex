@@ -40,8 +40,9 @@ defmodule Teya.CardPresent do
   - `pin_block` — `%{"block" => "...", "format" => "ISO_FORMAT_0",
     "encryption_key_id" => "...", "encryption_ksn" => "..."}`
   - `card_data` — `%{"number" => "...", "expiry_month" => "MM", "expiry_year" => "YYYY"}`
-  - `dcc` — `%{"quoted_at" => "...", "cardholder_amount" =>
-    %{"amount" => 1000, "currency" => "EUR"}}`
+  - `dcc` — `%{"quote_id" => offer["quote_id"], "cardholder_amount" =>
+    %{"amount" => 1000, "currency" => "EUR"}}`, from `Teya.DCC.quote/2`.
+    It needs `"quote_id"` or `"quoted_at"` (the time of the quote), or both.
 
   ## Options
 

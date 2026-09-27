@@ -13,7 +13,14 @@ defmodule Teya do
 
   ## Configuration
 
-  Add to your application config:
+  The library runs one set of credentials, so configure one of these two,
+  not both:
+
+  - **Online Payments and Payments Gateway**: the client from the Teya
+    Developer Portal.
+  - **POSLink**: the client that ePOS registration returns.
+
+  For Online Payments and Payments Gateway:
 
       config :teya,
         client_id: "your_client_id",
@@ -30,24 +37,29 @@ defmodule Teya do
           "captures/create",
           "refunds/create",
           "transactions/id/receipts/create",
-          "token/delete",
-          # Payments Gateway
-          "transactions/card-present/create",
-          "reversals/create",
-          # POSLink
-          "poslink/stores/get",
-          "poslink/stores/id/terminals/get",
-          "poslink/payment-requests/create",
-          "poslink/payment-requests/id/get",
-          "poslink/payment-requests/id/update",
-          "poslink/payment-requests/get",
-          "poslink/refunds/create",
-          "poslink/receipt-requests/create",
-          "poslink/receipt-requests/id/status/get"
+          "token/delete"
         ]
 
+  For POSLink, instead: store the client id, secret and scopes that
+  registration returns where your application keeps its secrets, such as
+  environment variables, and read them when it starts:
+
+      # config/runtime.exs
+      config :teya,
+        client_id: System.fetch_env!("TEYA_EPOS_CLIENT_ID"),
+        client_secret: System.fetch_env!("TEYA_EPOS_CLIENT_SECRET"),
+        # the "scopes" list from registration, separated by spaces or commas,
+        # such as "payment_requests payment_requests/id stores/id/terminals refunds"
+        scopes: String.split(System.fetch_env!("TEYA_EPOS_SCOPES"), ~r/[\\s,]+/, trim: true)
+
+  Ask a POSLink client only for the scopes registration gave it. Asking for
+  others, such as the Online Payments ones above, can make the token request
+  fail with `invalid_scope`.
+
   OAuth tokens are fetched automatically and refreshed before expiry.
-  Only request the scopes your application needs.
+  Only request the scopes your application needs. The
+  [scope reference](readme.html#scope-reference) shows which function needs
+  which.
 
   The library talks to Teya's production API unless you set
   `environment: :staging`. Set `:base_url` or `:token_url` to use other URLs.

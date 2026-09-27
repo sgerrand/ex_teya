@@ -8,9 +8,9 @@ defmodule Teya.POSLink.Payment do
   Use `create/2` to start a payment and `subscribe/2` to receive real-time
   status updates via the terminal's SSE stream.
 
-  Required OAuth scopes: `poslink/payment-requests/create`,
-  `poslink/payment-requests/id/get`, `poslink/payment-requests/id/update`,
-  `poslink/payment-requests/get`.
+  `create/2`, `list/1` and `cancel/2` need the `payment_requests` scope.
+  `get/2`, `subscribe/2` and `receipt_text/2` need `payment_requests/id`. The
+  deprecated `default_access` also works for all of them.
 
   ## Task lifecycle
 
@@ -198,9 +198,6 @@ defmodule Teya.POSLink.Payment do
   `create/2` and `"transaction_type" => "REFUND"`. One made with
   `Teya.POSLink.Refund.create/2` has no payment request id, so it cannot be
   looked up this way.
-
-  Needs the `payment_requests/id` scope, which ePOS registration returns, or
-  the deprecated `default_access`.
 
   ## Parameters
 

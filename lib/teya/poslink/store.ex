@@ -5,8 +5,9 @@ defmodule Teya.POSLink.Store do
   Use these endpoints during ePOS registration to identify which `store_id`
   and `terminal_id` to use when creating payment requests.
 
-  Required OAuth scopes: `poslink/stores/get`, `poslink/stores/id/terminals/get`.
-  Teya's specification names no scope for the configuration endpoints.
+  `list/1` and `list_terminals/2` need the `stores/id/terminals` scope, or the
+  deprecated `default_access`. Teya's specification names no scope for the
+  configuration endpoints.
   """
 
   alias Teya.Client

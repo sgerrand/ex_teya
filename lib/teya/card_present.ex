@@ -7,7 +7,7 @@ defmodule Teya.CardPresent do
   Teya-managed terminals accessed through ePOS middleware, see
   `Teya.POSLink.Payment` instead.
 
-  Required OAuth scope: `transactions/card-present/create`.
+  Teya's specification names no OAuth scope for this endpoint.
   """
 
   alias Teya.Client

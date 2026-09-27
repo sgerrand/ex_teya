@@ -577,7 +577,8 @@ defmodule Teya.AuthTest do
         Req.Test.transport_error(conn, :timeout)
       end)
 
-      assert {:error, %Req.TransportError{reason: :timeout}} = Teya.Auth.token()
+      assert {:error, %Teya.Error{reason: %Req.TransportError{reason: :timeout}}} =
+               Teya.Auth.token()
     end
 
     test "re-fetches once the cached token has expired", %{auth_pid: auth_pid} do

@@ -19,16 +19,40 @@ defmodule Teya.Error do
   which. Each entry is a map, usually with `"name"` and `"reason"` keys. The
   FX API (`Teya.DCC`) names the field `"path"` instead. Read them with
   `Map.get/2`, since the API does not promise every entry has either.
+
+  Every failed request returns this struct, including one that never got an
+  answer. Then `status` and `code` are `nil`, and `reason` holds the cause,
+  such as `%Req.TransportError{reason: :timeout}` for a network error:
+
+      case Teya.Checkout.create_session(params) do
+        {:ok, session} -> session
+        {:error, %Teya.Error{status: nil, reason: reason}} -> {:no_answer, reason}
+        {:error, %Teya.Error{status: status}} -> {:refused, status}
+      end
+
+  Without an answer you cannot tell whether Teya acted on the request, so
+  check before sending a payment again with a new idempotency key.
   """
 
   @type t :: %__MODULE__{
           code: String.t() | nil,
           message: String.t() | nil,
           status: integer() | nil,
-          invalid_parameters: [map()] | nil
+          invalid_parameters: [map()] | nil,
+          reason: term()
         }
 
-  defstruct [:code, :message, :status, :invalid_parameters]
+  defstruct [:code, :message, :status, :invalid_parameters, :reason]
+
+  @doc false
+  # For a failure with no answer from Teya: a network error, say. An
+  # exception gives its own message; anything else needs one from the caller.
+  def from_reason(%__MODULE__{} = error, _message), do: error
+
+  def from_reason(exception, _message) when is_exception(exception),
+    do: %__MODULE__{message: Exception.message(exception), reason: exception}
+
+  def from_reason(reason, message), do: %__MODULE__{message: message, reason: reason}
 
   @doc false
   # A Teya error names a code; the description and the list of rejected fields

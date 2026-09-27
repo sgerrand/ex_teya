@@ -276,7 +276,8 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
 
       {:ok, _task} = Payment.subscribe(payment_id, self())
 
-      assert_receive {:poslink_payment_error, ^payment_id, %Req.TransportError{reason: :closed}},
+      assert_receive {:poslink_payment_error, ^payment_id,
+                      %Teya.Error{reason: %Req.TransportError{reason: :closed}}},
                      2_000
 
       assert_received :request_made
@@ -295,7 +296,7 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       {:ok, _task} = Payment.subscribe(payment_id, self())
 
       assert_receive {:poslink_payment_error, ^payment_id,
-                      %ReqServerSentEvents.FrameTooLargeError{}},
+                      %Teya.Error{reason: %ReqServerSentEvents.FrameTooLargeError{}}},
                      2_000
     end
 
@@ -342,7 +343,8 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
 
       {:ok, _task} = Payment.subscribe(payment_id, self())
 
-      assert_receive {:poslink_payment_error, ^payment_id, %Req.TransportError{reason: :timeout}},
+      assert_receive {:poslink_payment_error, ^payment_id,
+                      %Teya.Error{reason: %Req.TransportError{reason: :timeout}}},
                      500
     end
 
@@ -490,20 +492,20 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
 
       stub_payment_sse(body)
 
-      assert {:error, :no_snapshot} = Payment.get(payment_id)
+      assert {:error, %Teya.Error{status: nil, reason: :no_snapshot}} = Payment.get(payment_id)
     end
 
     test "returns :no_snapshot when the stream closes without an event" do
       stub_payment_sse("")
 
-      assert {:error, :no_snapshot} = Payment.get("pr-uuid-22")
+      assert {:error, %Teya.Error{status: nil, reason: :no_snapshot}} = Payment.get("pr-uuid-22")
     end
 
     test "does not take an event with no name as a snapshot" do
       payment_id = "pr-uuid-30"
       stub_payment_sse("data: #{Jason.encode!(%{"status" => "NEW"})}\n\n")
 
-      assert {:error, :no_snapshot} = Payment.get(payment_id)
+      assert {:error, %Teya.Error{status: nil, reason: :no_snapshot}} = Payment.get(payment_id)
     end
 
     test "returns Teya.Error when the payment is not found" do
@@ -519,7 +521,8 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
     test "returns a transport failure as it is" do
       stub_sse(fn conn -> Req.Test.transport_error(conn, :econnrefused) end)
 
-      assert {:error, %Req.TransportError{reason: :econnrefused}} = Payment.get("pr-uuid-34")
+      assert {:error, %Teya.Error{reason: %Req.TransportError{reason: :econnrefused}}} =
+               Payment.get("pr-uuid-34")
     end
 
     test "returns a token failure as a Teya.Error" do
@@ -538,7 +541,9 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
 
       {elapsed_us, result} = :timer.tc(fn -> Payment.get("pr-uuid-28", timeout: 10_000) end)
 
-      assert {:error, {:exit, {%RuntimeError{message: "boom"}, _stacktrace}}} = result
+      assert {:error, %Teya.Error{reason: {:exit, {%RuntimeError{message: "boom"}, _stacktrace}}}} =
+               result
+
       assert elapsed_us < 5_000_000
     end
 
@@ -571,7 +576,8 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
         Plug.Conn.send_resp(conn, 200, "")
       end)
 
-      assert {:error, :timeout} = Payment.get("pr-uuid-29", timeout: 50)
+      assert {:error, %Teya.Error{status: nil, reason: :timeout}} =
+               Payment.get("pr-uuid-29", timeout: 50)
     end
   end
 end

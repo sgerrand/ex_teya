@@ -215,4 +215,23 @@ defmodule Teya.ErrorTest do
                Teya.Error.from_oauth_response(response)
     end
   end
+
+  describe "from_reason/2" do
+    test "keeps an exception as the reason, with its message" do
+      error = %Req.TransportError{reason: :timeout}
+
+      assert %Teya.Error{status: nil, code: nil, message: "timeout", reason: ^error} =
+               Teya.Error.from_reason(error, "the request failed")
+    end
+
+    test "gives anything else the message it is passed" do
+      assert %Teya.Error{message: "the request failed", reason: :closed} =
+               Teya.Error.from_reason(:closed, "the request failed")
+    end
+
+    test "returns a Teya.Error as it is" do
+      error = %Teya.Error{code: "BAD_REQUEST", status: 400}
+      assert Teya.Error.from_reason(error, "the request failed") == error
+    end
+  end
 end

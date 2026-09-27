@@ -108,7 +108,7 @@ defmodule Teya.DCCTest do
         Req.Test.transport_error(conn, :timeout)
       end)
 
-      assert {:error, %Req.TransportError{reason: :timeout}} =
+      assert {:error, %Teya.Error{reason: %Req.TransportError{reason: :timeout}}} =
                Teya.DCC.quote(%{
                  "store_id" => "s",
                  "card_first9" => "411111111",

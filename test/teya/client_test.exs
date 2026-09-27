@@ -131,7 +131,7 @@ defmodule Teya.ClientTest do
         Req.Test.transport_error(conn, :timeout)
       end)
 
-      assert {:error, %Req.TransportError{reason: :timeout}} =
+      assert {:error, %Teya.Error{status: nil, reason: %Req.TransportError{reason: :timeout}}} =
                Teya.Client.request(:get, "/v1/test")
     end
   end

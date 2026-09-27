@@ -155,7 +155,7 @@ fail, until 5 seconds before it expires, and only then fetches synchronously.
 The gap keeps a request from reaching Teya with a token that has just run out.
 
 If that synchronous fetch fails (for example on first use, when no token is
-cached), the call returns `{:error, reason}` and nothing is cached. For the
+cached), the call returns `{:error, %Teya.Error{}}` and nothing is cached. For the
 next second, callers are given that same failure rather than each sending
 another request. A caller waits at most `:token_timeout_ms` (15s) for a token,
 then gets `{:error, %Teya.Error{}}`.

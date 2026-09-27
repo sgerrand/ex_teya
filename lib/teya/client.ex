@@ -9,7 +9,7 @@ defmodule Teya.Client do
   Makes an authenticated HTTP request to the Teya API.
 
   Fetches a bearer token from `Teya.Auth`, builds the request, and returns
-  `{:ok, body}` for 2xx responses or `{:error, reason}` otherwise.
+  `{:ok, body}` for 2xx responses or `{:error, %Teya.Error{}}` otherwise.
 
   ## Options
 
@@ -135,7 +135,7 @@ defmodule Teya.Client do
     case Req.request(req) do
       {:ok, %{status: status} = resp} when status in 200..299 -> {:ok, resp.body}
       {:ok, resp} -> {:error, Error.from_response(resp)}
-      {:error, reason} -> {:error, reason}
+      {:error, reason} -> {:error, Error.from_reason(reason, "the request failed")}
     end
   end
 

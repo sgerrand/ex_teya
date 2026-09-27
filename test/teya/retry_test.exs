@@ -188,7 +188,9 @@ defmodule Teya.RetryTest do
 
       stub_failing_once(&Req.Test.transport_error(&1, :nxdomain))
 
-      assert {:error, %Req.TransportError{reason: :nxdomain}} = Checkout.create_session(%{})
+      assert {:error, %Teya.Error{reason: %Req.TransportError{reason: :nxdomain}}} =
+               Checkout.create_session(%{})
+
       assert length(attempts()) == 1
     end
 
@@ -202,7 +204,9 @@ defmodule Teya.RetryTest do
 
       fail_first_attempt_with(%Req.HTTPError{protocol: :http1, reason: :invalid_header})
 
-      assert {:error, %Req.HTTPError{reason: :invalid_header}} = Checkout.create_session(%{})
+      assert {:error, %Teya.Error{reason: %Req.HTTPError{reason: :invalid_header}}} =
+               Checkout.create_session(%{})
+
       assert length(attempts()) == 1
     end
 

@@ -82,7 +82,8 @@ defmodule Teya.POSLink.ReceiptSubscribeTest do
 
       {:ok, _task} = Receipt.subscribe_status(receipt_id, self())
 
-      assert_receive {:poslink_receipt_error, ^receipt_id, %Req.TransportError{reason: :closed}},
+      assert_receive {:poslink_receipt_error, ^receipt_id,
+                      %Teya.Error{reason: %Req.TransportError{reason: :closed}}},
                      500
     end
 
@@ -96,7 +97,7 @@ defmodule Teya.POSLink.ReceiptSubscribeTest do
       {:ok, _task} = Receipt.subscribe_status(receipt_id, self())
 
       assert_receive {:poslink_receipt_error, ^receipt_id,
-                      %Req.TransportError{reason: :econnrefused}},
+                      %Teya.Error{reason: %Req.TransportError{reason: :econnrefused}}},
                      500
     end
   end

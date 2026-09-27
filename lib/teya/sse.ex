@@ -51,7 +51,7 @@ defmodule Teya.SSE do
         send(pid, {error_tag, id, resp |> decode_body() |> Error.from_response()})
 
       {:error, reason} ->
-        send(pid, {error_tag, id, reason})
+        send(pid, {error_tag, id, Error.from_reason(reason, "the stream failed")})
     end
   end
 
@@ -65,7 +65,7 @@ defmodule Teya.SSE do
   # which could otherwise last as long as the payment if no such event came.
   #
   # Returns `{:ok, data}`, `:none` when the stream closed without such an
-  # event, or `{:error, reason}`.
+  # event, or `{:error, %Teya.Error{}}`.
   def first(url, token, event_type, owner) do
     handler = fn {:sse_event, %Frame{} = frame}, acc ->
       take_first(frame, event_type, owner, acc)
@@ -82,7 +82,7 @@ defmodule Teya.SSE do
         {:error, resp |> decode_body() |> Error.from_response()}
 
       {:error, reason} ->
-        {:error, reason}
+        {:error, Error.from_reason(reason, "the stream failed")}
     end
   end
 

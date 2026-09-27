@@ -342,7 +342,7 @@ defmodule Teya.Auth do
         {:error, Error.from_oauth_response(resp)}
 
       {:error, reason} ->
-        {:error, reason}
+        {:error, Error.from_reason(reason, "the token request failed")}
     end
   end
 

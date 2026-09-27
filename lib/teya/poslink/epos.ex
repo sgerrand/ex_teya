@@ -26,7 +26,7 @@ defmodule Teya.POSLink.Epos do
   `epos_external_id` returns the same credentials.
 
   Returns `{:ok, response}` with `client_id`, `client_secret` and `scopes`,
-  or `{:error, reason}`. The client secret is a credential: store it as you
+  or `{:error, %Teya.Error{}}`. The client secret is a credential: store it as you
   would a password, and keep it out of logs.
 
   Raises `ArgumentError` if `:user_token` is missing: that is a mistake in

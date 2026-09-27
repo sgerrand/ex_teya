@@ -83,8 +83,9 @@ defmodule Teya.POSLink.Receipt do
     - `event_type` is `"full"` (complete snapshot) or `"diff"` (partial update)
     - `data` is the decoded JSON map (e.g. `%{"status" => "PRINTED", ...}`)
   - `{:poslink_receipt_error, id, reason}` — the stream ended with an error;
-    `reason` is a `%Teya.Error{}` when the API or the token endpoint refused
-    the request, or a transport exception such as
+    `reason` is a `%Teya.Error{}`. It has a `status` when the API or the
+    token endpoint refused the request. For a network error its `status` is
+    `nil` and its `reason` holds the exception, such as
     `%Req.TransportError{reason: :timeout}` when no event arrives within
     `:sse_stream_timeout_ms`
 

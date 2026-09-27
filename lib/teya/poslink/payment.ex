@@ -135,14 +135,16 @@ defmodule Teya.POSLink.Payment do
 
   ## Errors
 
-  - `{:error, %Teya.Error{}}` — the API refused the request, or the token
-    endpoint did; a token failure carries an OAuth code such as
-    `"invalid_client"`
-  - `{:error, :timeout}` — no snapshot arrived before `:timeout` passed
-  - `{:error, :no_snapshot}` — the stream closed without sending a full
-    snapshot, for example after only partial updates; subscribe to it instead
-  - `{:error, {:exit, reason}}` — the task reading the stream crashed
-  - `{:error, reason}` — any other failure, such as a `Req.TransportError`
+  Every error is a `%Teya.Error{}`. When the API or the token endpoint
+  refused the request, it has a `status` and `code`; a token failure carries
+  an OAuth code such as `"invalid_client"`. Otherwise `status` is `nil` and
+  `reason` says what happened:
+
+  - `:timeout` — no snapshot arrived before `:timeout` passed
+  - `:no_snapshot` — the stream closed without sending a full snapshot, for
+    example after only partial updates; subscribe to it instead
+  - `{:exit, reason}` — the task reading the stream crashed
+  - an exception, such as `%Req.TransportError{}` — a network error
 
   Raises `ArgumentError`, before opening any stream, for an id that cannot be
   part of a path: `nil`, empty, `"."`, `".."`, or anything but text or an
@@ -153,7 +155,7 @@ defmodule Teya.POSLink.Payment do
       {:ok, payment} = Teya.POSLink.Payment.get(payment_request_id)
       payment["status"]  # "NEW" | "IN_PROGRESS" | "SUCCESSFUL" | "FAILED" | "CANCELLING" | "CANCELLED"
   """
-  @spec get(String.t(), keyword()) :: {:ok, map()} | {:error, term()}
+  @spec get(String.t(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def get(payment_request_id, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 30_000)
 
@@ -166,9 +168,14 @@ defmodule Teya.POSLink.Payment do
       end)
 
     case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
-      {:ok, result} -> result
-      {:exit, reason} -> {:error, {:exit, reason}}
-      nil -> {:error, :timeout}
+      {:ok, result} ->
+        result
+
+      {:exit, reason} ->
+        {:error, %Error{message: "the task reading the stream crashed", reason: {:exit, reason}}}
+
+      nil ->
+        {:error, %Error{message: "no snapshot arrived in time", reason: :timeout}}
     end
   end
 
@@ -180,8 +187,11 @@ defmodule Teya.POSLink.Payment do
   defp fetch_snapshot(url, caller) do
     with {:ok, token} <- Auth.token() do
       case SSE.first(url, token, "full", caller) do
-        :none -> {:error, :no_snapshot}
-        result -> result
+        :none ->
+          {:error, %Error{message: "the stream closed without a snapshot", reason: :no_snapshot}}
+
+        result ->
+          result
       end
     end
   end
@@ -276,8 +286,9 @@ defmodule Teya.POSLink.Payment do
     - `event_type` is `"full"` (complete snapshot) or `"diff"` (partial update)
     - `data` is the decoded JSON map (e.g. `%{"status" => "SUCCESSFUL", ...}`)
   - `{:poslink_payment_error, id, reason}` — the stream ended with an error;
-    `reason` is a `%Teya.Error{}` when the API or the token endpoint refused
-    the request, or a transport exception such as
+    `reason` is a `%Teya.Error{}`. It has a `status` when the API or the
+    token endpoint refused the request. For a network error its `status` is
+    `nil` and its `reason` holds the exception, such as
     `%Req.TransportError{reason: :timeout}` when no event arrives within
     `:sse_stream_timeout_ms`
 

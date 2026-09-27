@@ -16,6 +16,7 @@ defmodule Teya.Client do
   - `:body` — request body, serialised as JSON
   - `:params` — query parameters map or keyword list
   - `:idempotency_key` — custom idempotency key for POST/PATCH (auto-generated if omitted)
+  - `:credentials` — the named set of credentials to use; see `Teya.Auth.set_for/2`
 
   Nothing else is read from `opts`. Settings for the underlying `Req`
   request, such as timeouts or extra headers, come from `:req_options`.
@@ -92,15 +93,24 @@ defmodule Teya.Client do
             "\".\" or \"..\", got: #{inspect(value)}"
   end
 
-  # A request with the auth process's token, which a retry asks for again.
+  # A request with an auth process's token, which a retry asks for again.
+  # The set of credentials is picked before anything else, so an unknown
+  # name raises in the caller.
   defp authed_request(method, path, opts, settings) do
-    with {:ok, token} <- Auth.token(),
-         do: send_request(method, path, opts, token, [refresh_token: true] ++ settings)
+    set = Auth.set_for(opts, api(path))
+
+    with {:ok, token} <- Auth.token(set),
+         do: send_request(method, path, opts, token, [credentials: set] ++ settings)
   end
 
+  # POSLink has credentials of its own, from ePOS registration. Everything
+  # else uses the Developer Portal client.
+  defp api("/poslink/" <> _rest), do: :poslink
+  defp api(_path), do: :online
+
   # settings, for this library's callers only:
-  # - :refresh_token — the token came from the auth process, so a retry asks
-  #   it again
+  # - :credentials — the token came from the auth process for this set
+  #   (nil for the top-level credentials), so a retry asks it again
   # - :retry — Req's :retry option, unless :req_options sets one
   # - :idempotency_key — false sends no Idempotency-Key, even on a POST
   defp send_request(method, path, opts, token, settings \\ []) do
@@ -132,7 +142,7 @@ defmodule Teya.Client do
       # means nothing on other methods. POST and PATCH get their own.
       |> Req.Request.delete_header("idempotency-key")
       |> Req.merge(headers: idempotency_headers(method, opts, settings))
-      |> refresh_token_on_retry(settings[:refresh_token])
+      |> refresh_token_on_retry(settings)
 
     case Req.request(req) do
       {:ok, resp} -> resp |> HTTP.decode_json() |> result()
@@ -151,14 +161,21 @@ defmodule Teya.Client do
   # current one. Req runs every request step again on a retry; the first run
   # only marks the request as sent. If the auth process has no token to
   # give, the retry goes with the old one and its answer says so.
-  defp refresh_token_on_retry(req, true),
-    do: Req.Request.append_request_steps(req, teya_refresh_token: &refresh_token/1)
+  defp refresh_token_on_retry(req, settings) do
+    case Keyword.fetch(settings, :credentials) do
+      {:ok, set} ->
+        req
+        |> Req.Request.put_private(:teya_credentials, set)
+        |> Req.Request.append_request_steps(teya_refresh_token: &refresh_token/1)
 
-  defp refresh_token_on_retry(req, _no), do: req
+      :error ->
+        req
+    end
+  end
 
   defp refresh_token(req) do
     with true <- Req.Request.get_private(req, :teya_sent, false),
-         {:ok, token} <- Auth.token() do
+         {:ok, token} <- Auth.token(Req.Request.get_private(req, :teya_credentials)) do
       Req.Request.put_header(req, "authorization", "Bearer " <> token)
     else
       false -> Req.Request.put_private(req, :teya_sent, true)

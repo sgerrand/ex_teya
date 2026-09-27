@@ -4,14 +4,27 @@ defmodule Teya.Application do
 
   @impl true
   def start(_type, _args) do
-    auth_children =
+    children =
+      [
+        {Task.Supervisor, name: Teya.TaskSupervisor},
+        {Registry, keys: :unique, name: Teya.AuthRegistry}
+      ] ++ auth_children()
+
+    Supervisor.start_link(children, strategy: :one_for_one, name: Teya.Supervisor)
+  end
+
+  @doc false
+  # An auth process for the top-level credentials, when :client_id is set,
+  # and one for each named set under :credentials.
+  def auth_children do
+    top_level =
       case Application.fetch_env(:teya, :client_id) do
         {:ok, _} -> [{Teya.Auth, Teya.Config.from_env()}]
         :error -> []
       end
 
-    children = [{Task.Supervisor, name: Teya.TaskSupervisor}] ++ auth_children
+    named = for {name, _set} <- Teya.Config.sets(), do: {Teya.Auth, Teya.Config.from_env(name)}
 
-    Supervisor.start_link(children, strategy: :one_for_one, name: Teya.Supervisor)
+    top_level ++ named
   end
 end

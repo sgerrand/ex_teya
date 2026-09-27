@@ -34,8 +34,40 @@ defmodule Teya.Auth do
     retry_count: 0
   ]
 
-  def start_link(%Config{} = config) do
-    GenServer.start_link(__MODULE__, config, name: __MODULE__)
+  # One process per set of credentials: the top-level ones under this
+  # module's name, each named set under its name in Teya.AuthRegistry.
+  def child_spec(%Config{name: name} = config),
+    do: %{id: {__MODULE__, name}, start: {__MODULE__, :start_link, [config]}}
+
+  def start_link(%Config{name: name} = config) do
+    GenServer.start_link(__MODULE__, config, name: server(name))
+  end
+
+  defp server(nil), do: __MODULE__
+  defp server(name), do: {:via, Registry, {Teya.AuthRegistry, name}}
+
+  @doc """
+  The credentials a request uses: the set named with `:credentials` in
+  `opts`, else the set named after its API (`:online` or `:poslink`) when one
+  is configured, else the top-level ones, as `nil`.
+
+  Raises `ArgumentError` for a `:credentials` name that is not configured:
+  that is a mistake in the calling code.
+  """
+  def set_for(opts, api) do
+    case Keyword.fetch(opts, :credentials) do
+      {:ok, name} -> configured!(name)
+      :error -> if Keyword.has_key?(Config.sets(), api), do: api
+    end
+  end
+
+  defp configured!(name) do
+    if is_atom(name) and name != nil and Keyword.has_key?(Config.sets(), name) do
+      name
+    else
+      raise ArgumentError,
+            "no credentials named #{inspect(name)} are configured under :credentials"
+    end
   end
 
   # How long a caller waits for a token, and how long a fetch may run before
@@ -73,11 +105,12 @@ defmodule Teya.Auth do
 
   @doc """
   Returns `{:ok, access_token}` from the cache, fetching one from the token
-  endpoint if needed. Returns `{:error, %Teya.Error{}}` if that fails, takes
-  longer than `:token_timeout_ms`, or the auth process is not running.
+  endpoint if needed, for the set of credentials `set_for/2` picked (`nil`
+  for the top-level ones). Returns `{:error, %Teya.Error{}}` if that fails,
+  takes longer than `:token_timeout_ms`, or the auth process is not running.
   """
-  def token do
-    case call_for_token() do
+  def token(set \\ nil) do
+    case call_for_token(set) do
       {:ok, _token} = ok -> ok
       # Nothing was sent to Teya, so the caller may send it again.
       {:error, %Error{} = error} -> {:error, %{error | reason: {:no_token, error.reason}}}
@@ -85,14 +118,15 @@ defmodule Teya.Auth do
     end
   end
 
-  defp call_for_token do
+  defp call_for_token(set) do
     timeout = token_timeout()
-    GenServer.call(__MODULE__, {:token, gives_up_at(timeout)}, timeout)
+    GenServer.call(server(set), {:token, gives_up_at(timeout)}, timeout)
   catch
     # A fetch already under way carries on and caches its token for the next
     # caller.
     :exit, {:timeout, _call} -> {:error, timed_out()}
-    # Not running — no :client_id is configured, or it is restarting.
+    # Not running — none of these credentials are configured, or it is
+    # restarting.
     :exit, _reason -> {:error, %Error{message: "the auth process is not available"}}
   end
 

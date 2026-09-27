@@ -37,11 +37,55 @@ config :teya,
 
 OAuth tokens are fetched automatically and refreshed before expiry. Only request the scopes your application needs.
 
-These credentials come from the Teya Developer Portal, for Online Payments and
-Payments Gateway. POSLink calls need a different client, the one
-[ePOS registration](#register-an-epos-application) returns, with the scopes it
-returns. The library runs one set of credentials at a time, so configure one
-or the other; see [POSLink scopes](#poslink-scopes).
+### Several sets of credentials
+
+Online Payments and Payments Gateway use the client from the Teya Developer
+Portal. POSLink uses a different one: the client that
+[ePOS registration](#register-an-epos-application) returns, once per store,
+with the scopes it returns. To use both, or several stores, name each set
+under `:credentials`:
+
+```elixir
+# config/runtime.exs
+config :teya,
+  credentials: [
+    online: [
+      client_id: System.fetch_env!("TEYA_CLIENT_ID"),
+      client_secret: System.fetch_env!("TEYA_CLIENT_SECRET"),
+      scopes: ["checkout/sessions/create", "checkout/sessions/id/get"]
+    ],
+    poslink: [
+      client_id: System.fetch_env!("TEYA_EPOS_CLIENT_ID"),
+      client_secret: System.fetch_env!("TEYA_EPOS_CLIENT_SECRET"),
+      scopes: String.split(System.fetch_env!("TEYA_EPOS_SCOPES"), ~r/[\s,]+/, trim: true)
+    ],
+    store_b: [
+      client_id: System.fetch_env!("TEYA_STORE_B_CLIENT_ID"),
+      client_secret: System.fetch_env!("TEYA_STORE_B_CLIENT_SECRET"),
+      scopes: String.split(System.fetch_env!("TEYA_STORE_B_SCOPES"), ~r/[\s,]+/, trim: true)
+    ]
+  ]
+```
+
+Each set gets its own token, and asks only for its own scopes. A call uses:
+
+1. the set named with the `:credentials` option, if given;
+1. otherwise `:poslink` for a POSLink call, or `:online` for any other, if
+   that set is configured;
+1. otherwise the top-level `:client_id`, `:client_secret` and `:scopes`.
+
+So the common case needs no change to any call, and another store's client
+is one option away:
+
+```elixir
+Teya.Checkout.create_session(params)                          # :online
+Teya.POSLink.Payment.create(params)                           # :poslink
+Teya.POSLink.Payment.create(params, credentials: :store_b)    # store B
+Teya.POSLink.Payment.subscribe(id, self(), credentials: :store_b)
+```
+
+A `:credentials` name that is not configured raises `ArgumentError`. Sets
+are read when the application starts, so adding one takes a restart.
 
 The library talks to Teya's production API. To use Teya's staging API
 instead, with staging credentials, set:
@@ -120,9 +164,9 @@ scopes your credentials need.
 | `refunds` | `Teya.POSLink.Refund.create/2` (from registration; see below) |
 
 These are the scopes [ePOS registration](#register-an-epos-application)
-returns, for the client it returns. POSLink calls use that client, so set
-`:client_id`, `:client_secret` and `:scopes` to what registration gives you,
-and do not add the Online Payments scopes: asking for scopes the client was
+returns, for the client it returns. Put that client in the `:poslink` set
+(see [Several sets of credentials](#several-sets-of-credentials)), with the
+scopes registration gave it and no others: asking for scopes the client was
 not given can make the token request fail with `invalid_scope`.
 
 The older `default_access` also works for payment requests and stores, but
@@ -335,7 +379,8 @@ behind the offer, and the payment refers to it by `quote_id`. This uses the
 library's credentials, and needs the `fx/dcc/create` scope among its
 `:scopes`. Add that scope only once Teya has granted it to your client:
 asking for a scope the client lacks can fail the token request with
-`invalid_scope`, which stops every call, not only DCC.
+`invalid_scope`, which stops every call that uses those credentials, not
+only DCC.
 
 ```elixir
 require Logger
@@ -376,9 +421,10 @@ status in real time.
 
 Registering once per store turns a signed-in user's token into credentials for
 the library. It is a setup step: store the `client_id`, `client_secret` and
-`scopes` that come back in your configuration, then restart the application,
-which reads them only when it starts. Registering needs no `:client_id` of
-its own.
+`scopes` that come back as a set under `:credentials`, such as `:poslink`
+(see [Several sets of credentials](#several-sets-of-credentials)), then
+restart the application, which reads them only when it starts. Registering
+needs no credentials of its own.
 
 ```elixir
 {:ok, %{"client_id" => id, "client_secret" => secret, "scopes" => scopes}} =

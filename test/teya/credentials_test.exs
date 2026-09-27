@@ -1,0 +1,198 @@
+defmodule Teya.CredentialsTest do
+  # Named sets of credentials: which set each call uses, that each set has an
+  # auth process and token of its own, and that each asks only for its own
+  # scopes.
+  use Teya.APICase, async: false
+
+  import Teya.POSLink.SubscribeCase, only: [stub_sse: 1]
+
+  alias Teya.{Auth, Checkout, Config, TestEnv}
+  alias Teya.POSLink.{Payment, Receipt, Store}
+
+  # Configures the named sets and starts an auth process for each, holding
+  # a token named after the set, as the application would at boot.
+  defp start_sets(names) do
+    TestEnv.put(
+      :credentials,
+      for(
+        name <- names,
+        do: {name, [client_id: "id-#{name}", client_secret: "secret", scopes: ["s"]]}
+      )
+    )
+
+    for name <- names do
+      start_supervised!({Auth, Config.from_env(name)})
+      seed(name, "#{name}-token")
+    end
+  end
+
+  defp seed(name, token) do
+    :sys.replace_state(server(name), fn state ->
+      now = System.monotonic_time(:second)
+      %{state | token: token, expires_at: now + 3600, usable_until: now + 3600}
+    end)
+  end
+
+  defp server(name), do: {:via, Registry, {Teya.AuthRegistry, name}}
+
+  defp stub_expecting_token(token) do
+    stub_api(fn conn ->
+      assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer #{token}"]
+      json_response(conn, 200, %{"ok" => true})
+    end)
+  end
+
+  describe "which credentials a call uses" do
+    test "with no named sets, every call uses the top-level credentials" do
+      stub_expecting_token("test_access_token")
+
+      assert {:ok, _} = Checkout.get_session("cs-1")
+      assert {:ok, _} = Store.list()
+    end
+
+    test "a POSLink call uses the :poslink set; any other the top-level ones" do
+      start_sets([:poslink])
+
+      stub_expecting_token("poslink-token")
+      assert {:ok, _} = Store.list()
+
+      stub_expecting_token("test_access_token")
+      assert {:ok, _} = Checkout.get_session("cs-1")
+    end
+
+    test "any other call uses the :online set when there is one" do
+      start_sets([:online])
+
+      stub_expecting_token("online-token")
+      assert {:ok, _} = Checkout.get_session("cs-1")
+
+      stub_expecting_token("test_access_token")
+      assert {:ok, _} = Store.list()
+    end
+
+    test ":credentials picks another set" do
+      start_sets([:poslink, :store_b])
+
+      stub_expecting_token("store_b-token")
+      assert {:ok, _} = Store.list(credentials: :store_b)
+    end
+
+    test "a name that is not configured raises before any request" do
+      start_sets([:poslink])
+      stub_api(fn _conn -> flunk("no request should be sent") end)
+
+      calls = [
+        fn -> Store.list(credentials: :nope) end,
+        fn -> Checkout.get_session("cs-1", credentials: nil) end,
+        fn -> Payment.get("pr-1", credentials: :nope) end,
+        fn -> Payment.subscribe("pr-1", self(), credentials: :nope) end,
+        fn -> Receipt.subscribe_status("r-1", self(), credentials: :nope) end
+      ]
+
+      for call <- calls do
+        assert_raise ArgumentError, ~r/no credentials named/, call
+      end
+    end
+  end
+
+  describe "POSLink streams" do
+    defp stub_stream_expecting_token(token) do
+      stub_sse(fn conn ->
+        assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer #{token}"]
+
+        conn
+        |> Plug.Conn.put_resp_content_type("text/event-stream")
+        |> Plug.Conn.send_resp(200, "event: full\ndata: {\"status\":\"NEW\"}\n\n")
+      end)
+    end
+
+    test "use the :poslink set, or the one named" do
+      start_sets([:poslink, :store_b])
+
+      stub_stream_expecting_token("poslink-token")
+      assert {:ok, %{"status" => "NEW"}} = Payment.get("pr-1")
+
+      stub_stream_expecting_token("store_b-token")
+      assert {:ok, %{"status" => "NEW"}} = Payment.get("pr-1", credentials: :store_b)
+
+      {:ok, _task} = Payment.subscribe("pr-2", self(), credentials: :store_b)
+      assert_receive {:poslink_payment, "pr-2", "full", _data}, 500
+
+      {:ok, _task} = Receipt.subscribe_status("r-1", self(), credentials: :store_b)
+      assert_receive {:poslink_receipt, "r-1", "full", _data}, 500
+    end
+  end
+
+  describe "each set" do
+    test "asks the token endpoint only for its own scopes" do
+      TestEnv.put(:credentials,
+        poslink: [
+          client_id: "epos-client",
+          client_secret: "epos-secret",
+          scopes: ["payment_requests", "stores/id/terminals"]
+        ]
+      )
+
+      pid = start_supervised!({Auth, Config.from_env(:poslink)})
+      test = self()
+
+      Req.Test.stub(Teya.Auth, fn conn ->
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        send(test, {:token_request, URI.decode_query(body)})
+        Req.Test.json(conn, %{"access_token" => "fresh-poslink-token", "expires_in" => 3600})
+      end)
+
+      Req.Test.allow(Teya.Auth, self(), pid)
+
+      stub_expecting_token("fresh-poslink-token")
+      assert {:ok, _} = Store.list()
+
+      assert_receive {:token_request, form}
+      assert form["client_id"] == "epos-client"
+      assert form["scope"] == "payment_requests stores/id/terminals"
+    end
+
+    test "is asked again for its token on a retry" do
+      start_sets([:poslink])
+      TestEnv.put(:retry_idempotent_posts, true)
+
+      req_options = Application.get_env(:teya, :req_options) |> Keyword.delete(:retry)
+
+      TestEnv.put(
+        :req_options,
+        req_options ++ [retry_delay: fn _ -> 0 end, retry_log_level: false]
+      )
+
+      test = self()
+      attempts = :counters.new(1, [])
+
+      stub_api(fn conn ->
+        :counters.add(attempts, 1, 1)
+        send(test, {:attempt, Plug.Conn.get_req_header(conn, "authorization")})
+
+        if :counters.get(attempts, 1) == 1 do
+          seed(:poslink, "rotated-token")
+          Plug.Conn.send_resp(conn, 503, "")
+        else
+          json_response(conn, 200, %{"ok" => true})
+        end
+      end)
+
+      assert {:ok, _} = Payment.create(%{})
+      assert_received {:attempt, ["Bearer poslink-token"]}
+      assert_received {:attempt, ["Bearer rotated-token"]}
+    end
+  end
+
+  describe "the application" do
+    test "starts an auth process for the top-level credentials and each named set" do
+      TestEnv.put(:credentials,
+        online: [client_id: "a", client_secret: "b", scopes: ["s"]],
+        poslink: [client_id: "c", client_secret: "d", scopes: ["s"]]
+      )
+
+      ids = for child <- Teya.Application.auth_children(), do: Supervisor.child_spec(child, []).id
+      assert ids == [{Auth, nil}, {Auth, :online}, {Auth, :poslink}]
+    end
+  end
+end

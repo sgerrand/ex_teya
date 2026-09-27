@@ -13,20 +13,13 @@ defmodule Teya do
 
   ## Configuration
 
-  The library runs one set of credentials, so configure one of these two,
-  not both:
-
-  - **Online Payments and Payments Gateway**: the client from the Teya
-    Developer Portal.
-  - **POSLink**: the client that ePOS registration returns.
-
-  For Online Payments and Payments Gateway:
+  For one set of credentials, such as the client from the Teya Developer
+  Portal for Online Payments and Payments Gateway:
 
       config :teya,
         client_id: "your_client_id",
         client_secret: "your_client_secret",
         scopes: [
-          # Online Payments
           "checkout/sessions/create",
           "checkout/sessions/id/get",
           "payment-links/create",
@@ -40,21 +33,33 @@ defmodule Teya do
           "token/delete"
         ]
 
-  For POSLink, instead: store the client id, secret and scopes that
-  registration returns where your application keeps its secrets, such as
-  environment variables, and read them when it starts:
+  POSLink uses a different client, the one ePOS registration returns, once
+  per store, with the scopes it returns. To use both, or several stores, name
+  each set under `:credentials`, reading the secrets when the application
+  starts:
 
       # config/runtime.exs
       config :teya,
-        client_id: System.fetch_env!("TEYA_EPOS_CLIENT_ID"),
-        client_secret: System.fetch_env!("TEYA_EPOS_CLIENT_SECRET"),
-        # the "scopes" list from registration, separated by spaces or commas,
-        # such as "payment_requests payment_requests/id stores/id/terminals refunds"
-        scopes: String.split(System.fetch_env!("TEYA_EPOS_SCOPES"), ~r/[\\s,]+/, trim: true)
+        credentials: [
+          online: [
+            client_id: System.fetch_env!("TEYA_CLIENT_ID"),
+            client_secret: System.fetch_env!("TEYA_CLIENT_SECRET"),
+            scopes: ["checkout/sessions/create", "checkout/sessions/id/get"]
+          ],
+          poslink: [
+            client_id: System.fetch_env!("TEYA_EPOS_CLIENT_ID"),
+            client_secret: System.fetch_env!("TEYA_EPOS_CLIENT_SECRET"),
+            # the "scopes" list from registration, separated by spaces or
+            # commas, such as "payment_requests payment_requests/id"
+            scopes: String.split(System.fetch_env!("TEYA_EPOS_SCOPES"), ~r/[\\s,]+/, trim: true)
+          ]
+        ]
 
-  Ask a POSLink client only for the scopes registration gave it. Asking for
-  others, such as the Online Payments ones above, can make the token request
-  fail with `invalid_scope`.
+  Each set gets its own token and asks only for its own scopes. A call uses
+  the set named with its `:credentials` option, else `:poslink` for a POSLink
+  call or `:online` for any other when that set is configured, else the
+  top-level credentials. Ask each client only for the scopes it was given:
+  others can make its token request fail with `invalid_scope`.
 
   OAuth tokens are fetched automatically and refreshed before expiry.
   Only request the scopes your application needs. The

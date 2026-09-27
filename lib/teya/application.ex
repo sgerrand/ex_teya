@@ -4,11 +4,14 @@ defmodule Teya.Application do
 
   @impl true
   def start(_type, _args) do
+    auth_children = auth_children()
+    Teya.Auth.put_started_sets(for {name, _set} <- Teya.Config.sets(), do: name)
+
     children =
       [
         {Task.Supervisor, name: Teya.TaskSupervisor},
         {Registry, keys: :unique, name: Teya.AuthRegistry}
-      ] ++ auth_children()
+      ] ++ auth_children
 
     Supervisor.start_link(children, strategy: :one_for_one, name: Teya.Supervisor)
   end

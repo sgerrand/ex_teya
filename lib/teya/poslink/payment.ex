@@ -152,7 +152,8 @@ defmodule Teya.POSLink.Payment do
 
   Raises `ArgumentError`, before opening any stream, for an id that cannot be
   part of a path: `nil`, empty, `"."`, `".."`, or anything but text or an
-  integer. That is a mistake in the calling code, not something the API said.
+  integer, or for `:credentials` that are not configured. That is a mistake
+  in the calling code, not something the API said.
 
   ## Examples
 
@@ -331,8 +332,18 @@ defmodule Teya.POSLink.Payment do
           handle_error(reason)
       end
   """
-  @spec subscribe(String.t(), pid(), keyword()) :: {:ok, Task.t()}
-  def subscribe(payment_request_id, pid \\ self(), opts \\ []) do
+  @spec subscribe(String.t(), pid() | keyword(), keyword()) :: {:ok, Task.t()}
+  def subscribe(payment_request_id, pid_or_opts \\ self())
+
+  # Options with no pid, such as subscribe(id, credentials: :store_b), are
+  # for the calling process.
+  def subscribe(payment_request_id, opts) when is_list(opts),
+    do: subscribe(payment_request_id, self(), opts)
+
+  def subscribe(payment_request_id, pid) when is_pid(pid),
+    do: subscribe(payment_request_id, pid, [])
+
+  def subscribe(payment_request_id, pid, opts) when is_pid(pid) and is_list(opts) do
     url = stream_url(payment_request_id)
     set = Auth.set_for(opts, :poslink)
 

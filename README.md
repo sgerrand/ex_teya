@@ -84,8 +84,11 @@ Teya.POSLink.Payment.create(params, credentials: :store_b)    # store B
 Teya.POSLink.Payment.subscribe(id, self(), credentials: :store_b)
 ```
 
-A `:credentials` name that is not configured raises `ArgumentError`. Sets
-are read when the application starts, so adding one takes a restart.
+`credentials: :default` picks the top-level credentials, so `:default` (and
+`nil`) cannot name a set. A `:credentials` name that is not configured raises
+`ArgumentError`, and a `:credentials` setting of the wrong shape stops the
+application at boot. Sets are read when the application starts, so adding
+one takes a restart.
 
 The library talks to Teya's production API. To use Teya's staging API
 instead, with staging credentials, set:
@@ -376,8 +379,8 @@ response["status"]  # "SUCCESS" | "FAILURE" | "PENDING" | "ACKNOWLEDGED"
 Before a card-present transaction, check whether the cardholder's card is
 eligible for DCC and get an offer at the current rate. Teya keeps the quote
 behind the offer, and the payment refers to it by `quote_id`. This uses the
-library's credentials, and needs the `fx/dcc/create` scope among its
-`:scopes`. Add that scope only once Teya has granted it to your client:
+`:online` set of credentials if there is one, else the top-level ones, and
+needs the `fx/dcc/create` scope among that set's `:scopes`. Add that scope only once Teya has granted it to your client:
 asking for a scope the client lacks can fail the token request with
 `invalid_scope`, which stops every call that uses those credentials, not
 only DCC.

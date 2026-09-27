@@ -48,27 +48,42 @@ defmodule Teya.Auth do
 
   @doc """
   The credentials a request uses: the set named with `:credentials` in
-  `opts`, else the set named after its API (`:online` or `:poslink`) when one
-  is configured, else the top-level ones, as `nil`.
+  `opts` (`:default` for the top-level ones), else the set named after its
+  API (`:online` or `:poslink`) when one was started, else the top-level
+  ones, as `nil`.
 
-  Raises `ArgumentError` for a `:credentials` name that is not configured:
+  It goes by the sets the application started with, not the configuration
+  as it is now, so a set added or removed while the application runs is not
+  used or lost until a restart, when its auth process starts or stops too.
+
+  Raises `ArgumentError` for a `:credentials` name that was not started:
   that is a mistake in the calling code.
   """
   def set_for(opts, api) do
     case Keyword.fetch(opts, :credentials) do
-      {:ok, name} -> configured!(name)
-      :error -> if Keyword.has_key?(Config.sets(), api), do: api
+      {:ok, :default} -> nil
+      {:ok, name} -> started!(name)
+      :error -> if api in started_sets(), do: api
     end
   end
 
-  defp configured!(name) do
-    if is_atom(name) and name != nil and Keyword.has_key?(Config.sets(), name) do
+  defp started!(name) do
+    if name in started_sets() do
       name
     else
       raise ArgumentError,
             "no credentials named #{inspect(name)} are configured under :credentials"
     end
   end
+
+  @sets_key {__MODULE__, :started_sets}
+
+  @doc false
+  # The names of the sets the application started an auth process for,
+  # kept when it starts.
+  def put_started_sets(names), do: :persistent_term.put(@sets_key, names)
+
+  defp started_sets, do: :persistent_term.get(@sets_key, [])
 
   # How long a caller waits for a token, and how long a fetch may run before
   # it is stopped. It is longer than the token request's own 10-second reply
@@ -185,7 +200,7 @@ defmodule Teya.Auth do
 
   @impl true
   def handle_info({:refresh, tag}, %{refresh_tag: tag} = state) do
-    Logger.debug("Teya.Auth: proactive token refresh started")
+    Logger.debug("#{label(state)}: proactive token refresh started")
     {:noreply, start_fetch(%{state | refresh_tag: nil}, :refresh)}
   end
 
@@ -218,7 +233,7 @@ defmodule Teya.Auth do
   def handle_info({:fetch_timeout, _ref}, state), do: {:noreply, state}
 
   def handle_info(message, state) do
-    Logger.warning("Teya.Auth: unexpected message #{inspect(message)}")
+    Logger.warning("#{label(state)}: unexpected message #{inspect(message)}")
     {:noreply, state}
   end
 
@@ -262,8 +277,8 @@ defmodule Teya.Auth do
     lifetime = expires_at - System.monotonic_time(:second)
 
     if fetch.kind == :refresh,
-      do: Logger.info("Teya.Auth: token refreshed, expires in #{lifetime}s"),
-      else: Logger.debug("Teya.Auth: token fetched, expires in #{lifetime}s")
+      do: Logger.info("#{label(state)}: token refreshed, expires in #{lifetime}s"),
+      else: Logger.debug("#{label(state)}: token fetched, expires in #{lifetime}s")
 
     Process.cancel_timer(fetch.timer)
     reply_all(state.waiters, {:ok, token})
@@ -286,6 +301,10 @@ defmodule Teya.Auth do
     if retry?, do: schedule_retry(state, reason), else: state
   end
 
+  # Which set of credentials a log line is about.
+  defp label(%{config: %Config{name: nil}}), do: "Teya.Auth"
+  defp label(%{config: %Config{name: name}}), do: "Teya.Auth #{inspect(name)}"
+
   defp reply_all(waiters, reply),
     do: Enum.each(waiters, fn {from, _gives_up_at} -> GenServer.reply(from, reply) end)
 
@@ -297,7 +316,7 @@ defmodule Teya.Auth do
     delay_ms = retry_delay_ms(state.retry_count)
 
     Logger.warning(
-      "Teya.Auth: token refresh failed (#{inspect(reason)}), retrying in #{delay_ms}ms"
+      "#{label(state)}: token refresh failed (#{inspect(reason)}), retrying in #{delay_ms}ms"
     )
 
     %{schedule(state, delay_ms) | retry_count: state.retry_count + 1}

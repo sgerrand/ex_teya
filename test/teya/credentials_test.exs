@@ -20,10 +20,20 @@ defmodule Teya.CredentialsTest do
       )
     )
 
+    started(names)
+
     for name <- names do
       start_supervised!({Auth, Config.from_env(name)})
       seed(name, "#{name}-token")
     end
+  end
+
+  # Records the sets as started, as the application does at boot, and puts
+  # back what was there when the test ends.
+  defp started(names) do
+    before = :persistent_term.get({Auth, :started_sets}, [])
+    Auth.put_started_sets(names)
+    on_exit(fn -> Auth.put_started_sets(before) end)
   end
 
   defp seed(name, token) do
@@ -65,6 +75,21 @@ defmodule Teya.CredentialsTest do
 
       stub_expecting_token("online-token")
       assert {:ok, _} = Checkout.get_session("cs-1")
+
+      stub_expecting_token("test_access_token")
+      assert {:ok, _} = Store.list()
+    end
+
+    test ":credentials picks the top-level credentials as :default" do
+      start_sets([:online, :poslink])
+
+      stub_expecting_token("test_access_token")
+      assert {:ok, _} = Checkout.get_session("cs-1", credentials: :default)
+      assert {:ok, _} = Store.list(credentials: :default)
+    end
+
+    test "a set configured but not started is not used" do
+      TestEnv.put(:credentials, poslink: [client_id: "a", client_secret: "b", scopes: ["s"]])
 
       stub_expecting_token("test_access_token")
       assert {:ok, _} = Store.list()
@@ -121,6 +146,17 @@ defmodule Teya.CredentialsTest do
       {:ok, _task} = Receipt.subscribe_status("r-1", self(), credentials: :store_b)
       assert_receive {:poslink_receipt, "r-1", "full", _data}, 500
     end
+
+    test "take options in place of a pid, for the calling process" do
+      start_sets([:poslink, :store_b])
+      stub_stream_expecting_token("store_b-token")
+
+      {:ok, _task} = Payment.subscribe("pr-3", credentials: :store_b)
+      assert_receive {:poslink_payment, "pr-3", "full", _data}, 500
+
+      {:ok, _task} = Receipt.subscribe_status("r-2", credentials: :store_b)
+      assert_receive {:poslink_receipt, "r-2", "full", _data}, 500
+    end
   end
 
   describe "each set" do
@@ -133,6 +169,7 @@ defmodule Teya.CredentialsTest do
         ]
       )
 
+      started([:poslink])
       pid = start_supervised!({Auth, Config.from_env(:poslink)})
       test = self()
 
@@ -145,7 +182,12 @@ defmodule Teya.CredentialsTest do
       Req.Test.allow(Teya.Auth, self(), pid)
 
       stub_expecting_token("fresh-poslink-token")
-      assert {:ok, _} = Store.list()
+
+      log =
+        ExUnit.CaptureLog.capture_log([level: :debug], fn -> assert {:ok, _} = Store.list() end)
+
+      # Its log lines say which set they are about.
+      assert log =~ "Teya.Auth :poslink: token fetched"
 
       assert_receive {:token_request, form}
       assert form["client_id"] == "epos-client"
@@ -181,6 +223,28 @@ defmodule Teya.CredentialsTest do
       assert {:ok, _} = Payment.create(%{})
       assert_received {:attempt, ["Bearer poslink-token"]}
       assert_received {:attempt, ["Bearer rotated-token"]}
+    end
+  end
+
+  describe "the :credentials config" do
+    test "stops a mistake at boot with a message that names it, not its secret" do
+      set = [client_id: "a", client_secret: "SECRET", scopes: ["s"]]
+
+      cases = [
+        {%{online: set}, ~r/keyword list of named sets/},
+        {[{"store_1", set}], ~r/named with atoms/},
+        {[default: set], ~r/:default names the top-level credentials/},
+        {[{nil, set}], ~r/nil names the top-level credentials/},
+        {[online: set, online: set], ~r/appears twice/},
+        {[online: %{client_id: "a"}], ~r/named with atoms/},
+        {[online: [{"client_id", "a"}]], ~r/:online credentials must be a keyword list/}
+      ]
+
+      for {credentials, message} <- cases do
+        TestEnv.put(:credentials, credentials)
+        error = assert_raise ArgumentError, message, &Config.sets/0
+        refute Exception.message(error) =~ "SECRET"
+      end
     end
   end
 

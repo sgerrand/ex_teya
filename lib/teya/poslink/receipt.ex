@@ -107,8 +107,18 @@ defmodule Teya.POSLink.Receipt do
           handle_error(reason)
       end
   """
-  @spec subscribe_status(String.t(), pid(), keyword()) :: {:ok, Task.t()}
-  def subscribe_status(receipt_id, pid \\ self(), opts \\ []) do
+  @spec subscribe_status(String.t(), pid() | keyword(), keyword()) :: {:ok, Task.t()}
+  def subscribe_status(receipt_id, pid_or_opts \\ self())
+
+  # Options with no pid, such as subscribe_status(id, credentials: :store_b),
+  # are for the calling process.
+  def subscribe_status(receipt_id, opts) when is_list(opts),
+    do: subscribe_status(receipt_id, self(), opts)
+
+  def subscribe_status(receipt_id, pid) when is_pid(pid),
+    do: subscribe_status(receipt_id, pid, [])
+
+  def subscribe_status(receipt_id, pid, opts) when is_pid(pid) and is_list(opts) do
     # Built before the task starts, so an id that cannot be a path segment
     # raises where the mistake was made.
     url = HTTP.base_url() <> "/poslink/v1/receipt-requests/#{Client.segment(receipt_id)}/status"

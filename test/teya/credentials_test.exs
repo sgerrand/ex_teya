@@ -43,7 +43,26 @@ defmodule Teya.CredentialsTest do
     end)
   end
 
-  defp server(name), do: {:via, Registry, {Teya.AuthRegistry, name}}
+  defp server(name), do: Module.concat(Auth, name)
+
+  # Fires a background refresh as its timer would, and waits for the fetch
+  # it starts to settle.
+  defp refresh(pid) do
+    tag = make_ref()
+    :sys.replace_state(pid, &%{&1 | refresh_tag: tag, failed_at: nil, failure: nil})
+    send(pid, {:refresh, tag})
+    await_settled(pid, 200)
+  end
+
+  # :sys.get_state/1 is answered after the refresh message, so the first
+  # look already sees the fetch it started.
+  defp await_settled(pid, attempts) do
+    cond do
+      :sys.get_state(pid).fetch == nil -> :ok
+      attempts > 0 -> Process.sleep(10) && await_settled(pid, attempts - 1)
+      true -> flunk("the refresh did not settle")
+    end
+  end
 
   defp stub_expecting_token(token) do
     stub_api(fn conn ->
@@ -194,6 +213,28 @@ defmodule Teya.CredentialsTest do
       assert form["scope"] == "payment_requests stores/id/terminals"
     end
 
+    test "names itself in its refresh logs, whether the refresh works or fails" do
+      started([:store_b])
+      TestEnv.put(:credentials, store_b: [client_id: "b", client_secret: "secret", scopes: ["s"]])
+      pid = start_supervised!({Auth, Config.from_env(:store_b)})
+
+      for {status, expected} <- [
+            {200, "Teya.Auth :store_b: token refreshed"},
+            {503, "Teya.Auth :store_b: token refresh failed"}
+          ] do
+        Req.Test.stub(Teya.Auth, fn conn ->
+          conn
+          |> Plug.Conn.put_status(status)
+          |> Req.Test.json(%{"access_token" => "refreshed-token", "expires_in" => 3600})
+        end)
+
+        Req.Test.allow(Teya.Auth, self(), pid)
+
+        log = ExUnit.CaptureLog.capture_log([level: :info], fn -> refresh(pid) end)
+        assert log =~ expected
+      end
+    end
+
     test "is asked again for its token on a retry" do
       start_sets([:poslink])
       TestEnv.put(:retry_idempotent_posts, true)
@@ -257,6 +298,34 @@ defmodule Teya.CredentialsTest do
 
       ids = for child <- Teya.Application.auth_children(), do: Supervisor.child_spec(child, []).id
       assert ids == [{Auth, nil}, {Auth, :online}, {Auth, :poslink}]
+    end
+
+    test "restarts one set's auth process alone when it fails" do
+      start_sets([:set_a, :set_b, :set_c, :set_d])
+
+      before = for name <- [:set_a, :set_b, :set_c, :set_d], do: Process.whereis(server(name))
+      [killed | others] = before
+      top_auth = Process.whereis(Teya.Auth)
+
+      Process.exit(killed, :kill)
+      await_restarted(:set_a, killed, 200)
+
+      assert Process.whereis(Teya.Auth) == top_auth
+      assert for(name <- [:set_b, :set_c, :set_d], do: Process.whereis(server(name))) == others
+    end
+  end
+
+  defp await_restarted(name, old, attempts) do
+    case Process.whereis(server(name)) do
+      pid when is_pid(pid) and pid != old ->
+        pid
+
+      _other when attempts > 0 ->
+        Process.sleep(10)
+        await_restarted(name, old, attempts - 1)
+
+      _other ->
+        flunk("#{inspect(name)} was not restarted")
     end
   end
 end

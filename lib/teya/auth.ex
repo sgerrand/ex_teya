@@ -35,7 +35,9 @@ defmodule Teya.Auth do
   ]
 
   # One process per set of credentials: the top-level ones under this
-  # module's name, each named set under its name in Teya.AuthRegistry.
+  # module's name, and each named set under a name of its own, such as
+  # Teya.Auth.store_b. Set names come from the config and are fixed at boot,
+  # so the names made here are few.
   def child_spec(%Config{name: name} = config),
     do: %{id: {__MODULE__, name}, start: {__MODULE__, :start_link, [config]}}
 
@@ -44,7 +46,7 @@ defmodule Teya.Auth do
   end
 
   defp server(nil), do: __MODULE__
-  defp server(name), do: {:via, Registry, {Teya.AuthRegistry, name}}
+  defp server(name), do: Module.concat(__MODULE__, name)
 
   @doc """
   The credentials a request uses: the set named with `:credentials` in

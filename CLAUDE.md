@@ -31,9 +31,9 @@ The library is an OTP application (`Teya.Application`) that starts a `Task.Super
 
 ```text
 lib/teya/
-  application.ex      — starts Teya.TaskSupervisor, Teya.AuthRegistry, a Teya.Auth for
-                        the top-level credentials (if :client_id set), and one per
-                        named set under :credentials
+  application.ex      — starts Teya.TaskSupervisor, a Teya.Auth for the top-level
+                        credentials (if :client_id set), and one per named set
+                        under :credentials, each under a name of its own
   config.ex           — %Teya.Config{} struct; from_env/0 (top-level credentials),
                         from_env/1 (a named set), sets/0
   error.ex            — %Teya.Error{code, message, status, invalid_parameters, reason}
@@ -188,8 +188,10 @@ only a timeout, including when those credentials are not configured and so
 their auth process is not running.
 
 There is one auth process per set of credentials: the top-level one named
-`Teya.Auth`, and one per set under `:credentials`, registered in
-`Teya.AuthRegistry` as `{:via, Registry, {Teya.AuthRegistry, name}}`. Each has
+`Teya.Auth`, and one per set under `:credentials`, named after it, such as
+`Teya.Auth.store_b` (`Module.concat(Teya.Auth, name)`). There is no shared
+registry, so no auth process depends on another process: one that fails is
+restarted alone. Each has
 its own token, refresh and failure state, and everything above applies to
 each. `Auth.set_for/2` picks the set for a call from the names the
 application started with (`Auth.put_started_sets/1`, a `:persistent_term`),

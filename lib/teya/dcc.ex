@@ -10,7 +10,10 @@ defmodule Teya.DCC do
   `Teya.CardPresent.create/2` or `Teya.Moto.create/2`.
 
   It needs the library's credentials (`:client_id` and `:client_secret`), with
-  the `fx/dcc/create` scope among the `:scopes` they ask for.
+  the `fx/dcc/create` scope among the `:scopes` they ask for. Add that scope
+  only once Teya has granted it to your client: the library asks for all its
+  scopes in one token request, and a scope the client lacks can make that
+  request fail with `invalid_scope`, stopping every call, not only DCC.
 
   The FX spec documents no `Idempotency-Key` for this endpoint, so none is
   sent, and a repeated call creates a new quote. That is harmless: use the
@@ -30,6 +33,12 @@ defmodule Teya.DCC do
   - `"UNSUPPORTED_CURRENCY"` — currency pair not supported
   - `"DCC_DISABLED"` — DCC is turned off for the store
   - `"BELOW_MINIMUM"` — the amount is too small for DCC
+  - `"NO_CARD_CURRENCY"`, `"CARD_CURRENCY_MISMATCH"` — the card's currency
+    could not be found, or does not match `cardholder_currency`
+
+  Any of these means no offer: proceed without DCC. So does a 401 or 403,
+  but that is a setup problem, such as a missing `fx/dcc/create` scope, so
+  log it.
 
   ## Required params
 
@@ -73,9 +82,10 @@ defmodule Teya.DCC do
           }
           Teya.CardPresent.create(Map.put(card_present_params, "dcc", dcc_params))
 
-        {:error, _reason} ->
-          # no offer, for whatever reason (card not eligible, DCC turned off,
-          # amount too small, network error): proceed without DCC
+        {:error, reason} ->
+          # no offer: proceed without DCC. Log the reason, so a setup
+          # problem, such as a 403 for a missing scope, does not go unseen.
+          Logger.warning("no DCC offer: \#{inspect(reason)}")
           Teya.CardPresent.create(card_present_params)
       end
   """

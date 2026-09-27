@@ -5,7 +5,8 @@ defmodule Teya.Error do
   Pattern-match on `code` for Teya-specific error codes. Codes shared by most
   endpoints are `"BAD_REQUEST"`, `"UNAUTHORISED"`, `"FORBIDDEN"`,
   `"NOT_FOUND"`, `"CONFLICT"`, `"GONE"`, `"UNSUPPORTED_MEDIA_TYPE"`,
-  `"TOO_MANY_REQUESTS"` and `"INTERNAL_SERVER_ERROR"`.
+  `"TOO_MANY_REQUESTS"` and `"INTERNAL_SERVER_ERROR"`. The FX API
+  (`Teya.DCC`) spells it `"UNAUTHORIZED"`, so match both.
 
   Payment endpoints add codes describing why a card was declined, such as
   `"INSUFFICIENT_FUNDS"`, `"CARD_EXPIRED"`, `"BLOCKED_CARD"` and
@@ -40,12 +41,7 @@ defmodule Teya.Error do
       # Teya names it "description". A gateway in front may say "message".
       message: text(body["description"]) || text(body["message"]),
       status: status,
-      # The FX API calls the list "invalid_params". The first that is a list
-      # wins, so something else under one name cannot hide the other.
-      invalid_parameters:
-        [body["invalid_parameters"], body["invalid_params"]]
-        |> Enum.find(&is_list/1)
-        |> invalid_parameters()
+      invalid_parameters: invalid_parameters(body)
     }
   end
 
@@ -67,9 +63,17 @@ defmodule Teya.Error do
   defp text(value) when is_binary(value), do: value
   defp text(_value), do: nil
 
-  # Keep only what the docs promise, a list of maps, whatever arrived.
-  defp invalid_parameters(params) when is_list(params), do: Enum.filter(params, &is_map/1)
-  defp invalid_parameters(_params), do: nil
+  # The FX API calls the list "invalid_params". A filled list under either
+  # name wins over an empty one or something else under the other, so one
+  # cannot hide the other. Keep only what the docs promise, a list of maps.
+  defp invalid_parameters(body) do
+    lists = Enum.filter([body["invalid_parameters"], body["invalid_params"]], &is_list/1)
+
+    case Enum.find(lists, &(&1 != [])) || List.first(lists) do
+      nil -> nil
+      params -> Enum.filter(params, &is_map/1)
+    end
+  end
 
   @doc false
   # The token endpoint answers in the OAuth 2.0 error format: an "error" code,

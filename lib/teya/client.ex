@@ -21,8 +21,7 @@ defmodule Teya.Client do
   request, such as timeouts or extra headers, come from `:req_options`.
   """
   def request(method, path, opts \\ []) do
-    with {:ok, token} <- Auth.token(),
-         do: send_request(method, path, opts, token, refresh_token: true)
+    authed_request(method, path, opts, [])
   end
 
   @doc """
@@ -48,8 +47,7 @@ defmodule Teya.Client do
     retry =
       if Application.get_env(:teya, :retry_idempotent_posts, false), do: &transient?/2
 
-    with {:ok, token} <- Auth.token(),
-         do: send_request(:post, path, opts, token, refresh_token: true, retry: retry)
+    authed_request(:post, path, opts, retry: retry)
   end
 
   @doc """
@@ -73,8 +71,7 @@ defmodule Teya.Client do
   options as `request/3`, less `:idempotency_key`, which it ignores.
   """
   def post_without_idempotency_key(path, opts) do
-    with {:ok, token} <- Auth.token(),
-         do: send_request(:post, path, opts, token, refresh_token: true, idempotency_key: false)
+    authed_request(:post, path, opts, idempotency_key: false)
   end
 
   @doc false
@@ -93,6 +90,12 @@ defmodule Teya.Client do
     raise ArgumentError,
           "a request path segment must be text or an integer, and cannot be empty, " <>
             "\".\" or \"..\", got: #{inspect(value)}"
+  end
+
+  # A request with the auth process's token, which a retry asks for again.
+  defp authed_request(method, path, opts, settings) do
+    with {:ok, token} <- Auth.token(),
+         do: send_request(method, path, opts, token, [refresh_token: true] ++ settings)
   end
 
   # settings, for this library's callers only:

@@ -132,6 +132,19 @@ defmodule Teya.DCCTest do
                Teya.DCC.quote(%{"card_first9" => "41"})
     end
 
+    test "keeps a filled invalid_params list over an empty invalid_parameters" do
+      stub_api(fn conn ->
+        json_response(conn, 400, %{
+          "code" => "BAD_REQUEST",
+          "invalid_parameters" => [],
+          "invalid_params" => [%{"path" => "card_first9", "reason" => "too short"}]
+        })
+      end)
+
+      assert {:error, %Teya.Error{invalid_parameters: [%{"path" => "card_first9"}]}} =
+               Teya.DCC.quote(%{"card_first9" => "41"})
+    end
+
     test "keeps the invalid_params list when invalid_parameters is not a list" do
       stub_api(fn conn ->
         json_response(conn, 400, %{

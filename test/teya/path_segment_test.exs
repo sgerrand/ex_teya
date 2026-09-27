@@ -151,15 +151,51 @@ defmodule Teya.PathSegmentTest do
   end
 
   # Encoding in Client.path/1 only helps if every path goes through it. A
-  # value interpolated or appended into a path string skips it, so no module
-  # may build a path that way.
+  # value interpolated into or joined onto a path string skips it, so no
+  # module may build a path that way. The check reads the parsed code, not
+  # the text, so an expression split across lines is caught all the same.
   test "no module builds a request path by interpolation or concatenation" do
     offenders =
       for file <- Path.wildcard("lib/**/*.ex"),
-          {line, number} <- file |> File.read!() |> String.split("\n") |> Enum.with_index(1),
-          String.match?(line, ~r{"/[^"]*#\{}) or String.match?(line, ~r{"/[a-z0-9/:_-]*"\s*<>}),
-          do: "#{file}:#{number}: #{String.trim(line)}"
+          node <- file |> File.read!() |> Code.string_to_quoted!() |> nodes(),
+          built_path?(node),
+          do: "#{file}:#{node |> elem(1) |> Keyword.get(:line)}"
 
     assert offenders == []
   end
+
+  test "the path check catches a path joined across lines" do
+    code = """
+    Client.request(
+      :get,
+      "/v1/tokens/" <>
+        token_id,
+      opts
+    )
+    Client.request(:get, "/v1/tokens/\#{
+      token_id
+    }", opts)
+    """
+
+    assert code |> Code.string_to_quoted!() |> nodes() |> Enum.count(&built_path?/1) == 2
+  end
+
+  defp nodes(ast) do
+    {_ast, found} = Macro.prewalk(ast, [], fn node, found -> {node, [node | found]} end)
+    found
+  end
+
+  # "/..." <> value, or value <> "/...": a literal path with a value joined on.
+  defp built_path?({:<>, _meta, [left, right]}),
+    do:
+      (path_literal?(left) and not is_binary(right)) or
+        (path_literal?(right) and not is_binary(left))
+
+  # "/...#{value}...": an interpolated string that starts as a path.
+  defp built_path?({:<<>>, _meta, [first | _rest] = parts}),
+    do: path_literal?(first) and Enum.any?(parts, &(not is_binary(&1)))
+
+  defp built_path?(_node), do: false
+
+  defp path_literal?(value), do: is_binary(value) and String.starts_with?(value, "/")
 end

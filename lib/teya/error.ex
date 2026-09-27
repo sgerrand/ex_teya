@@ -1,6 +1,6 @@
 defmodule Teya.Error do
   @moduledoc """
-  Represents an error returned by the Teya API.
+  A failed request: one Teya refused, or one with no usable answer.
 
   Pattern-match on `code` for Teya-specific error codes. Codes shared by most
   endpoints are `"BAD_REQUEST"`, `"UNAUTHORISED"`, `"FORBIDDEN"`,
@@ -19,16 +19,75 @@ defmodule Teya.Error do
   which. Each entry is a map, usually with `"name"` and `"reason"` keys. The
   FX API (`Teya.DCC`) names the field `"path"` instead. Read them with
   `Map.get/2`, since the API does not promise every entry has either.
+
+  Every failed request returns this struct. When Teya answered, `status` is
+  its HTTP status and `code` its error code. A 2xx status means Teya acted
+  on the request but its reply, JSON that would not decode, could not be
+  read; none of that reply is kept. That rule does not hold when `reason` is
+  `{:no_token, _}`: then the status is the token endpoint's.
+
+  `reason` says what went wrong when there was no usable answer, and is
+  `nil` otherwise:
+
+  - `{:no_token, cause}` — the library could not get an access token, so
+    nothing was sent to Teya and sending again is safe. `cause` is the
+    reason the token request failed, or `nil`. If the token endpoint
+    answered, `status` and `code` are its answer, such as 401 and
+    `"invalid_client"`.
+  - an exception, with `status` `nil` — a network error, such as
+    `%Req.TransportError{reason: :timeout}`. You cannot tell whether Teya
+    acted on the request, so check before sending a payment again with a new
+    idempotency key.
+  - an atom or tuple, with `status` `nil` — a failure a function documents,
+    such as `:timeout` from `Teya.POSLink.Payment.get/2` or `{:crashed,
+    name}` from a POSLink stream whose task crashed.
+
+      case Teya.Checkout.create_session(params) do
+        {:ok, session} -> session
+        {:error, %Teya.Error{reason: {:no_token, _cause}} = error} -> {:not_sent, error}
+        {:error, %Teya.Error{status: nil, reason: reason}} -> {:no_answer, reason}
+        {:error, %Teya.Error{status: status}} -> {:refused, status}
+      end
   """
 
   @type t :: %__MODULE__{
           code: String.t() | nil,
           message: String.t() | nil,
           status: integer() | nil,
-          invalid_parameters: [map()] | nil
+          invalid_parameters: [map()] | nil,
+          reason: term()
         }
 
-  defstruct [:code, :message, :status, :invalid_parameters]
+  defstruct [:code, :message, :status, :invalid_parameters, :reason]
+
+  @doc false
+  # For a failure with no answer from Teya: a network error, say. `context`
+  # says what failed. The exceptions kept whole say what went wrong and hold
+  # nothing that was received. Any other may, as Req.DecompressError keeps
+  # the body, so only its name is kept. So may a Req.HTTPError whose reason
+  # is more than a word, such as {:unexpected_data, bytes}.
+  @kept_exceptions [Req.TransportError, ReqServerSentEvents.FrameTooLargeError]
+
+  def from_reason(%module{} = exception, context)
+      when is_exception(exception) and module in @kept_exceptions,
+      do: kept(exception, context)
+
+  def from_reason(%Req.HTTPError{reason: reason} = exception, context) when is_atom(reason),
+    do: kept(exception, context)
+
+  def from_reason(%module{} = exception, context) when is_exception(exception),
+    do: %__MODULE__{message: context, reason: module}
+
+  def from_reason(reason, context), do: %__MODULE__{message: context, reason: reason}
+
+  defp kept(exception, context),
+    do: %__MODULE__{message: context <> ": " <> Exception.message(exception), reason: exception}
+
+  @doc false
+  # Teya answered, but in JSON that will not decode. None of the body is
+  # kept: it could hold a card number or a credential.
+  def unreadable(%{status: status}),
+    do: %__MODULE__{status: status, message: "the reply could not be read"}
 
   @doc false
   # A Teya error names a code; the description and the list of rejected fields

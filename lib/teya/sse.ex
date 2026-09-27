@@ -22,7 +22,7 @@ defmodule Teya.SSE do
   Only the first `:sse_max_error_body_bytes` of that body are kept (64 KB by
   default), so a large error page cannot fill memory. A JSON body past that
   size is cut and can no longer be decoded: the `%Teya.Error{}` then carries
-  the status and the raw text, but no `code`.
+  the status, but no `code` and none of the body.
   """
 
   alias ReqServerSentEvents.Frame
@@ -48,10 +48,10 @@ defmodule Teya.SSE do
         :ok
 
       {:ok, resp} ->
-        send(pid, {error_tag, id, resp |> decode_body() |> Error.from_response()})
+        send(pid, {error_tag, id, error_from_response(resp)})
 
       {:error, reason} ->
-        send(pid, {error_tag, id, reason})
+        send(pid, {error_tag, id, Error.from_reason(reason, "the stream failed")})
     end
   end
 
@@ -65,7 +65,7 @@ defmodule Teya.SSE do
   # which could otherwise last as long as the payment if no such event came.
   #
   # Returns `{:ok, data}`, `:none` when the stream closed without such an
-  # event, or `{:error, reason}`.
+  # event, or `{:error, %Teya.Error{}}`.
   def first(url, token, event_type, owner) do
     handler = fn {:sse_event, %Frame{} = frame}, acc ->
       take_first(frame, event_type, owner, acc)
@@ -79,10 +79,10 @@ defmodule Teya.SSE do
         end
 
       {:ok, resp} ->
-        {:error, resp |> decode_body() |> Error.from_response()}
+        {:error, error_from_response(resp)}
 
       {:error, reason} ->
-        {:error, reason}
+        {:error, Error.from_reason(reason, "the stream failed")}
     end
   end
 
@@ -215,14 +215,39 @@ defmodule Teya.SSE do
     end
   end
 
-  defp decode_body(resp) do
-    with body when is_binary(body) <- resp.body,
-         {:ok, decoded} when is_map(decoded) <- Jason.decode(body) do
-      %{resp | body: decoded}
-    else
-      _ -> resp
+  defp error_from_response(resp) do
+    case HTTP.decode_json(resp, unlabelled: true) do
+      {:ok, resp} -> Error.from_response(resp)
+      {:unreadable, resp} -> Error.unreadable(resp)
     end
   end
+
+  @doc false
+  # Runs a stream task's work, turning any crash into an error there, in the
+  # task. Left to crash, the task would log a crash report, and the exception,
+  # the value that failed to match or the stacktrace could hold the bearer
+  # token or what the stream sent. Only the crash's kind and, for a raised
+  # error, the exception's name are kept.
+  def guard(fun) do
+    fun.()
+  catch
+    kind, reason -> {:error, crashed(kind, reason)}
+  end
+
+  @doc false
+  # The same for a subscribe task, whose crash is sent to `pid` as the
+  # stream's error message.
+  def guard(fun, pid, error_tag, id) do
+    fun.()
+  catch
+    kind, reason -> send(pid, {error_tag, id, crashed(kind, reason)})
+  end
+
+  defp crashed(kind, reason),
+    do: Error.from_reason({:crashed, crash_name(kind, reason)}, "the stream task crashed")
+
+  defp crash_name(:error, reason), do: Exception.normalize(:error, reason, []).__struct__
+  defp crash_name(kind, _reason), do: kind
 
   # A frame with no data, such as a keepalive, or data that is not a JSON
   # object, carries nothing to pass on.

@@ -135,14 +135,19 @@ defmodule Teya.POSLink.Payment do
 
   ## Errors
 
-  - `{:error, %Teya.Error{}}` — the API refused the request, or the token
-    endpoint did; a token failure carries an OAuth code such as
-    `"invalid_client"`
-  - `{:error, :timeout}` — no snapshot arrived before `:timeout` passed
-  - `{:error, :no_snapshot}` — the stream closed without sending a full
-    snapshot, for example after only partial updates; subscribe to it instead
-  - `{:error, {:exit, reason}}` — the task reading the stream crashed
-  - `{:error, reason}` — any other failure, such as a `Req.TransportError`
+  Every error is a `%Teya.Error{}`. When the API or the token endpoint
+  refused the request, it has a `status` and `code`; a token failure carries
+  an OAuth code such as `"invalid_client"`. Otherwise `status` is `nil` and
+  `reason` says what happened:
+
+  - `:timeout` — no snapshot arrived before `:timeout` passed
+  - `:no_snapshot` — the stream closed without sending a full snapshot, for
+    example after only partial updates; subscribe to it instead
+  - `{:crashed, name}` — the task reading the stream crashed; `name` is the
+    exception's name, such as `RuntimeError`, or `:exit` or `:throw`. Only
+    the name is kept, since the rest could hold the bearer token
+  - `{:exit, name}` — the task was stopped from outside, such as `:killed`
+  - an exception, such as `%Req.TransportError{}` — a network error
 
   Raises `ArgumentError`, before opening any stream, for an id that cannot be
   part of a path: `nil`, empty, `"."`, `".."`, or anything but text or an
@@ -153,7 +158,7 @@ defmodule Teya.POSLink.Payment do
       {:ok, payment} = Teya.POSLink.Payment.get(payment_request_id)
       payment["status"]  # "NEW" | "IN_PROGRESS" | "SUCCESSFUL" | "FAILED" | "CANCELLING" | "CANCELLED"
   """
-  @spec get(String.t(), keyword()) :: {:ok, map()} | {:error, term()}
+  @spec get(String.t(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def get(payment_request_id, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 30_000)
 
@@ -162,15 +167,27 @@ defmodule Teya.POSLink.Payment do
 
     task =
       Task.Supervisor.async_nolink(Teya.TaskSupervisor, fn ->
-        fetch_snapshot(url, caller)
+        SSE.guard(fn -> fetch_snapshot(url, caller) end)
       end)
 
     case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
-      {:ok, result} -> result
-      {:exit, reason} -> {:error, {:exit, reason}}
-      nil -> {:error, :timeout}
+      {:ok, result} ->
+        result
+
+      # Only when the task was killed from outside: it catches its own crashes.
+      {:exit, reason} ->
+        {:error,
+         Error.from_reason({:exit, exit_name(reason)}, "the task reading the stream exited")}
+
+      nil ->
+        {:error, Error.from_reason(:timeout, "no snapshot arrived in time")}
     end
   end
+
+  # An exit reason other than a single word may hold anything, so only that
+  # it was something else is kept.
+  defp exit_name(reason) when is_atom(reason), do: reason
+  defp exit_name(_reason), do: :other
 
   # The snapshot comes back as the task's result rather than as a message, so
   # nothing from this stream can mix with a subscribe/2 stream's messages.
@@ -180,8 +197,11 @@ defmodule Teya.POSLink.Payment do
   defp fetch_snapshot(url, caller) do
     with {:ok, token} <- Auth.token() do
       case SSE.first(url, token, "full", caller) do
-        :none -> {:error, :no_snapshot}
-        result -> result
+        :none ->
+          {:error, Error.from_reason(:no_snapshot, "the stream closed without a snapshot")}
+
+        result ->
+          result
       end
     end
   end
@@ -193,6 +213,7 @@ defmodule Teya.POSLink.Payment do
   and address, the date and time in UTC, the amount, tip and total, card
   details, and the references a receipt needs. Lines with nothing to show are
   left out. Only a payment request whose status is `"SUCCESSFUL"` has one.
+  An empty reply returns `{:error, %Teya.Error{reason: :empty_receipt_text}}`.
 
   A refund has a receipt here when it was made as a payment request, with
   `create/2` and `"transaction_type" => "REFUND"`. One made with
@@ -217,11 +238,12 @@ defmodule Teya.POSLink.Payment do
     end
   end
 
-  # The spec gives a JSON body, which Req decodes to a map. A body left as
-  # text is JSON Req did not decode (sent under another content type, or with
-  # decode_body: false) or a receipt sent as plain text. Either way it comes
-  # back in the documented shape. An empty body holds no receipt at all.
-  defp receipt_from_text(""), do: {:error, %Error{message: "the receipt text was empty"}}
+  # The spec gives a JSON body, which the client decodes to a map. A body left
+  # as text is JSON sent under another content type, or a receipt sent as
+  # plain text. Either way it comes back in the documented shape. An empty
+  # body holds no receipt at all.
+  defp receipt_from_text(""),
+    do: {:error, Error.from_reason(:empty_receipt_text, "the receipt text was empty")}
 
   defp receipt_from_text(text) do
     case Jason.decode(text) do
@@ -276,10 +298,12 @@ defmodule Teya.POSLink.Payment do
     - `event_type` is `"full"` (complete snapshot) or `"diff"` (partial update)
     - `data` is the decoded JSON map (e.g. `%{"status" => "SUCCESSFUL", ...}`)
   - `{:poslink_payment_error, id, reason}` — the stream ended with an error;
-    `reason` is a `%Teya.Error{}` when the API or the token endpoint refused
-    the request, or a transport exception such as
+    `reason` is a `%Teya.Error{}`. It has a `status` when the API or the
+    token endpoint refused the request. For a network error its `status` is
+    `nil` and its `reason` holds the exception, such as
     `%Req.TransportError{reason: :timeout}` when no event arrives within
-    `:sse_stream_timeout_ms`
+    `:sse_stream_timeout_ms`. If the task crashes, its `reason` is
+    `{:crashed, name}`, with only the exception's name kept
 
   The task exits normally when the server closes the stream (terminal payment
   state reached) or with an error tuple when the connection fails.
@@ -309,7 +333,12 @@ defmodule Teya.POSLink.Payment do
 
     task =
       Task.Supervisor.async_nolink(Teya.TaskSupervisor, fn ->
-        stream_payment(url, payment_request_id, pid)
+        SSE.guard(
+          fn -> stream_payment(url, payment_request_id, pid) end,
+          pid,
+          :poslink_payment_error,
+          payment_request_id
+        )
       end)
 
     {:ok, task}

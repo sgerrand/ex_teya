@@ -153,10 +153,29 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
 
       assert_receive {:poslink_payment_error, ^payment_id, error}, 500
 
-      # Cut mid-JSON, so it no longer decodes: the status survives, the code
-      # does not, and only what fitted in the cap is quoted.
-      assert %Error{code: nil, status: 500} = error
-      assert error.message =~ "INTERNAL_SERVER_ERROR"
+      # Cut mid-JSON, so it no longer decodes: the status survives, and none
+      # of the body is kept, as it could hold a card number or a credential.
+      assert %Error{code: nil, status: 500, message: "the reply could not be read"} = error
+    end
+
+    test "reads a JSON error whatever its content type says" do
+      for content_type <- [nil, "text/plain"] do
+        stub_sse(fn conn ->
+          conn =
+            if content_type, do: Plug.Conn.put_resp_content_type(conn, content_type), else: conn
+
+          Plug.Conn.send_resp(
+            conn,
+            404,
+            ~s({"code":"NOT_FOUND","description":"No such payment request"})
+          )
+        end)
+
+        {:ok, _task} = Payment.subscribe("pr-uuid-45", self())
+
+        assert_receive {:poslink_payment_error, "pr-uuid-45", error}, 500
+        assert %Error{code: "NOT_FOUND", status: 404, message: "No such payment request"} = error
+      end
     end
 
     test "cuts a body without splitting a character in two" do
@@ -164,13 +183,11 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       # Lands inside the two bytes of an "é".
       put_error_body_cap(50)
 
+      # Plain text, which is quoted into the error, unlike JSON cut short.
       stub_sse(fn conn ->
         conn
-        |> Plug.Conn.put_status(500)
-        |> Req.Test.json(%{
-          "code" => "INTERNAL_SERVER_ERROR",
-          "description" => String.duplicate("é", 100)
-        })
+        |> Plug.Conn.put_resp_content_type("text/plain")
+        |> Plug.Conn.send_resp(500, "Server error: " <> String.duplicate("é", 100))
       end)
 
       {:ok, _task} = Payment.subscribe(payment_id, self())
@@ -179,7 +196,7 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       assert %Error{status: 500} = error
 
       # Readable text, not a dump of raw bytes.
-      assert error.message =~ "INTERNAL_SERVER_ERROR"
+      assert error.message =~ "Server error"
       refute error.message =~ "<<"
     end
 
@@ -276,7 +293,8 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
 
       {:ok, _task} = Payment.subscribe(payment_id, self())
 
-      assert_receive {:poslink_payment_error, ^payment_id, %Req.TransportError{reason: :closed}},
+      assert_receive {:poslink_payment_error, ^payment_id,
+                      %Teya.Error{reason: %Req.TransportError{reason: :closed}}},
                      2_000
 
       assert_received :request_made
@@ -295,7 +313,7 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       {:ok, _task} = Payment.subscribe(payment_id, self())
 
       assert_receive {:poslink_payment_error, ^payment_id,
-                      %ReqServerSentEvents.FrameTooLargeError{}},
+                      %Teya.Error{reason: %ReqServerSentEvents.FrameTooLargeError{}}},
                      2_000
     end
 
@@ -342,7 +360,8 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
 
       {:ok, _task} = Payment.subscribe(payment_id, self())
 
-      assert_receive {:poslink_payment_error, ^payment_id, %Req.TransportError{reason: :timeout}},
+      assert_receive {:poslink_payment_error, ^payment_id,
+                      %Teya.Error{reason: %Req.TransportError{reason: :timeout}}},
                      500
     end
 
@@ -389,7 +408,7 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       {:ok, _task} = Payment.subscribe(payment_id, self())
 
       assert_receive {:poslink_payment_error, ^payment_id, error}, 500
-      assert %Error{code: "invalid_client", status: 401} = error
+      assert %Error{code: "invalid_client", status: 401, reason: {:no_token, nil}} = error
     end
   end
 
@@ -490,20 +509,20 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
 
       stub_payment_sse(body)
 
-      assert {:error, :no_snapshot} = Payment.get(payment_id)
+      assert {:error, %Teya.Error{status: nil, reason: :no_snapshot}} = Payment.get(payment_id)
     end
 
     test "returns :no_snapshot when the stream closes without an event" do
       stub_payment_sse("")
 
-      assert {:error, :no_snapshot} = Payment.get("pr-uuid-22")
+      assert {:error, %Teya.Error{status: nil, reason: :no_snapshot}} = Payment.get("pr-uuid-22")
     end
 
     test "does not take an event with no name as a snapshot" do
       payment_id = "pr-uuid-30"
       stub_payment_sse("data: #{Jason.encode!(%{"status" => "NEW"})}\n\n")
 
-      assert {:error, :no_snapshot} = Payment.get(payment_id)
+      assert {:error, %Teya.Error{status: nil, reason: :no_snapshot}} = Payment.get(payment_id)
     end
 
     test "returns Teya.Error when the payment is not found" do
@@ -519,7 +538,8 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
     test "returns a transport failure as it is" do
       stub_sse(fn conn -> Req.Test.transport_error(conn, :econnrefused) end)
 
-      assert {:error, %Req.TransportError{reason: :econnrefused}} = Payment.get("pr-uuid-34")
+      assert {:error, %Teya.Error{reason: %Req.TransportError{reason: :econnrefused}}} =
+               Payment.get("pr-uuid-34")
     end
 
     test "returns a token failure as a Teya.Error" do
@@ -538,8 +558,65 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
 
       {elapsed_us, result} = :timer.tc(fn -> Payment.get("pr-uuid-28", timeout: 10_000) end)
 
-      assert {:error, {:exit, {%RuntimeError{message: "boom"}, _stacktrace}}} = result
+      assert {:error, %Teya.Error{reason: {:crashed, RuntimeError}}} = result
+
       assert elapsed_us < 5_000_000
+    end
+
+    test "keeps only the name of an Erlang error, whose value could hold the token" do
+      # Built at runtime: the compiler rejects a match it can see will fail.
+      failed = Enum.random([{:error, "secret-token"}])
+      stub_sse(fn _conn -> {:ok, _} = failed end)
+
+      assert {:error, %Teya.Error{reason: {:crashed, MatchError}} = error} =
+               Payment.get("pr-uuid-40")
+
+      refute inspect(error) =~ "secret-token"
+    end
+
+    test "keeps only the kind of an exit or throw" do
+      for {crash, kind} <- [
+            {fn -> exit({:boom, "secret-token"}) end, :exit},
+            {fn -> throw("secret-token") end, :throw}
+          ] do
+        stub_sse(fn _conn -> crash.() end)
+
+        assert {:error, %Teya.Error{reason: {:crashed, ^kind}} = error} =
+                 Payment.get("pr-uuid-41")
+
+        refute inspect(error) =~ "secret-token"
+      end
+    end
+
+    test "reports a task killed from outside by its exit reason" do
+      for {signal, name} <- [{:kill, :killed}, {{:shutdown, "secret-token"}, :other}] do
+        stub_sse(fn _conn -> Process.exit(self(), signal) end)
+
+        assert {:error, %Teya.Error{reason: {:exit, ^name}} = error} = Payment.get("pr-uuid-42")
+        refute inspect(error) =~ "secret-token"
+      end
+    end
+
+    test "subscribe/2 sends a crash as an error message, with no crash report" do
+      stub_sse(fn _conn -> raise "secret-token" end)
+
+      log =
+        ExUnit.CaptureLog.capture_log(fn ->
+          {:ok, _task} = Payment.subscribe("pr-uuid-44")
+
+          assert_receive {:poslink_payment_error, "pr-uuid-44",
+                          %Error{reason: {:crashed, RuntimeError}}},
+                         500
+        end)
+
+      refute log =~ "secret-token"
+    end
+
+    test "logs no crash report for a crashed stream" do
+      stub_sse(fn _conn -> raise "secret-token" end)
+
+      log = ExUnit.CaptureLog.capture_log(fn -> Payment.get("pr-uuid-43") end)
+      refute log =~ "secret-token"
     end
 
     test "accepts :infinity as the timeout" do
@@ -571,7 +648,8 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
         Plug.Conn.send_resp(conn, 200, "")
       end)
 
-      assert {:error, :timeout} = Payment.get("pr-uuid-29", timeout: 50)
+      assert {:error, %Teya.Error{status: nil, reason: :timeout}} =
+               Payment.get("pr-uuid-29", timeout: 50)
     end
   end
 end

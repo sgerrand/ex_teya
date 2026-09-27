@@ -77,6 +77,15 @@ defmodule Teya.Auth do
   longer than `:token_timeout_ms`, or the auth process is not running.
   """
   def token do
+    case call_for_token() do
+      {:ok, _token} = ok -> ok
+      # Nothing was sent to Teya, so the caller may send it again.
+      {:error, %Error{} = error} -> {:error, %{error | reason: {:no_token, error.reason}}}
+      {:error, other} -> {:error, Error.from_reason({:no_token, other}, "no access token")}
+    end
+  end
+
+  defp call_for_token do
     timeout = token_timeout()
     GenServer.call(__MODULE__, {:token, gives_up_at(timeout)}, timeout)
   catch
@@ -323,26 +332,36 @@ defmodule Teya.Auth do
         receive_timeout: 10_000
       ]
       |> Keyword.merge(HTTP.options(:auth_req_options))
+      # Decoded here instead: see HTTP.decode_json/1.
+      |> Keyword.put(:decode_body, false)
       |> Req.new()
       # The body is a form whatever the options say about content types. They
       # fall back to :req_options, which are meant for JSON API calls.
       |> Req.merge(headers: [{"content-type", "application/x-www-form-urlencoded"}])
 
     case Req.request(req) do
+      {:ok, resp} -> resp |> HTTP.decode_json() |> token_result()
+      {:error, reason} -> {:error, Error.from_reason(reason, "the token request failed")}
+    end
+  end
+
+  defp token_result(decoded) do
+    case decoded do
       {:ok, %{status: status, body: %{"access_token" => token} = body}}
       when status in 200..299 and is_binary(token) ->
         {:ok, token, System.monotonic_time(:second) + lifetime(body["expires_in"])}
 
       # A success whose reply cannot be read may still hold a live token, and
       # a failed refresh is logged, so none of the body goes into the error.
-      {:ok, %{status: status}} when status in 200..299 ->
+      {_decoded, %{status: status}} when status in 200..299 ->
         {:error, %Error{status: status, message: "the token endpoint's reply could not be read"}}
 
       {:ok, resp} ->
         {:error, Error.from_oauth_response(resp)}
 
-      {:error, reason} ->
-        {:error, reason}
+      # JSON that will not decode: none of it is kept.
+      {:unreadable, resp} ->
+        {:error, Error.from_oauth_response(%{resp | body: nil})}
     end
   end
 

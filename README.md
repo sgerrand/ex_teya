@@ -72,7 +72,7 @@ These settings are optional:
 |---|---|---|
 | `:token_timeout_ms` | `15_000` | How long a request waits for an access token before it returns an error, or `:infinity`. A token request still running then carries on, and caches its token for the next request |
 | `:sse_stream_timeout_ms` | `60_000` | How long a POSLink stream waits for the next event before it gives up |
-| `:sse_max_error_body_bytes` | `65_536` | How much of a failed stream's error body is kept. A JSON error larger than this is cut and can no longer be read, so the error keeps its status and raw text but no code |
+| `:sse_max_error_body_bytes` | `65_536` | How much of a failed stream's error body is kept. A JSON error larger than this is cut and can no longer be read, so the error keeps its status but no code and none of the body |
 | `:retry_idempotent_posts` | `false` | Retry a payment, refund or other POST that is safe to repeat when it fails for a reason that may pass. See [Retries](#retries) |
 
 ### Scope reference
@@ -594,13 +594,15 @@ safe to repeat.
 
 ### Error Handling
 
-All functions return `{:ok, body}` or `{:error, %Teya.Error{}}`:
+All functions that call Teya return `{:ok, body}` or `{:error, %Teya.Error{}}`:
 
 ```elixir
 case Teya.Checkout.create_session(params) do
   {:ok, response} -> response
   {:error, %Teya.Error{code: "TOO_MANY_REQUESTS"}} -> {:error, :rate_limited}
   {:error, %Teya.Error{code: code}} when code in ["UNAUTHORISED", "UNAUTHORIZED"] -> {:error, :unauthorized}
+  {:error, %Teya.Error{reason: {:no_token, _cause}}} -> {:error, :not_sent}
+  {:error, %Teya.Error{status: nil, reason: reason}} -> {:error, {:no_answer, reason}}
   {:error, %Teya.Error{status: status}} -> {:error, status}
 end
 ```
@@ -617,6 +619,23 @@ When the API says which request fields it rejected, they are kept in
 
 Token endpoint failures use the OAuth 2.0 error format, so `code` holds values
 such as `"invalid_client"` and `"invalid_scope"`.
+
+A request with no usable answer returns a `%Teya.Error{}` too, with the cause
+in `reason`:
+
+- A network error leaves `status` and `code` `nil`, with the exception in
+  `reason`, such as
+  `%Teya.Error{status: nil, reason: %Req.TransportError{reason: :timeout}}`.
+  You cannot tell whether Teya acted on the request. See [Retries](#retries)
+  for how to check before sending a payment again.
+- When the library could not get an access token, `reason` is
+  `{:no_token, cause}`: nothing was sent to Teya, so sending again is safe.
+  If the token endpoint answered, `status` and `code` are its answer.
+
+A reply whose JSON will not decode keeps its `status` but none of its body,
+since it could hold a card number or a credential. A 2xx status there means
+Teya acted on the request, unless `reason` is `{:no_token, _}`: then the
+status is the token endpoint's.
 
 Ids that go into the request path, such as a session or payment request id,
 are URL-encoded, so a `/` or `?` in one cannot reach a different endpoint.
@@ -637,9 +656,11 @@ so they can identify your integration. To send your own, use Req's
 config :teya, req_options: [user_agent: "acme-shop/1.0"]
 ```
 
-Other headers and options you set there are used too, with three exceptions
+Other headers and options you set there are used too, with four exceptions
 the library always sets itself. API calls always send the library's own
-bearer token, so an `:auth` option there is ignored. API calls carry their own
+bearer token, so an `:auth` option there is ignored. Replies are decoded by
+the library, so options such as `:decoders`, `:decode_json` and `:raw` are
+ignored, and JSON keys are always strings. API calls carry their own
 `Idempotency-Key`, since one key shared by every request would make each POST
 look like a retry of the first. Token requests are always sent as a form,
 whatever content type is set.
@@ -686,10 +707,11 @@ re-subscribe with `Teya.POSLink.Payment.subscribe/2` if still in progress.
 
 ### Auth token refresh failures
 
-If the token endpoint is unreachable, the auth process schedules a retry after
-10 seconds. While retrying, API calls return `{:error, reason}`. The cached
-token (if any) remains usable until it expires. Once connectivity is restored,
-the retry succeeds automatically — no restart required.
+If the token endpoint is unreachable, the auth process retries after 1 second,
+doubling the wait each time up to 1 minute. The cached token (if any) stays
+in use until shortly before it expires. After that, API calls return
+`{:error, %Teya.Error{}}` until a token request succeeds again, with no
+restart needed.
 
 ## Development
 

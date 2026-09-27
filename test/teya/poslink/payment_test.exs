@@ -141,7 +141,7 @@ defmodule Teya.POSLink.PaymentTest do
     test "returns Teya.Error for an empty receipt" do
       stub_api(fn conn -> Plug.Conn.send_resp(conn, 200, "") end)
 
-      assert {:error, %Error{message: "the receipt text was empty"}} =
+      assert {:error, %Error{message: "the receipt text was empty", reason: :empty_receipt_text}} =
                Payment.receipt_text("pr-uuid-1")
     end
 

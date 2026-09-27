@@ -152,7 +152,11 @@ defmodule Teya.AuthTest do
         Req.Test.json(conn, %{"access_token" => "slow", "expires_in" => 3600})
       end)
 
-      assert {:error, %Teya.Error{message: "timed out waiting for an access token"}} =
+      assert {:error,
+              %Teya.Error{
+                message: "timed out waiting for an access token",
+                reason: {:no_token, nil}
+              }} =
                Teya.Auth.token()
     end
 
@@ -484,7 +488,8 @@ defmodule Teya.AuthTest do
     test "does not fetch for a caller that has already given up", %{auth_pid: auth_pid} do
       gave_up_at = System.monotonic_time(:millisecond) - 1
 
-      assert {:error, %Teya.Error{message: "timed out waiting for an access token"}} =
+      # Straight to the process, below token/0, which adds the :no_token reason.
+      assert {:error, %Teya.Error{message: "timed out waiting for an access token", reason: nil}} =
                GenServer.call(auth_pid, {:token, gave_up_at})
 
       assert %{fetch: nil, waiters: []} = :sys.get_state(auth_pid)
@@ -516,7 +521,11 @@ defmodule Teya.AuthTest do
       Process.unregister(Teya.Auth)
 
       try do
-        assert {:error, %Teya.Error{message: "the auth process is not available"}} =
+        assert {:error,
+                %Teya.Error{
+                  message: "the auth process is not available",
+                  reason: {:no_token, nil}
+                }} =
                  Teya.Auth.token()
       after
         Process.register(auth_pid, Teya.Auth)
@@ -577,7 +586,40 @@ defmodule Teya.AuthTest do
         Req.Test.transport_error(conn, :timeout)
       end)
 
-      assert {:error, %Req.TransportError{reason: :timeout}} = Teya.Auth.token()
+      assert {:error, %Teya.Error{reason: {:no_token, %Req.TransportError{reason: :timeout}}}} =
+               Teya.Auth.token()
+    end
+
+    test "marks a failure held in any other form as no token", %{auth_pid: auth_pid} do
+      :sys.replace_state(auth_pid, fn state ->
+        %{
+          state
+          | failed_at: System.monotonic_time(:millisecond),
+            failure: %Req.TransportError{reason: :closed}
+        }
+      end)
+
+      assert {:error, %Teya.Error{reason: {:no_token, %Req.TransportError{reason: :closed}}}} =
+               Teya.Auth.token()
+    end
+
+    test "keeps the status but none of a token reply whose JSON will not decode", %{
+      auth_pid: auth_pid
+    } do
+      garbled = ~s({"access_token":"SECRET-TOKEN", "client_secret":"SECRET-KEY" broken)
+
+      for status <- [200, 401] do
+        :sys.replace_state(auth_pid, &%{&1 | failed_at: nil, failure: nil})
+
+        stub_auth(auth_pid, fn conn ->
+          conn
+          |> Plug.Conn.put_resp_content_type("application/json")
+          |> Plug.Conn.send_resp(status, garbled)
+        end)
+
+        assert {:error, %Teya.Error{status: ^status} = error} = Teya.Auth.token()
+        refute inspect(error) =~ "SECRET"
+      end
     end
 
     test "re-fetches once the cached token has expired", %{auth_pid: auth_pid} do

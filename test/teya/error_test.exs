@@ -215,4 +215,39 @@ defmodule Teya.ErrorTest do
                Teya.Error.from_oauth_response(response)
     end
   end
+
+  describe "from_reason/2" do
+    test "keeps a network error whole, with its message after the context" do
+      error = %Req.TransportError{reason: :timeout}
+
+      assert %Teya.Error{
+               status: nil,
+               code: nil,
+               message: "the request failed: timeout",
+               reason: ^error
+             } = Teya.Error.from_reason(error, "the request failed")
+    end
+
+    test "keeps only the name of an exception that may hold what was received" do
+      error = %Req.DecompressError{format: :gzip, data: "access_token=SECRET"}
+
+      assert %Teya.Error{message: "the request failed", reason: Req.DecompressError} =
+               Teya.Error.from_reason(error, "the request failed")
+    end
+
+    test "keeps an HTTP error whole only when its reason is a single word" do
+      plain = %Req.HTTPError{protocol: :http2, reason: :unprocessed}
+      assert %Teya.Error{reason: ^plain} = Teya.Error.from_reason(plain, "the request failed")
+
+      with_bytes = %Req.HTTPError{protocol: :http1, reason: {:unexpected_data, "token=SECRET"}}
+
+      assert %Teya.Error{message: "the request failed", reason: Req.HTTPError} =
+               Teya.Error.from_reason(with_bytes, "the request failed")
+    end
+
+    test "gives anything else the context as its message" do
+      assert %Teya.Error{message: "the request failed", reason: :closed} =
+               Teya.Error.from_reason(:closed, "the request failed")
+    end
+  end
 end

@@ -391,7 +391,7 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       {:ok, _task} = Payment.subscribe(payment_id, self())
 
       assert_receive {:poslink_payment_error, ^payment_id, error}, 500
-      assert %Error{code: "invalid_client", status: 401} = error
+      assert %Error{code: "invalid_client", status: 401, reason: {:no_token, nil}} = error
     end
   end
 
@@ -541,10 +541,16 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
 
       {elapsed_us, result} = :timer.tc(fn -> Payment.get("pr-uuid-28", timeout: 10_000) end)
 
-      assert {:error, %Teya.Error{reason: {:exit, {%RuntimeError{message: "boom"}, _stacktrace}}}} =
+      assert {:error, %Teya.Error{reason: {:exit, RuntimeError}}} =
                result
 
       assert elapsed_us < 5_000_000
+    end
+
+    test "keeps the exit reason of a stream that exits without an exception" do
+      stub_sse(fn _conn -> exit(:boom) end)
+
+      assert {:error, %Teya.Error{reason: {:exit, :boom}}} = Payment.get("pr-uuid-40")
     end
 
     test "accepts :infinity as the timeout" do

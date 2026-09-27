@@ -134,5 +134,29 @@ defmodule Teya.ClientTest do
       assert {:error, %Teya.Error{status: nil, reason: %Req.TransportError{reason: :timeout}}} =
                Teya.Client.request(:get, "/v1/test")
     end
+
+    test "keeps the status but none of a reply whose JSON will not decode" do
+      for status <- [200, 409] do
+        stub_api(fn conn ->
+          conn
+          |> Plug.Conn.put_resp_content_type("application/json")
+          |> Plug.Conn.send_resp(status, ~s({"card_number":"4111111111111111" broken))
+        end)
+
+        assert {:error,
+                %Teya.Error{status: ^status, message: "the reply could not be read"} = error} =
+                 Teya.Client.request(:post, "/v1/test")
+
+        refute inspect(error) =~ "4111"
+      end
+    end
+
+    test "leaves a reply that is not JSON as text" do
+      stub_api(fn conn ->
+        conn |> Plug.Conn.put_resp_content_type("text/plain") |> Plug.Conn.send_resp(200, "ok")
+      end)
+
+      assert {:ok, "ok"} = Teya.Client.request(:get, "/v1/test")
+    end
   end
 end

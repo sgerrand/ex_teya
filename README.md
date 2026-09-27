@@ -601,6 +601,7 @@ case Teya.Checkout.create_session(params) do
   {:ok, response} -> response
   {:error, %Teya.Error{code: "TOO_MANY_REQUESTS"}} -> {:error, :rate_limited}
   {:error, %Teya.Error{code: code}} when code in ["UNAUTHORISED", "UNAUTHORIZED"] -> {:error, :unauthorized}
+  {:error, %Teya.Error{status: nil, reason: reason}} -> {:error, {:no_answer, reason}}
   {:error, %Teya.Error{status: status}} -> {:error, status}
 end
 ```
@@ -618,16 +619,21 @@ When the API says which request fields it rejected, they are kept in
 Token endpoint failures use the OAuth 2.0 error format, so `code` holds values
 such as `"invalid_client"` and `"invalid_scope"`.
 
-A request that never got an answer, such as one that hit a network error,
-returns a `%Teya.Error{}` too, with `status` and `code` set to `nil` and the
-cause in `reason`:
+A request with no usable answer returns a `%Teya.Error{}` too, with the cause
+in `reason`:
 
-```elixir
-{:error, %Teya.Error{status: nil, reason: %Req.TransportError{reason: :timeout}}}
-```
+- A network error leaves `status` and `code` `nil`, with the exception in
+  `reason`, such as
+  `%Teya.Error{status: nil, reason: %Req.TransportError{reason: :timeout}}`.
+  You cannot tell whether Teya acted on the request. See [Retries](#retries)
+  for how to check before sending a payment again.
+- When the library could not get an access token, `reason` is
+  `{:no_token, cause}`: nothing was sent to Teya, so sending again is safe.
+  If the token endpoint answered, `status` and `code` are its answer.
 
-With no answer, you cannot tell whether Teya acted on the request. See
-[Retries](#retries) for how to check before sending a payment again.
+A reply whose JSON will not decode keeps its `status` but none of its body,
+since it could hold a card number or a credential. A 2xx status there means
+Teya acted on the request.
 
 Ids that go into the request path, such as a session or payment request id,
 are URL-encoded, so a `/` or `?` in one cannot reach a different endpoint.

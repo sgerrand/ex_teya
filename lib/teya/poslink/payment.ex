@@ -143,7 +143,8 @@ defmodule Teya.POSLink.Payment do
   - `:timeout` — no snapshot arrived before `:timeout` passed
   - `:no_snapshot` — the stream closed without sending a full snapshot, for
     example after only partial updates; subscribe to it instead
-  - `{:exit, reason}` — the task reading the stream crashed
+  - `{:exit, cause}` — the task reading the stream crashed; `cause` is the
+    exception's name, such as `RuntimeError`, or the exit reason
   - an exception, such as `%Req.TransportError{}` — a network error
 
   Raises `ArgumentError`, before opening any stream, for an id that cannot be
@@ -172,12 +173,22 @@ defmodule Teya.POSLink.Payment do
         result
 
       {:exit, reason} ->
-        {:error, %Error{message: "the task reading the stream crashed", reason: {:exit, reason}}}
+        {:error,
+         Error.from_reason({:exit, exit_cause(reason)}, "the task reading the stream crashed")}
 
       nil ->
-        {:error, %Error{message: "no snapshot arrived in time", reason: :timeout}}
+        {:error, Error.from_reason(:timeout, "no snapshot arrived in time")}
     end
   end
+
+  # A crash's exit reason carries a stacktrace, whose frames can hold the
+  # arguments of the call that failed, the bearer token among them. Only the
+  # exception's name is kept.
+  defp exit_cause({%module{} = exception, stacktrace})
+       when is_exception(exception) and is_list(stacktrace),
+       do: module
+
+  defp exit_cause(reason), do: reason
 
   # The snapshot comes back as the task's result rather than as a message, so
   # nothing from this stream can mix with a subscribe/2 stream's messages.
@@ -188,7 +199,7 @@ defmodule Teya.POSLink.Payment do
     with {:ok, token} <- Auth.token() do
       case SSE.first(url, token, "full", caller) do
         :none ->
-          {:error, %Error{message: "the stream closed without a snapshot", reason: :no_snapshot}}
+          {:error, Error.from_reason(:no_snapshot, "the stream closed without a snapshot")}
 
         result ->
           result
@@ -231,7 +242,8 @@ defmodule Teya.POSLink.Payment do
   # text is JSON Req did not decode (sent under another content type, or with
   # decode_body: false) or a receipt sent as plain text. Either way it comes
   # back in the documented shape. An empty body holds no receipt at all.
-  defp receipt_from_text(""), do: {:error, %Error{message: "the receipt text was empty"}}
+  defp receipt_from_text(""),
+    do: {:error, Error.from_reason(:empty_receipt_text, "the receipt text was empty")}
 
   defp receipt_from_text(text) do
     case Jason.decode(text) do

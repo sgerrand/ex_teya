@@ -56,6 +56,27 @@ defmodule Teya.HTTP do
   end
 
   @doc false
+  # Decodes a JSON reply. Callers turn Req's own decoding off, since it turns
+  # a body that will not decode into an error that drops the status and
+  # holds the whole body, which can carry a credential. Here the status
+  # survives, and such a body comes back as :unreadable, for the caller to
+  # report without any of it.
+  def decode_json(%Req.Response{body: body} = resp) do
+    if is_binary(body) and body != "" and json?(resp) do
+      case Jason.decode(body) do
+        {:ok, decoded} -> {:ok, %{resp | body: decoded}}
+        {:error, _error} -> {:unreadable, resp}
+      end
+    else
+      {:ok, resp}
+    end
+  end
+
+  defp json?(resp) do
+    resp |> Req.Response.get_header("content-type") |> Enum.any?(&String.contains?(&1, "json"))
+  end
+
+  @doc false
   # Request options for one kind of request, falling back to :req_options
   # when none are set for it.
   def options(key) do

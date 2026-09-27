@@ -121,6 +121,8 @@ defmodule Teya.Client do
       # Before the configured options, so a :retry among them wins.
       |> put_if_present(:retry, settings[:retry])
       |> Keyword.merge(req_opts)
+      # Decoded here instead: see HTTP.decode_json/1.
+      |> Keyword.put(:decode_body, false)
       # Set after the configured options, so an :auth among them cannot send
       # the wrong credentials to Teya in place of this token.
       |> Keyword.put(:auth, {:bearer, token})
@@ -133,11 +135,18 @@ defmodule Teya.Client do
       |> refresh_token_on_retry(settings[:refresh_token])
 
     case Req.request(req) do
-      {:ok, %{status: status} = resp} when status in 200..299 -> {:ok, resp.body}
-      {:ok, resp} -> {:error, Error.from_response(resp)}
+      {:ok, resp} -> resp |> HTTP.decode_json() |> result()
       {:error, reason} -> {:error, Error.from_reason(reason, "the request failed")}
     end
   end
+
+  defp result({:ok, %{status: status} = resp}) when status in 200..299, do: {:ok, resp.body}
+  defp result({:ok, resp}), do: {:error, Error.from_response(resp)}
+
+  # Teya answered, but in JSON that will not decode. None of the body is
+  # kept. A 2xx status says Teya acted on the request all the same.
+  defp result({:unreadable, %{status: status}}),
+    do: {:error, %Error{status: status, message: "the reply could not be read"}}
 
   # Retries can run for minutes, past the life of the token the first
   # attempt was sent with, so each retry asks the auth process for its

@@ -102,8 +102,11 @@ defmodule Teya do
 
   ## Error handling
 
-  All functions return `{:ok, response_body}` or `{:error, %Teya.Error{}}`.
-  Pattern-match on `%Teya.Error{code: code}` for Teya-specific error codes.
+  All functions that call Teya return `{:ok, response_body}` or
+  `{:error, %Teya.Error{}}`. Pattern-match on `%Teya.Error{code: code}` for
+  Teya-specific error codes, and see `Teya.Error` for a request with no
+  usable answer. `Teya.Webhook` checks an incoming webhook instead, and says
+  what it returns.
 
       case Teya.Checkout.create_session(params) do
         {:ok, %{"session_url" => url}} -> redirect(conn, external: url)

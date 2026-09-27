@@ -217,21 +217,27 @@ defmodule Teya.ErrorTest do
   end
 
   describe "from_reason/2" do
-    test "keeps an exception as the reason, with its message" do
+    test "keeps a network error whole, with its message after the context" do
       error = %Req.TransportError{reason: :timeout}
 
-      assert %Teya.Error{status: nil, code: nil, message: "timeout", reason: ^error} =
+      assert %Teya.Error{
+               status: nil,
+               code: nil,
+               message: "the request failed: timeout",
+               reason: ^error
+             } = Teya.Error.from_reason(error, "the request failed")
+    end
+
+    test "keeps only the name of an exception that may hold what was received" do
+      error = %Req.DecompressError{format: :gzip, data: "access_token=SECRET"}
+
+      assert %Teya.Error{message: "the request failed", reason: Req.DecompressError} =
                Teya.Error.from_reason(error, "the request failed")
     end
 
-    test "gives anything else the message it is passed" do
+    test "gives anything else the context as its message" do
       assert %Teya.Error{message: "the request failed", reason: :closed} =
                Teya.Error.from_reason(:closed, "the request failed")
-    end
-
-    test "returns a Teya.Error as it is" do
-      error = %Teya.Error{code: "BAD_REQUEST", status: 400}
-      assert Teya.Error.from_reason(error, "the request failed") == error
     end
   end
 end

@@ -33,8 +33,13 @@ The library is an OTP application (`Teya.Application`) that starts a `Task.Super
 lib/teya/
   application.ex      — starts Teya.TaskSupervisor (always) and Teya.Auth (if :client_id set)
   config.ex           — %Teya.Config{} struct + Config.from_env/0
-  error.ex            — %Teya.Error{code, message, status, invalid_parameters} returned
-                        on failures, including token endpoint (OAuth) failures
+  error.ex            — %Teya.Error{code, message, status, invalid_parameters, reason}
+                        returned on every failed request. reason is set when
+                        there was no usable answer: {:no_token, cause} (from
+                        Auth.token/0; nothing sent), a network exception, or
+                        a function's own atom. Client and Auth decode JSON
+                        themselves (HTTP.decode_json/1) so a garbled body keeps
+                        its status and none of its bytes
   auth.ex             — GenServer: token cache and proactive refresh; fetches
                         run in tasks, and waiting callers share one fetch
   client.ex           — HTTP layer: calls Auth.token/0, adds Bearer header,

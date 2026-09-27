@@ -85,11 +85,16 @@ defmodule Teya.SSE do
     guard(fn -> run_subscription(url, set, {ref, id}, pid, tags) end, pid, error_tag, {ref, id})
   end
 
+  # Returns :ok however it ends. The task's result goes to the caller as
+  # its reply, so an error returned here would reach the caller a second
+  # time, in another shape, and reach it even when it is not `pid`.
   defp run_subscription(url, set, {ref, id}, pid, {ok_tag, error_tag}) do
     case Auth.token(set) do
       {:ok, token} -> stream(url, token, {ref, id}, ok_tag, error_tag, pid)
       {:error, error} -> send(pid, {error_tag, ref, id, error})
     end
+
+    :ok
   end
 
   defp stream(url, token, {ref, id}, ok_tag, error_tag, pid) do
@@ -297,7 +302,9 @@ defmodule Teya.SSE do
   def guard(fun, pid, error_tag, {ref, id}) do
     fun.()
   catch
-    kind, reason -> send(pid, {error_tag, ref, id, crashed(kind, reason)})
+    kind, reason ->
+      send(pid, {error_tag, ref, id, crashed(kind, reason)})
+      :ok
   end
 
   defp crashed(kind, reason),

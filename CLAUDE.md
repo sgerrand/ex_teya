@@ -77,9 +77,9 @@ lib/teya/
                         split host and token. request_with_token/4 (ePOS
                         registration) has no set, so it uses
                         started_base_url/0: the recorded host, set before the
-                        auth processes start, put back if the start fails,
-                        erased when none resolved, cleared by
-                        Application.stop/1
+                        auth processes start, left alone by a start that finds
+                        the application running, erased when none resolved,
+                        cleared by Application.stop/1
   sse.ex              — SSE helpers: subscribe/6 starts a task that sends each
                         event to a process, with the task's ref;
                         first/4 returns the first event of a given name;

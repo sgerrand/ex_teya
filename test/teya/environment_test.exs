@@ -204,6 +204,24 @@ defmodule Teya.EnvironmentTest do
       on_exit(fn -> Application.put_env(:teya, :client_id, client_id) end)
     end
 
+    test "a restart records its settings, before its auth processes start" do
+      # Registered first, so it runs last: after TestEnv has put the config
+      # back, the application restarts as the other tests expect it.
+      on_exit(fn ->
+        Application.stop(:teya)
+        {:ok, _apps} = Application.ensure_all_started(:teya)
+      end)
+
+      TestEnv.put(:base_url, "https://restarted.example")
+
+      :ok = Application.stop(:teya)
+      {:ok, _apps} = Application.ensure_all_started(:teya)
+
+      # Registration and the restarted auth process got the same host.
+      assert HTTP.started_base_url() == "https://restarted.example"
+      assert :sys.get_state(Teya.Auth).config.base_url == "https://restarted.example"
+    end
+
     test "keeps the host it started with when a second start finds it running" do
       TestEnv.put(:base_url, "https://proxy.example")
       TestEnv.put(:credentials, online: [client_id: "a", client_secret: "b", scopes: ["s"]])
@@ -246,14 +264,24 @@ defmodule Teya.EnvironmentTest do
     end
 
     test "is not stopped by an environment it does not know, with no credentials" do
+      # Registered first, so it runs last, once the config is back.
+      on_exit(fn ->
+        Application.stop(:teya)
+        {:ok, _apps} = Application.ensure_all_started(:teya)
+      end)
+
       without_client_id()
       unset_urls()
       TestEnv.put(:environment, :sandbox)
 
       # An app that makes no requests, such as one that only checks
       # webhooks, starts; the environment is reported where it is used.
-      assert {:error, {:already_started, _pid}} = Teya.Application.start(:normal, [])
-      assert HTTP.started_base_url() == "https://api.teya.test"
+      :ok = Application.stop(:teya)
+      assert {:ok, _apps} = Application.ensure_all_started(:teya)
+      assert Process.whereis(Teya.Supervisor)
+
+      # With no host recorded, a request with no set reports it.
+      assert_raise ArgumentError, ~r/:environment must be/, fn -> HTTP.started_base_url() end
     end
   end
 

@@ -4,26 +4,27 @@ defmodule Teya.Application do
 
   @impl true
   def start(_type, _args) do
+    # A start that finds the application running changes nothing, not even
+    # for a moment: recording this start's settings first, even to put the
+    # running ones back after, would let a request in between go to a host
+    # the running auth processes were not started with.
+    case Process.whereis(Teya.Supervisor) do
+      nil -> start_tree()
+      pid -> {:error, {:already_started, pid}}
+    end
+  end
+
+  defp start_tree do
     urls = resolve_urls()
     auth_children = auth_children(urls)
     sets = for {name, _set} <- Teya.Config.sets(), do: name
-    previous = {started_sets(), Teya.HTTP.recorded_base_url()}
 
     # Recorded before the auth processes start, so none can take a request
-    # routed by an earlier run's sets, and put back if the start fails, as a
-    # start that finds the application already running does.
+    # routed by an earlier run's settings.
     record_start(sets, urls && urls.base_url)
     children = [{Task.Supervisor, name: Teya.TaskSupervisor} | auth_children]
 
-    case Supervisor.start_link(children, strategy: :one_for_one, name: Teya.Supervisor) do
-      {:ok, _pid} = started ->
-        started
-
-      error ->
-        {previous_sets, previous_base_url} = previous
-        record_start(previous_sets, previous_base_url)
-        error
-    end
+    Supervisor.start_link(children, strategy: :one_for_one, name: Teya.Supervisor)
   end
 
   # Nothing from a run outlives it, so a later start in the same VM cannot
@@ -40,8 +41,6 @@ defmodule Teya.Application do
     Teya.Auth.put_started_sets(sets)
     Teya.HTTP.put_started_base_url(base_url)
   end
-
-  defp started_sets, do: :persistent_term.get({Teya.Auth, :started_sets}, [])
 
   # The environment's URLs, read once for every set and for requests that
   # use no set. An :environment the library does not know is reported where

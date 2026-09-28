@@ -300,6 +300,19 @@ defmodule Teya.CredentialsTest do
       assert ids == [{Auth, nil}, {Auth, :online}, {Auth, :poslink}]
     end
 
+    test "gives every set the same URLs, read once" do
+      TestEnv.put(:credentials,
+        online: [client_id: "a", client_secret: "b", scopes: ["s"]],
+        poslink: [client_id: "c", client_secret: "d", scopes: ["s"]]
+      )
+
+      urls = %{base_url: "https://api.example", token_url: "https://id.example/token"}
+
+      for {Auth, config} <- Teya.Application.auth_children(urls) do
+        assert {config.base_url, config.token_url} == {urls.base_url, urls.token_url}
+      end
+    end
+
     test "restarts one set's auth process alone when it fails" do
       start_sets([:set_a, :set_b, :set_c, :set_d])
 

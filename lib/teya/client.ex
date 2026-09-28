@@ -59,8 +59,11 @@ defmodule Teya.Client do
   not an option of `request/3`, so a token cannot slip in through the
   options every resource function passes along. Takes the same options.
   """
-  def request_with_token(token, method, path, opts) when is_binary(token) and token != "",
-    do: send_request(method, path(path), opts, token)
+  def request_with_token(token, method, path, opts) when is_binary(token) and token != "" do
+    # No set holds this token, so it goes to the host the application
+    # started with, as every set's does.
+    send_request(method, join(HTTP.started_base_url(), path(path)), opts, token, [])
+  end
 
   @doc """
   Makes a POST that carries no `Idempotency-Key` header.
@@ -111,14 +114,6 @@ defmodule Teya.Client do
 
   def path(other),
     do: raise(ArgumentError, "a path is text or {template, values}, got: #{inspect(other)}")
-
-  @doc false
-  # The full URL for a path, for requests that do not go through request/3,
-  # such as the POSLink streams.
-  def url(path), do: full_url(path(path))
-
-  # The one place the base URL and a built path are joined.
-  defp full_url(built_path), do: HTTP.base_url() <> built_path
 
   # The values as a map from name to value. Anything but a keyword list, or
   # a name given twice, is a mistake: a map or list of other shapes would
@@ -176,9 +171,23 @@ defmodule Teya.Client do
     path = path(path)
     set = Auth.set_for(opts, api(path))
 
-    with {:ok, token} <- Auth.token(set),
-         do: send_request(method, path, opts, token, [credentials: set] ++ settings)
+    with {:ok, token, url} <- built_session_url(path, set),
+         do: send_request(method, url, opts, token, [credentials: set] ++ settings)
   end
+
+  @doc false
+  # A token for `set` and the full URL for `path` (text or a template) on
+  # the host that token belongs to, both from one reply of the set's auth
+  # process, so they always come from one environment. The path is built
+  # first, so a bad id raises before anything is asked of the auth process.
+  def session_url(path, set), do: built_session_url(path(path), set)
+
+  defp built_session_url(built_path, set) do
+    with {:ok, token, base_url} <- Auth.session(set), do: {:ok, token, join(base_url, built_path)}
+  end
+
+  # The one place a host and a built path are joined.
+  defp join(base_url, built_path), do: base_url <> built_path
 
   # POSLink has credentials of its own, from ePOS registration. Everything
   # else uses the Developer Portal client.
@@ -190,13 +199,13 @@ defmodule Teya.Client do
   #   (nil for the top-level credentials), so a retry asks it again
   # - :retry — Req's :retry option, unless :req_options sets one
   # - :idempotency_key — false sends no Idempotency-Key, even on a POST
-  defp send_request(method, path, opts, token, settings \\ []) do
+  defp send_request(method, url, opts, token, settings) do
     req_opts = Application.get_env(:teya, :req_options, [])
 
     req =
       [
         method: method,
-        url: full_url(path),
+        url: url,
         # Req's own option, which gives way to a user-agent set in
         # :req_options, as an option or a header.
         user_agent: HTTP.user_agent(),

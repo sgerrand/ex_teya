@@ -27,7 +27,7 @@ defmodule Teya.SSE do
   """
 
   alias ReqServerSentEvents.Frame
-  alias Teya.{Auth, Error, HTTP}
+  alias Teya.{Client, Error, HTTP}
 
   @default_max_error_body_bytes 65_536
 
@@ -36,7 +36,10 @@ defmodule Teya.SSE do
   @max_frame_bytes 1_048_576
 
   @doc false
-  # Starts a subscribe task for `url` and returns `{:ok, task}`. Every message
+  # Starts a subscribe task for `path`, text or a template as Client.path/1
+  # takes, and returns
+  # `{:ok, task}`. The task sends it to the host of the set whose token it
+  # carries. Every message
   # it sends `pid` carries `task.ref`, so two streams for the same id can be
   # told apart:
   #
@@ -46,12 +49,15 @@ defmodule Teya.SSE do
   # A task cannot see its own ref, which belongs to the caller's monitor, so
   # the caller sends it once the task has started, and the task waits for it
   # before it opens the stream.
-  def subscribe(url, set, id, pid, ok_tag, error_tag) do
+  def subscribe(path, set, id, pid, ok_tag, error_tag) do
+    # Built here, in the caller, so a bad id raises where the mistake was
+    # made. The task builds it again, with its host, in session_url/2.
+    Client.path(path)
     caller = self()
 
     task =
       Task.Supervisor.async_nolink(Teya.TaskSupervisor, fn ->
-        subscription(url, set, id, pid, {ok_tag, error_tag}, caller)
+        subscription(path, set, id, pid, {ok_tag, error_tag}, caller)
       end)
 
     send(task.pid, {:teya_subscription_ref, task.ref})
@@ -70,7 +76,7 @@ defmodule Teya.SSE do
   # recipient other than the caller that matches any ref still hears from
   # the stream, as an unlinked task would carry on for it before refs were
   # added.
-  def subscription(url, set, id, pid, tags, caller) do
+  def subscription(path, set, id, pid, tags, caller) do
     monitor = Process.monitor(caller)
 
     ref =
@@ -81,15 +87,17 @@ defmodule Teya.SSE do
 
     Process.demonitor(monitor, [:flush])
     {_ok_tag, error_tag} = tags
-    guard(fn -> run_subscription(url, set, {ref, id}, pid, tags) end, pid, error_tag, {ref, id})
+    guard(fn -> run_subscription(path, set, {ref, id}, pid, tags) end, pid, error_tag, {ref, id})
   end
 
   # Returns :ok however it ends. The task's result goes to the caller as
   # its reply, so an error returned here would reach the caller a second
   # time, in another shape, and reach it even when it is not `pid`.
-  defp run_subscription(url, set, {ref, id}, pid, {ok_tag, error_tag}) do
-    case Auth.token(set) do
-      {:ok, token} -> stream(url, token, {ref, id}, ok_tag, error_tag, pid)
+  # The host comes with the token, in one answer from the set's auth
+  # process, and is joined to the path only then.
+  defp run_subscription(path, set, {ref, id}, pid, {ok_tag, error_tag}) do
+    case Client.session_url(path, set) do
+      {:ok, token, url} -> stream(url, token, {ref, id}, ok_tag, error_tag, pid)
       {:error, error} -> send(pid, {error_tag, ref, id, error})
     end
 
@@ -127,7 +135,12 @@ defmodule Teya.SSE do
   #
   # Returns `{:ok, data}`, `:none` when the stream closed without such an
   # event, or `{:error, %Teya.Error{}}`.
-  def first(url, token, event_type, owner) do
+  def first(path, set, event_type, owner) do
+    with {:ok, token, url} <- Client.session_url(path, set),
+         do: read_first(url, token, event_type, owner)
+  end
+
+  defp read_first(url, token, event_type, owner) do
     handler = fn {:sse_event, %Frame{} = frame}, acc ->
       take_first(frame, event_type, owner, acc)
     end

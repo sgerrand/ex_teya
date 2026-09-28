@@ -4,28 +4,60 @@ defmodule Teya.Application do
 
   @impl true
   def start(_type, _args) do
-    auth_children = auth_children()
-    Teya.Auth.put_started_sets(for {name, _set} <- Teya.Config.sets(), do: name)
+    urls = resolve_urls()
+    auth_children = auth_children(urls)
+    sets = for {name, _set} <- Teya.Config.sets(), do: name
 
-    children = [{Task.Supervisor, name: Teya.TaskSupervisor} | auth_children]
+    # Teya.StartRecord comes first: it records these settings before any
+    # auth process starts, only if this supervisor wins its name, and clears
+    # them when the tree stops or fails to start.
+    children = [
+      {Teya.StartRecord, {sets, urls && urls.base_url}},
+      {Task.Supervisor, name: Teya.TaskSupervisor} | auth_children
+    ]
 
     Supervisor.start_link(children, strategy: :one_for_one, name: Teya.Supervisor)
   end
 
   @doc false
+  # What a start resolved, recorded in full: a host of nil, from an
+  # environment it did not know, erases any host an earlier run left, so a
+  # request with no set reports the environment rather than go to that run's
+  # host.
+  def record_start(sets, base_url) do
+    Teya.Auth.put_started_sets(sets)
+    Teya.HTTP.put_started_base_url(base_url)
+  end
+
+  # The environment's URLs, read once for every set and for requests that
+  # use no set. An :environment the library does not know is reported where
+  # it is used, by the sets of credentials and by a request, not here: an
+  # application that makes no requests, such as one that only checks
+  # webhooks, starts.
+  defp resolve_urls do
+    Teya.HTTP.urls()
+  rescue
+    ArgumentError -> nil
+  end
+
+  @doc false
   # An auth process for the top-level credentials, when :client_id is set,
-  # and one for each named set under :credentials. Each is registered under
-  # a name of its own, not in a shared registry, so none depends on another
-  # process: one that fails is restarted alone.
-  def auth_children do
-    top_level =
-      case Application.fetch_env(:teya, :client_id) do
-        {:ok, _} -> [{Teya.Auth, Teya.Config.from_env()}]
-        :error -> []
-      end
+  # and one for each named set under :credentials, all given the same URLs.
+  # Each is registered under a name of its own, not in a shared registry, so
+  # none depends on another process: one that fails is restarted alone.
+  def auth_children(urls \\ nil) do
+    top_level = if Application.fetch_env(:teya, :client_id) == :error, do: [], else: [nil]
+    names = top_level ++ Keyword.keys(Teya.Config.sets())
 
-    named = for {name, _set} <- Teya.Config.sets(), do: {Teya.Auth, Teya.Config.from_env(name)}
+    case names do
+      [] ->
+        []
 
-    top_level ++ named
+      names ->
+        # With no URLs resolved, resolving them again raises for the unknown
+        # environment, which these credentials need.
+        urls = urls || Teya.HTTP.urls()
+        for name <- names, do: {Teya.Auth, Teya.Config.from_env(name, urls)}
+    end
   end
 end

@@ -106,12 +106,19 @@ To use other URLs, such as a proxy, set `:base_url` or `:token_url`. Each
 wins over the environment's. The environment may be given as text, such as
 `System.get_env("TEYA_ENV", "production")`.
 
-Set these before the application starts, and do not change them while it
-runs. The auth process reads the credentials and the token URL once, when it
-starts, and keeps the token it fetched. API calls read `:environment` and
-`:base_url` on every request. So a change while the application runs sends
-API calls to the new host with a token from the old one, which Teya refuses.
-To switch, change the settings and restart the application.
+Each set of credentials reads these settings once, when the application
+starts it: its token URL and its API host come from the same environment,
+and every request made with its token goes to its host. So a change while
+the application runs has no effect on them until the next start, and a
+token they fetched is never sent to another environment's host. To switch,
+change the settings and restart the application.
+
+ePOS registration carries a signed-in user's token, which no set holds, and
+goes to the host the application started with too. So register against the
+environment the application is running in. If the application could not
+resolve a host when it started, because it did not know the environment, it
+has none to keep to, and registration uses the settings as they are when it
+is called.
 
 These settings are optional:
 

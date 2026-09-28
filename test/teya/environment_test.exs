@@ -3,7 +3,10 @@ defmodule Teya.EnvironmentTest do
   # :base_url or :token_url is set.
   use Teya.APICase, async: false
 
+  import Teya.POSLink.SubscribeCase, only: [stub_sse: 1]
+
   alias Teya.{Checkout, Config, HTTP, TestEnv}
+  alias Teya.POSLink.{Epos, Payment}
 
   # The test config sets both URLs. Unset them, so the environment decides.
   defp unset_urls do
@@ -108,16 +111,196 @@ defmodule Teya.EnvironmentTest do
     end
   end
 
-  test "an API call goes to the environment's host" do
-    unset_urls()
-    TestEnv.put(:environment, :staging)
+  describe "the host a request goes to" do
+    # Starts a set of credentials as the application would at boot, under
+    # the environment configured now, with a token cached.
+    defp start_set(name) do
+      TestEnv.put(:credentials, [
+        {name, [client_id: "id", client_secret: "secret", scopes: ["s"]]}
+      ])
 
-    stub_api(fn conn ->
-      assert conn.host == "api.teya.xyz"
-      json_response(conn, 200, %{"ok" => true})
-    end)
+      before = :persistent_term.get({Teya.Auth, :started_sets}, [])
+      Teya.Auth.put_started_sets([name])
+      on_exit(fn -> Teya.Auth.put_started_sets(before) end)
 
-    assert {:ok, _} = Checkout.get_session("cs-1")
+      pid = start_supervised!({Teya.Auth, Config.from_env(name)})
+
+      :sys.replace_state(pid, fn state ->
+        now = System.monotonic_time(:second)
+        %{state | token: "#{name}-token", expires_at: now + 3600, usable_until: now + 3600}
+      end)
+    end
+
+    defp stub_expecting(host, token) do
+      stub_api(fn conn ->
+        assert conn.host == host
+        assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer #{token}"]
+        json_response(conn, 200, %{"ok" => true})
+      end)
+    end
+
+    test "is the host of the environment its credentials started in" do
+      unset_urls()
+      TestEnv.put(:environment, :staging)
+      start_set(:stage)
+
+      # The staging set's token goes to the staging host...
+      stub_expecting("api.teya.xyz", "stage-token")
+      assert {:ok, _} = Checkout.get_session("cs-1", credentials: :stage)
+
+      # ...and the top-level token, from the test config at boot, to its own.
+      stub_expecting("api.teya.test", "test_access_token")
+      assert {:ok, _} = Checkout.get_session("cs-1")
+    end
+
+    test "does not move when the environment changes while running" do
+      start_set(:stage)
+
+      unset_urls()
+      TestEnv.put(:environment, :staging)
+
+      stub_expecting("api.teya.test", "stage-token")
+      assert {:ok, _} = Checkout.get_session("cs-1", credentials: :stage)
+    end
+
+    test "is the stream's host too" do
+      unset_urls()
+      TestEnv.put(:environment, :staging)
+      start_set(:stage)
+      # Changed after the set started, so the config now and the set differ.
+      TestEnv.put(:environment, :production)
+
+      stub_sse(fn conn ->
+        assert conn.host == "api.teya.xyz"
+        assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer stage-token"]
+
+        conn
+        |> Plug.Conn.put_resp_content_type("text/event-stream")
+        |> Plug.Conn.send_resp(200, "event: full\ndata: {\"status\":\"NEW\"}\n\n")
+      end)
+
+      assert {:ok, %{"status" => "NEW"}} =
+               Payment.get("pr-1", credentials: :stage)
+    end
+
+    # Registration carries a signed-in user's token, which no set holds, so
+    # it goes to the host the application started with, where every set's
+    # requests go, whatever the config says now.
+    test "for ePOS registration, is the one the application started with" do
+      unset_urls()
+      TestEnv.put(:environment, :staging)
+      stub_expecting("api.teya.test", "user-jwt")
+
+      assert {:ok, _} = Epos.register(%{}, user_token: "user-jwt")
+    end
+  end
+
+  describe "starting the application" do
+    # Takes the :client_id away for the test, so starting builds no auth
+    # process for the top-level credentials.
+    defp without_client_id do
+      {:ok, client_id} = Application.fetch_env(:teya, :client_id)
+      Application.delete_env(:teya, :client_id)
+      on_exit(fn -> Application.put_env(:teya, :client_id, client_id) end)
+    end
+
+    test "a restart records its settings, before its auth processes start" do
+      # Registered first, so it runs last: after TestEnv has put the config
+      # back, the application restarts as the other tests expect it.
+      on_exit(fn ->
+        Application.stop(:teya)
+        {:ok, _apps} = Application.ensure_all_started(:teya)
+      end)
+
+      TestEnv.put(:base_url, "https://restarted.example")
+
+      :ok = Application.stop(:teya)
+      {:ok, _apps} = Application.ensure_all_started(:teya)
+
+      # Registration and the restarted auth process got the same host.
+      assert HTTP.started_base_url() == "https://restarted.example"
+      assert :sys.get_state(Teya.Auth).config.base_url == "https://restarted.example"
+    end
+
+    test "a start that fails leaves no settings recorded" do
+      # Registered first, so it runs last, once the name is free again.
+      on_exit(fn -> {:ok, _apps} = Application.ensure_all_started(:teya) end)
+
+      :ok = Application.stop(:teya)
+
+      # A child's name already taken, so the supervisor cannot start.
+      squatter = spawn(fn -> Process.sleep(:infinity) end)
+      Process.register(squatter, Teya.TaskSupervisor)
+      on_exit(fn -> Process.exit(squatter, :kill) end)
+
+      TestEnv.put(:credentials, online: [client_id: "a", client_secret: "b", scopes: ["s"]])
+      assert {:error, _reason} = Application.ensure_all_started(:teya)
+
+      assert HTTP.recorded_base_url() == nil
+      assert :persistent_term.get({Teya.Auth, :started_sets}, []) == []
+    end
+
+    test "keeps the host it started with when a second start finds it running" do
+      TestEnv.put(:base_url, "https://proxy.example")
+      TestEnv.put(:credentials, online: [client_id: "a", client_secret: "b", scopes: ["s"]])
+      sets = :persistent_term.get({Teya.Auth, :started_sets}, [])
+
+      assert {:error, {:already_started, _pid}} = Teya.Application.start(:normal, [])
+
+      assert HTTP.started_base_url() == "https://api.teya.test"
+      assert :persistent_term.get({Teya.Auth, :started_sets}, []) == sets
+    end
+
+    # Puts back what the running test application recorded when it started.
+    defp restore_start do
+      sets = :persistent_term.get({Teya.Auth, :started_sets}, [])
+      base_url = HTTP.started_base_url()
+      on_exit(fn -> Teya.Application.record_start(sets, base_url) end)
+    end
+
+    test "a start that resolves no host erases the one an earlier run left" do
+      restore_start()
+      unset_urls()
+      TestEnv.put(:environment, :sandbox)
+
+      # As a later start in the same VM, with an environment it did not know.
+      Teya.Application.record_start([], nil)
+
+      # Registration then reports the environment instead of using the old host.
+      assert_raise ArgumentError, ~r/:environment must be/, fn ->
+        Epos.register(%{}, user_token: "user-jwt")
+      end
+    end
+
+    test "stopping clears what the run resolved" do
+      on_exit(fn -> {:ok, _apps} = Application.ensure_all_started(:teya) end)
+
+      :ok = Application.stop(:teya)
+
+      assert HTTP.recorded_base_url() == nil
+      assert :persistent_term.get({Teya.Auth, :started_sets}, []) == []
+    end
+
+    test "is not stopped by an environment it does not know, with no credentials" do
+      # Registered first, so it runs last, once the config is back.
+      on_exit(fn ->
+        Application.stop(:teya)
+        {:ok, _apps} = Application.ensure_all_started(:teya)
+      end)
+
+      without_client_id()
+      unset_urls()
+      TestEnv.put(:environment, :sandbox)
+
+      # An app that makes no requests, such as one that only checks
+      # webhooks, starts; the environment is reported where it is used.
+      :ok = Application.stop(:teya)
+      assert {:ok, _apps} = Application.ensure_all_started(:teya)
+      assert Process.whereis(Teya.Supervisor)
+
+      # With no host recorded, a request with no set reports it.
+      assert_raise ArgumentError, ~r/:environment must be/, fn -> HTTP.started_base_url() end
+    end
   end
 
   test ":base_url and :token_url win over the environment" do

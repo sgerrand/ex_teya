@@ -25,18 +25,44 @@ defmodule Teya.HTTP do
   # The API's base URL: :base_url if set, otherwise the :environment's.
   def base_url, do: url(:base_url)
 
+  @started_key {__MODULE__, :started_base_url}
+
+  @doc false
+  # The API's base URL as the application resolved it when it started, for
+  # a request with a token no set of credentials holds, such as ePOS
+  # registration: it then goes where every set's requests go, whatever the
+  # config says now. Before the application has started, it is base_url/0.
+  def started_base_url, do: recorded_base_url() || base_url()
+
+  @doc false
+  # The host recorded at start, or nil. An application that could not
+  # resolve one then, from an environment it did not know, has no startup
+  # host to keep to.
+  def recorded_base_url, do: :persistent_term.get(@started_key, nil)
+
+  @doc false
+  def put_started_base_url(nil), do: :persistent_term.erase(@started_key)
+  def put_started_base_url(url), do: :persistent_term.put(@started_key, url)
+
   @doc false
   # The token endpoint: :token_url if set, otherwise the :environment's.
   def token_url, do: url(:token_url)
 
-  # The environment is read first, whether or not the URL is set, so an
-  # unknown one always raises. An empty URL, from an unset environment
-  # variable say, counts as not set.
-  defp url(key) do
-    urls = environment()
+  @doc false
+  # Both URLs from one reading of the config, so they cannot come from two
+  # environments. The environment is read first, whether or not a URL is
+  # set, so an unknown one always raises.
+  def urls do
+    defaults = environment()
+    %{base_url: pick(:base_url, defaults), token_url: pick(:token_url, defaults)}
+  end
 
+  defp url(key), do: Map.fetch!(urls(), key)
+
+  # An empty URL, from an unset environment variable say, counts as not set.
+  defp pick(key, defaults) do
     case Application.get_env(:teya, key) do
-      url when url in [nil, ""] -> Map.fetch!(urls, key)
+      url when url in [nil, ""] -> Map.fetch!(defaults, key)
       url -> url
     end
   end

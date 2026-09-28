@@ -66,7 +66,7 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
 
       Task.async(fn ->
         Teya.SSE.subscription(
-          "https://api.teya.test/poslink/v3/payment-requests/pr-uuid-51",
+          "/poslink/v3/payment-requests/pr-uuid-51",
           nil,
           "pr-uuid-51",
           recipient,
@@ -717,9 +717,13 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
           sse_event("full", %{"status" => "SUCCESSFUL"})
       )
 
-      url = Teya.HTTP.base_url() <> "/poslink/v3/payment-requests/pr-uuid-37"
-
-      assert :none = Teya.SSE.first(url, "test_access_token", "full", owner)
+      assert :none =
+               Teya.SSE.first(
+                 {"/poslink/v3/payment-requests/:id", id: "pr-uuid-37"},
+                 nil,
+                 "full",
+                 owner
+               )
     end
 
     test "returns :timeout when no snapshot arrives in time" do

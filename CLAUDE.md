@@ -31,9 +31,14 @@ The library is an OTP application (`Teya.Application`) that starts a `Task.Super
 
 ```text
 lib/teya/
-  application.ex      — starts Teya.TaskSupervisor, a Teya.Auth for the top-level
-                        credentials (if :client_id set), and one per named set
-                        under :credentials, each under a name of its own
+  application.ex      — starts Teya.StartRecord, then Teya.TaskSupervisor, a
+                        Teya.Auth for the top-level credentials (if :client_id
+                        set), and one per named set under :credentials, each
+                        under a name of its own
+  start_record.ex     — first child of Teya.Supervisor: records the started
+                        set names and host when it starts, clears them when
+                        the tree stops or fails to start; only the start that
+                        registers the supervisor's name gets that far
   config.ex           — %Teya.Config{} struct; from_env/0 (top-level credentials),
                         from_env/1 (a named set), sets/0
   error.ex            — %Teya.Error{code, message, status, invalid_parameters, reason}
@@ -47,14 +52,17 @@ lib/teya/
                         run in tasks, and waiting callers share one fetch
   client.ex           — HTTP layer: picks a set of credentials (Auth.set_for/2:
                         :credentials option, else :poslink or :online by
-                        path, else top-level), calls Auth.token/1, adds Bearer header,
-                        auto-generates Idempotency-Key on POST/PATCH;
-                        every path is a plain string or {template, values},
-                        such as {"/v1/tokens/:id", id: token_id}; path/1 and
-                        url/1 encode each value (never interpolate a value
-                        into a path: a test in path_segment_test.exs fails
-                        the build if lib/ does; build stream URLs before any
-                        task starts);
+                        path, else top-level); session_url/2 takes a token
+                        and its host from one Auth.session/1 reply and joins
+                        the host to the path (the one place that happens);
+                        adds Bearer header, auto-generates Idempotency-Key
+                        on POST/PATCH; every path is a plain string or
+                        {template, values}, such as {"/v1/tokens/:id", id:
+                        token_id}, and path/1 encodes each value (never
+                        interpolate a value into a path: a test in
+                        path_segment_test.exs fails the build if lib/ does;
+                        streams check their path in the caller, before any
+                        task starts, and join the host in the task);
                         idempotent_post/2 for a POST whose spec documents
                         Idempotency-Key, retried when :retry_idempotent_posts
                         is set; post_without_idempotency_key/2 for a POST
@@ -64,7 +72,17 @@ lib/teya/
                         fallback to :req_options, and base_url/0 and
                         token_url/0 (:base_url/:token_url, else the
                         :environment's URLs; the only place they are
-                        written out)
+                        written out). urls/0 reads both in one pass;
+                        Application.start/2 calls it once and gives the
+                        result to every set's %Teya.Config{} (kept by an auth
+                        process restarted after a crash) and records the host
+                        for registration. Auth.session/1 hands out a token
+                        and its host in one reply, and requests and streams
+                        use both, so a config change while running cannot
+                        split host and token. request_with_token/4 (ePOS
+                        registration) has no set, so it uses
+                        started_base_url/0: the host Teya.StartRecord
+                        recorded (erased when none resolved)
   sse.ex              — SSE helpers: subscribe/6 starts a task that sends each
                         event to a process, with the task's ref;
                         first/4 returns the first event of a given name;

@@ -31,9 +31,14 @@ The library is an OTP application (`Teya.Application`) that starts a `Task.Super
 
 ```text
 lib/teya/
-  application.ex      — starts Teya.TaskSupervisor, a Teya.Auth for the top-level
-                        credentials (if :client_id set), and one per named set
-                        under :credentials, each under a name of its own
+  application.ex      — starts Teya.StartRecord, then Teya.TaskSupervisor, a
+                        Teya.Auth for the top-level credentials (if :client_id
+                        set), and one per named set under :credentials, each
+                        under a name of its own
+  start_record.ex     — first child of Teya.Supervisor: records the started
+                        set names and host when it starts, clears them when
+                        the tree stops or fails to start; only the start that
+                        registers the supervisor's name gets that far
   config.ex           — %Teya.Config{} struct; from_env/0 (top-level credentials),
                         from_env/1 (a named set), sets/0
   error.ex            — %Teya.Error{code, message, status, invalid_parameters, reason}
@@ -76,10 +81,8 @@ lib/teya/
                         use both, so a config change while running cannot
                         split host and token. request_with_token/4 (ePOS
                         registration) has no set, so it uses
-                        started_base_url/0: the recorded host, set before the
-                        auth processes start, left alone by a start that finds
-                        the application running, erased when none resolved,
-                        cleared by Application.stop/1
+                        started_base_url/0: the host Teya.StartRecord
+                        recorded (erased when none resolved)
   sse.ex              — SSE helpers: subscribe/6 starts a task that sends each
                         event to a process, with the task's ref;
                         first/4 returns the first event of a given name;

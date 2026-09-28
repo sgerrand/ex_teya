@@ -4,33 +4,20 @@ defmodule Teya.Application do
 
   @impl true
   def start(_type, _args) do
-    # A start that finds the application running changes nothing, not even
-    # for a moment: recording this start's settings first, even to put the
-    # running ones back after, would let a request in between go to a host
-    # the running auth processes were not started with.
-    case Process.whereis(Teya.Supervisor) do
-      nil -> start_tree()
-      pid -> {:error, {:already_started, pid}}
-    end
-  end
-
-  defp start_tree do
     urls = resolve_urls()
     auth_children = auth_children(urls)
     sets = for {name, _set} <- Teya.Config.sets(), do: name
 
-    # Recorded before the auth processes start, so none can take a request
-    # routed by an earlier run's settings.
-    record_start(sets, urls && urls.base_url)
-    children = [{Task.Supervisor, name: Teya.TaskSupervisor} | auth_children]
+    # Teya.StartRecord comes first: it records these settings before any
+    # auth process starts, only if this supervisor wins its name, and clears
+    # them when the tree stops or fails to start.
+    children = [
+      {Teya.StartRecord, {sets, urls && urls.base_url}},
+      {Task.Supervisor, name: Teya.TaskSupervisor} | auth_children
+    ]
 
     Supervisor.start_link(children, strategy: :one_for_one, name: Teya.Supervisor)
   end
-
-  # Nothing from a run outlives it, so a later start in the same VM cannot
-  # route by what an earlier one resolved.
-  @impl true
-  def stop(_state), do: record_start([], nil)
 
   @doc false
   # What a start resolved, recorded in full: a host of nil, from an

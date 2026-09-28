@@ -222,6 +222,24 @@ defmodule Teya.EnvironmentTest do
       assert :sys.get_state(Teya.Auth).config.base_url == "https://restarted.example"
     end
 
+    test "a start that fails leaves no settings recorded" do
+      # Registered first, so it runs last, once the name is free again.
+      on_exit(fn -> {:ok, _apps} = Application.ensure_all_started(:teya) end)
+
+      :ok = Application.stop(:teya)
+
+      # A child's name already taken, so the supervisor cannot start.
+      squatter = spawn(fn -> Process.sleep(:infinity) end)
+      Process.register(squatter, Teya.TaskSupervisor)
+      on_exit(fn -> Process.exit(squatter, :kill) end)
+
+      TestEnv.put(:credentials, online: [client_id: "a", client_secret: "b", scopes: ["s"]])
+      assert {:error, _reason} = Application.ensure_all_started(:teya)
+
+      assert HTTP.recorded_base_url() == nil
+      assert :persistent_term.get({Teya.Auth, :started_sets}, []) == []
+    end
+
     test "keeps the host it started with when a second start finds it running" do
       TestEnv.put(:base_url, "https://proxy.example")
       TestEnv.put(:credentials, online: [client_id: "a", client_secret: "b", scopes: ["s"]])
@@ -255,12 +273,12 @@ defmodule Teya.EnvironmentTest do
     end
 
     test "stopping clears what the run resolved" do
-      restore_start()
-      Teya.Application.stop(nil)
+      on_exit(fn -> {:ok, _apps} = Application.ensure_all_started(:teya) end)
 
+      :ok = Application.stop(:teya)
+
+      assert HTTP.recorded_base_url() == nil
       assert :persistent_term.get({Teya.Auth, :started_sets}, []) == []
-      TestEnv.put(:base_url, "https://live.example")
-      assert HTTP.started_base_url() == "https://live.example"
     end
 
     test "is not stopped by an environment it does not know, with no credentials" do

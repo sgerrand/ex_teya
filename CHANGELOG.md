@@ -1,5 +1,42 @@
 # Changelog
 
+## [1.0.0](https://github.com/sgerrand/ex_teya/compare/v0.4.3...v1.0.0) (2026-09-28)
+
+
+### ⚠ BREAKING CHANGES
+
+* **poslink:** POSLink stream messages gain the subscription's ref as their second element. Match {:poslink_payment, ^ref, id, type, data} and {:poslink_payment_error, ^ref, id, reason}, and the same for receipts, where ref is the ref of the task subscribe/3 or subscribe_status/3 returns. ([#54](https://github.com/sgerrand/ex_teya/issues/54)) ([7346f28](https://github.com/sgerrand/ex_teya/commit/7346f28f7c07f2da4736a3fb5e14af2587797b32))
+* **error:** every failed request returns {:error, %Teya.Error{}}. A network error comes back as %Teya.Error{status: nil, reason: exception} instead of the bare exception, and so do the reasons in {:poslink_payment_error, ...} and {:poslink_receipt_error, ...} messages. A failed token fetch has reason {:no_token, cause}. Payment.get/2 returns a %Teya.Error{} with reason :timeout, :no_snapshot, {:crashed, name} or {:exit, name} instead of bare values. JSON replies are decoded by the library, so :decoders, :decode_json and :raw in :req_options are ignored and JSON keys are always strings. ([#52](https://github.com/sgerrand/ex_teya/issues/52)) ([cf27b63](https://github.com/sgerrand/ex_teya/commit/cf27b638d8ed5693d98d6da36832226cf7ca2aac))
+* **dcc:** Teya.DCC.quote now calls POST /fx/v1/dcc/offers with the library's access token, whose scopes must include fx/dcc/create. The offer has no quoted_at; pass quote_id on instead. :dcc_req_options is no longer read; DCC calls use :req_options. ([#51](https://github.com/sgerrand/ex_teya/issues/51)) ([85fa625](https://github.com/sgerrand/ex_teya/commit/85fa625312eb03734c9eecf5d177381a8955f7ac))
+* without :token_url set, tokens are now fetched from https://id.teya.com/oauth/v2/oauth-token instead of https://identity.teya.com/connect/token. To keep the old endpoint, set config :teya, token_url: "https://identity.teya.com/connect/token". ([#48](https://github.com/sgerrand/ex_teya/issues/48)) ([da3a4d8](https://github.com/sgerrand/ex_teya/commit/da3a4d802131cb55fc740b3ee99825ea888046c5))
+* an :auth option in :req_options is now ignored. Every API request carries the library's bearer token, set after :req_options. ([#45](https://github.com/sgerrand/ex_teya/issues/45)) ([5e90476](https://github.com/sgerrand/ex_teya/commit/5e904760934d65a0ca6ff245e267c4dc79c148b1))
+* **error:** a token endpoint that refuses a token request now gives {:error, %Teya.Error{}} rather than {:error, %Req.Response{}}. ([#40](https://github.com/sgerrand/ex_teya/issues/40)) ([7a157d5](https://github.com/sgerrand/ex_teya/commit/7a157d5cdd367d1ab398c93ebd6e0d65c27a4e5b))
+* **webhook:** verify/3 and parse/3 no longer accept a PEM or Base64 key. Read it with Teya.Webhook.decode_key/1 and pass the result. ([#43](https://github.com/sgerrand/ex_teya/issues/43)) ([6f58e07](https://github.com/sgerrand/ex_teya/commit/6f58e0787c6623f3bded23966419a90e16829407))
+* **poslink:** Refund.create/2 now takes transaction_id (the original payment's gateway_payment_id) and amount instead of store_id and payment_request_id. Refund statuses are SUCCESS, FAILURE or PENDING. Payment.create/2 requires transaction_type and merchant_reference. Payment.list/1 requires the store_id query param. Payment.get/2 accepts only a :timeout option. ([#37](https://github.com/sgerrand/ex_teya/issues/37)) ([b61ca85](https://github.com/sgerrand/ex_teya/commit/b61ca852529b603f20d9e397c58a9fce2ca4ff52))
+
+### Features
+
+* add a staging environment and use the token URL Teya documents ([#48](https://github.com/sgerrand/ex_teya/issues/48)) ([da3a4d8](https://github.com/sgerrand/ex_teya/commit/da3a4d802131cb55fc740b3ee99825ea888046c5))
+* add MOTO payments, POSLink receipt text, store configs and ePOS registration ([#45](https://github.com/sgerrand/ex_teya/issues/45)) ([5e90476](https://github.com/sgerrand/ex_teya/commit/5e904760934d65a0ca6ff245e267c4dc79c148b1))
+* **error:** return a Teya.Error for every failed request ([#52](https://github.com/sgerrand/ex_teya/issues/52)) ([cf27b63](https://github.com/sgerrand/ex_teya/commit/cf27b638d8ed5693d98d6da36832226cf7ca2aac))
+* **error:** richer errors and a library user agent ([#40](https://github.com/sgerrand/ex_teya/issues/40)) ([7a157d5](https://github.com/sgerrand/ex_teya/commit/7a157d5cdd367d1ab398c93ebd6e0d65c27a4e5b))
+* name several sets of credentials, each with its own token ([#53](https://github.com/sgerrand/ex_teya/issues/53)) ([a2aa198](https://github.com/sgerrand/ex_teya/commit/a2aa198ff1ddbc23801fe49c19ff9306ca4aa2bd))
+* opt-in retries for POSTs that are safe to repeat ([#47](https://github.com/sgerrand/ex_teya/issues/47)) ([c7c9781](https://github.com/sgerrand/ex_teya/commit/c7c9781477a831c193449e8281b9900941d9f39e))
+* **poslink:** carry the subscription's ref in every stream message ([#54](https://github.com/sgerrand/ex_teya/issues/54)) ([7346f28](https://github.com/sgerrand/ex_teya/commit/7346f28f7c07f2da4736a3fb5e14af2587797b32))
+* **webhook:** check the signature on an incoming webhook ([#43](https://github.com/sgerrand/ex_teya/issues/43)) ([6f58e07](https://github.com/sgerrand/ex_teya/commit/6f58e0787c6623f3bded23966419a90e16829407))
+
+
+### Bug Fixes
+
+* **auth:** send each token to the host its credentials started with ([#56](https://github.com/sgerrand/ex_teya/issues/56)) ([9fb01aa](https://github.com/sgerrand/ex_teya/commit/9fb01aa39885904c82e4f264f9f418f5ffc0e236))
+* **dcc:** create DCC offers on the endpoint Teya documents ([#51](https://github.com/sgerrand/ex_teya/issues/51)) ([85fa625](https://github.com/sgerrand/ex_teya/commit/85fa625312eb03734c9eecf5d177381a8955f7ac))
+* **deps:** require mint 1.11, which fixes three security advisories ([#58](https://github.com/sgerrand/ex_teya/issues/58)) ([a62ba8e](https://github.com/sgerrand/ex_teya/commit/a62ba8e9088f4530b44ed1d64ce32e449c965678))
+* encode every id put into a request path ([#46](https://github.com/sgerrand/ex_teya/issues/46)) ([ad12c33](https://github.com/sgerrand/ex_teya/commit/ad12c33a78f0f096486a96ef1c55b7e15ba4691d))
+* **poslink:** move to current POSLink payment and refund endpoints ([#37](https://github.com/sgerrand/ex_teya/issues/37)) ([b61ca85](https://github.com/sgerrand/ex_teya/commit/b61ca852529b603f20d9e397c58a9fce2ca4ff52))
+* **poslink:** read the snapshot in get/2 outside the caller's mailbox ([#41](https://github.com/sgerrand/ex_teya/issues/41)) ([272b472](https://github.com/sgerrand/ex_teya/commit/272b47280830b107a5f74c96fdb5d01f7a3b73bb))
+* **sse:** cut an oversized error chunk instead of copying it whole ([#42](https://github.com/sgerrand/ex_teya/issues/42)) ([b066431](https://github.com/sgerrand/ex_teya/commit/b06643178a0cd484482c19601b50e93f654e5884))
+* **sse:** keep the error body on failed stream requests ([#39](https://github.com/sgerrand/ex_teya/issues/39)) ([ee0c912](https://github.com/sgerrand/ex_teya/commit/ee0c912233bde01c9ee7e273d4227d157787f565))
+
 ## [0.4.3](https://github.com/sgerrand/ex_teya/compare/v0.4.2...v0.4.3) (2026-09-10)
 
 

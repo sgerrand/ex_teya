@@ -4,20 +4,25 @@ defmodule Teya.Application do
 
   @impl true
   def start(_type, _args) do
-    auth_children = auth_children()
+    urls = resolve_urls()
+    auth_children = auth_children(urls)
     sets = for {name, _set} <- Teya.Config.sets(), do: name
-    base_url = started_base_url()
+    previous = {started_sets(), Teya.HTTP.recorded_base_url()}
 
+    # Recorded before the auth processes start, so none can take a request
+    # routed by an earlier run's sets, and put back if the start fails, as a
+    # start that finds the application already running does.
+    record_start(sets, urls && urls.base_url)
     children = [{Task.Supervisor, name: Teya.TaskSupervisor} | auth_children]
 
-    # Kept only once the supervisor, and with it these auth processes, has
-    # started. A start that finds the application already running changes
-    # nothing, or requests would be routed by settings the running auth
-    # processes were not started with.
-    with {:ok, _pid} = started <-
-           Supervisor.start_link(children, strategy: :one_for_one, name: Teya.Supervisor) do
-      record_start(sets, base_url)
-      started
+    case Supervisor.start_link(children, strategy: :one_for_one, name: Teya.Supervisor) do
+      {:ok, _pid} = started ->
+        started
+
+      error ->
+        {previous_sets, previous_base_url} = previous
+        record_start(previous_sets, previous_base_url)
+        error
     end
   end
 
@@ -36,29 +41,37 @@ defmodule Teya.Application do
     Teya.HTTP.put_started_base_url(base_url)
   end
 
-  # An :environment the library does not know is reported where it is used,
-  # by the sets of credentials and by a request, not here: an application
-  # that makes no requests, such as one that only checks webhooks, starts.
-  defp started_base_url do
-    Teya.HTTP.base_url()
+  defp started_sets, do: :persistent_term.get({Teya.Auth, :started_sets}, [])
+
+  # The environment's URLs, read once for every set and for requests that
+  # use no set. An :environment the library does not know is reported where
+  # it is used, by the sets of credentials and by a request, not here: an
+  # application that makes no requests, such as one that only checks
+  # webhooks, starts.
+  defp resolve_urls do
+    Teya.HTTP.urls()
   rescue
     ArgumentError -> nil
   end
 
   @doc false
   # An auth process for the top-level credentials, when :client_id is set,
-  # and one for each named set under :credentials. Each is registered under
-  # a name of its own, not in a shared registry, so none depends on another
-  # process: one that fails is restarted alone.
-  def auth_children do
-    top_level =
-      case Application.fetch_env(:teya, :client_id) do
-        {:ok, _} -> [{Teya.Auth, Teya.Config.from_env()}]
-        :error -> []
-      end
+  # and one for each named set under :credentials, all given the same URLs.
+  # Each is registered under a name of its own, not in a shared registry, so
+  # none depends on another process: one that fails is restarted alone.
+  def auth_children(urls \\ nil) do
+    top_level = if Application.fetch_env(:teya, :client_id) == :error, do: [], else: [nil]
+    names = top_level ++ Keyword.keys(Teya.Config.sets())
 
-    named = for {name, _set} <- Teya.Config.sets(), do: {Teya.Auth, Teya.Config.from_env(name)}
+    case names do
+      [] ->
+        []
 
-    top_level ++ named
+      names ->
+        # With no URLs resolved, resolving them again raises for the unknown
+        # environment, which these credentials need.
+        urls = urls || Teya.HTTP.urls()
+        for name <- names, do: {Teya.Auth, Teya.Config.from_env(name, urls)}
+    end
   end
 end

@@ -67,16 +67,19 @@ lib/teya/
                         fallback to :req_options, and base_url/0 and
                         token_url/0 (:base_url/:token_url, else the
                         :environment's URLs; the only place they are
-                        written out). Both read the live config; each
-                        %Teya.Config{} resolves them together when its auth
-                        process starts. Auth.session/1 hands out a token and
-                        that host in one reply, and requests and streams use
-                        both, so a config change while running cannot split
-                        host and token. request_with_token/4 (ePOS
+                        written out). urls/0 reads both in one pass;
+                        Application.start/2 calls it once and gives the
+                        result to every set's %Teya.Config{} (kept by an auth
+                        process restarted after a crash) and records the host
+                        for registration. Auth.session/1 hands out a token
+                        and its host in one reply, and requests and streams
+                        use both, so a config change while running cannot
+                        split host and token. request_with_token/4 (ePOS
                         registration) has no set, so it uses
-                        started_base_url/0, the host the application started
-                        with, recorded in full after each successful start
-                        (nil erases it) and cleared by Application.stop/1
+                        started_base_url/0: the recorded host, set before the
+                        auth processes start, put back if the start fails,
+                        erased when none resolved, cleared by
+                        Application.stop/1
   sse.ex              — SSE helpers: subscribe/6 starts a task that sends each
                         event to a process, with the task's ref;
                         first/4 returns the first event of a given name;

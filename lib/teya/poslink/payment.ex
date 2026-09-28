@@ -354,7 +354,7 @@ defmodule Teya.POSLink.Payment do
     SSE.subscribe(path, set, payment_request_id, pid, :poslink_payment, :poslink_payment_error)
   end
 
-  # Built by the caller, before any task starts, so an id that cannot be a
-  # path segment raises where the mistake was made.
+  # A template, built and checked by Client.path/1 in the caller, before any
+  # task starts, so an id that cannot be a path segment raises there.
   defp stream_path(id), do: {"/poslink/v3/payment-requests/:id", id: id}
 end

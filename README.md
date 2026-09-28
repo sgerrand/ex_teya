@@ -115,7 +115,10 @@ change the settings and restart the application.
 
 ePOS registration carries a signed-in user's token, which no set holds, and
 goes to the host the application started with too. So register against the
-environment the application is running in.
+environment the application is running in. If the application could not
+resolve a host when it started, because it did not know the environment, it
+has none to keep to, and registration uses the settings as they are when it
+is called.
 
 These settings are optional:
 

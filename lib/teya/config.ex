@@ -54,29 +54,31 @@ defmodule Teya.Config do
   defstruct [:name, :client_id, :client_secret, :token_url, :base_url, scopes: []]
 
   @doc false
-  # The top-level credentials.
-  def from_env do
+  # The top-level credentials, or with a name, a set from `:credentials`.
+  # `urls` are the environment's URLs, resolved once for every set by the
+  # application as it starts, so each set's token URL and host agree.
+  def from_env(name \\ nil, urls \\ HTTP.urls())
+
+  def from_env(nil, urls) do
     %__MODULE__{
       client_id: Application.fetch_env!(:teya, :client_id),
       client_secret: Application.fetch_env!(:teya, :client_secret),
-      token_url: HTTP.token_url(),
-      base_url: HTTP.base_url(),
+      token_url: urls.token_url,
+      base_url: urls.base_url,
       scopes: Application.get_env(:teya, :scopes, [])
     }
     |> validate!()
   end
 
-  @doc false
-  # A named set from `:credentials`.
-  def from_env(name) do
+  def from_env(name, urls) do
     set = Keyword.fetch!(sets(), name)
 
     %__MODULE__{
       name: name,
       client_id: Keyword.get(set, :client_id),
       client_secret: Keyword.get(set, :client_secret),
-      token_url: HTTP.token_url(),
-      base_url: HTTP.base_url(),
+      token_url: urls.token_url,
+      base_url: urls.base_url,
       scopes: Keyword.get(set, :scopes, [])
     }
     |> validate!()

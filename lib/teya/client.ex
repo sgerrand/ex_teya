@@ -168,9 +168,10 @@ defmodule Teya.Client do
   # The set of credentials is picked before anything else, so an unknown
   # name raises in the caller.
   defp authed_request(method, path, opts, settings) do
-    set = Auth.set_for(opts, api(path(path)))
+    path = path(path)
+    set = Auth.set_for(opts, api(path))
 
-    with {:ok, token, url} <- session_url(path, set),
+    with {:ok, token, url} <- built_session_url(path, set),
          do: send_request(method, url, opts, token, [credentials: set] ++ settings)
   end
 
@@ -179,9 +180,10 @@ defmodule Teya.Client do
   # the host that token belongs to, both from one reply of the set's auth
   # process, so they always come from one environment. The path is built
   # first, so a bad id raises before anything is asked of the auth process.
-  def session_url(path, set) do
-    path = path(path)
-    with {:ok, token, base_url} <- Auth.session(set), do: {:ok, token, join(base_url, path)}
+  def session_url(path, set), do: built_session_url(path(path), set)
+
+  defp built_session_url(built_path, set) do
+    with {:ok, token, base_url} <- Auth.session(set), do: {:ok, token, join(base_url, built_path)}
   end
 
   # The one place a host and a built path are joined.

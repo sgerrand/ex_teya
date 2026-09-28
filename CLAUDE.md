@@ -75,7 +75,8 @@ lib/teya/
                         host and token. request_with_token/4 (ePOS
                         registration) has no set, so it uses
                         started_base_url/0, the host the application started
-                        with, stored only after a successful start
+                        with, recorded in full after each successful start
+                        (nil erases it) and cleared by Application.stop/1
   sse.ex              — SSE helpers: subscribe/6 starts a task that sends each
                         event to a process, with the task's ref;
                         first/4 returns the first event of a given name;

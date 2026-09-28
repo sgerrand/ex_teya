@@ -35,6 +35,7 @@ defmodule Teya.HTTP do
   def started_base_url, do: :persistent_term.get(@started_key, nil) || base_url()
 
   @doc false
+  def put_started_base_url(nil), do: :persistent_term.erase(@started_key)
   def put_started_base_url(url), do: :persistent_term.put(@started_key, url)
 
   @doc false

@@ -52,6 +52,10 @@ defmodule Teya.MixProject do
       {:req, "~> 0.5"},
       {:req_server_sent_events, "~> 0.2"},
       {:jason, "~> 1.4"},
+      # Not called directly: Req uses it, through Finch. Listed only to keep
+      # applications on a version with fixes for CVE-2026-91043,
+      # CVE-2026-92103 and CVE-2026-94194, which earlier versions have.
+      {:mint, "~> 1.11"},
       {:plug, "~> 1.16", only: :test},
       {:excoveralls, "~> 0.18", only: :test},
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},

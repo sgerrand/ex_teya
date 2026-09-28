@@ -231,7 +231,14 @@ defmodule Teya.EnvironmentTest do
       # A child's name already taken, so the supervisor cannot start.
       squatter = spawn(fn -> Process.sleep(:infinity) end)
       Process.register(squatter, Teya.TaskSupervisor)
-      on_exit(fn -> Process.exit(squatter, :kill) end)
+
+      # Waits until it is gone: Process.exit/2 only sends the signal, and the
+      # restart above would fail on the name if it were still taken.
+      on_exit(fn ->
+        ref = Process.monitor(squatter)
+        Process.exit(squatter, :kill)
+        assert_receive {:DOWN, ^ref, :process, ^squatter, _reason}, 5_000
+      end)
 
       TestEnv.put(:credentials, online: [client_id: "a", client_secret: "b", scopes: ["s"]])
       assert {:error, _reason} = Application.ensure_all_started(:teya)

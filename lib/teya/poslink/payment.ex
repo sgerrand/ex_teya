@@ -167,6 +167,9 @@ defmodule Teya.POSLink.Payment do
     caller = self()
     set = Auth.set_for(opts, :poslink)
     path = stream_path(payment_request_id)
+    # Built here, in the caller, so a bad id raises where the mistake was
+    # made, rather than in the task.
+    Client.path(path)
 
     task =
       Task.Supervisor.async_nolink(Teya.TaskSupervisor, fn ->
@@ -197,16 +200,10 @@ defmodule Teya.POSLink.Payment do
   # Only a "full" event is a snapshot: a "diff" carries just the fields that
   # changed, and returning one as the payment would leave out identifiers the
   # caller needs, such as gateway_payment_id for a refund.
-  # The host comes with the token, in one answer from the set's auth process.
   defp fetch_snapshot(path, set, caller) do
-    with {:ok, token, base_url} <- Auth.session(set) do
-      case SSE.first(base_url <> path, token, "full", caller) do
-        :none ->
-          {:error, Error.from_reason(:no_snapshot, "the stream closed without a snapshot")}
-
-        result ->
-          result
-      end
+    case SSE.first(path, set, "full", caller) do
+      :none -> {:error, Error.from_reason(:no_snapshot, "the stream closed without a snapshot")}
+      result -> result
     end
   end
 
@@ -359,5 +356,5 @@ defmodule Teya.POSLink.Payment do
 
   # Built by the caller, before any task starts, so an id that cannot be a
   # path segment raises where the mistake was made.
-  defp stream_path(id), do: Client.path({"/poslink/v3/payment-requests/:id", id: id})
+  defp stream_path(id), do: {"/poslink/v3/payment-requests/:id", id: id}
 end

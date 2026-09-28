@@ -59,8 +59,11 @@ defmodule Teya.Client do
   not an option of `request/3`, so a token cannot slip in through the
   options every resource function passes along. Takes the same options.
   """
-  def request_with_token(token, method, path, opts) when is_binary(token) and token != "",
-    do: send_request(method, path(path), opts, token, base_url: HTTP.base_url())
+  def request_with_token(token, method, path, opts) when is_binary(token) and token != "" do
+    # No set holds this token, so it goes to the host the application
+    # started with, as every set's does.
+    send_request(method, join(HTTP.started_base_url(), path(path)), opts, token, [])
+  end
 
   @doc """
   Makes a POST that carries no `Idempotency-Key` header.
@@ -165,14 +168,24 @@ defmodule Teya.Client do
   # The set of credentials is picked before anything else, so an unknown
   # name raises in the caller.
   defp authed_request(method, path, opts, settings) do
-    path = path(path)
-    set = Auth.set_for(opts, api(path))
+    set = Auth.set_for(opts, api(path(path)))
 
-    with {:ok, token, base_url} <- Auth.session(set) do
-      settings = [credentials: set, base_url: base_url] ++ settings
-      send_request(method, path, opts, token, settings)
-    end
+    with {:ok, token, url} <- session_url(path, set),
+         do: send_request(method, url, opts, token, [credentials: set] ++ settings)
   end
+
+  @doc false
+  # A token for `set` and the full URL for `path` (text or a template) on
+  # the host that token belongs to, both from one reply of the set's auth
+  # process, so they always come from one environment. The path is built
+  # first, so a bad id raises before anything is asked of the auth process.
+  def session_url(path, set) do
+    path = path(path)
+    with {:ok, token, base_url} <- Auth.session(set), do: {:ok, token, join(base_url, path)}
+  end
+
+  # The one place a host and a built path are joined.
+  defp join(base_url, built_path), do: base_url <> built_path
 
   # POSLink has credentials of its own, from ePOS registration. Everything
   # else uses the Developer Portal client.
@@ -182,16 +195,15 @@ defmodule Teya.Client do
   # settings, for this library's callers only:
   # - :credentials — the token came from the auth process for this set
   #   (nil for the top-level credentials), so a retry asks it again
-  # - :base_url — the host the token belongs to (see Auth.session/1)
   # - :retry — Req's :retry option, unless :req_options sets one
   # - :idempotency_key — false sends no Idempotency-Key, even on a POST
-  defp send_request(method, path, opts, token, settings) do
+  defp send_request(method, url, opts, token, settings) do
     req_opts = Application.get_env(:teya, :req_options, [])
 
     req =
       [
         method: method,
-        url: Keyword.fetch!(settings, :base_url) <> path,
+        url: url,
         # Req's own option, which gives way to a user-agent set in
         # :req_options, as an option or a header.
         user_agent: HTTP.user_agent(),

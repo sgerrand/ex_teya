@@ -183,15 +183,47 @@ defmodule Teya.EnvironmentTest do
                Payment.get("pr-1", credentials: :stage)
     end
 
-    # Registration carries a signed-in user's token, which the library did
-    # not fetch and no set of credentials holds, so it has no startup host to
-    # keep to: it goes to the host configured when it is called.
-    test "for ePOS registration, is the one configured when it is called" do
+    # Registration carries a signed-in user's token, which no set holds, so
+    # it goes to the host the application started with, where every set's
+    # requests go, whatever the config says now.
+    test "for ePOS registration, is the one the application started with" do
       unset_urls()
       TestEnv.put(:environment, :staging)
-      stub_expecting("api.teya.xyz", "user-jwt")
+      stub_expecting("api.teya.test", "user-jwt")
 
       assert {:ok, _} = Epos.register(%{}, user_token: "user-jwt")
+    end
+  end
+
+  describe "starting the application" do
+    # Takes the :client_id away for the test, so starting builds no auth
+    # process for the top-level credentials.
+    defp without_client_id do
+      {:ok, client_id} = Application.fetch_env(:teya, :client_id)
+      Application.delete_env(:teya, :client_id)
+      on_exit(fn -> Application.put_env(:teya, :client_id, client_id) end)
+    end
+
+    test "keeps the host it started with when a second start finds it running" do
+      TestEnv.put(:base_url, "https://proxy.example")
+      TestEnv.put(:credentials, online: [client_id: "a", client_secret: "b", scopes: ["s"]])
+      sets = :persistent_term.get({Teya.Auth, :started_sets}, [])
+
+      assert {:error, {:already_started, _pid}} = Teya.Application.start(:normal, [])
+
+      assert HTTP.started_base_url() == "https://api.teya.test"
+      assert :persistent_term.get({Teya.Auth, :started_sets}, []) == sets
+    end
+
+    test "is not stopped by an environment it does not know, with no credentials" do
+      without_client_id()
+      unset_urls()
+      TestEnv.put(:environment, :sandbox)
+
+      # An app that makes no requests, such as one that only checks
+      # webhooks, starts; the environment is reported where it is used.
+      assert {:error, {:already_started, _pid}} = Teya.Application.start(:normal, [])
+      assert HTTP.started_base_url() == "https://api.teya.test"
     end
   end
 

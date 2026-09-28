@@ -113,10 +113,9 @@ the application runs has no effect on them until the next start, and a
 token they fetched is never sent to another environment's host. To switch,
 change the settings and restart the application.
 
-ePOS registration is the exception. It carries a signed-in user's token,
-which the library did not fetch and no set holds, so it goes to the host
-configured when it is called: register against the environment the user
-signed in to.
+ePOS registration carries a signed-in user's token, which no set holds, and
+goes to the host the application started with too. So register against the
+environment the application is running in.
 
 These settings are optional:
 

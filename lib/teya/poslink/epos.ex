@@ -12,12 +12,9 @@ defmodule Teya.POSLink.Epos do
   reads them once, when it starts, and only then begins fetching tokens.
   Setting them with `Application.put_env/3` while it runs changes nothing.
 
-  Registration itself carries the user's token, which no set of credentials
-  holds, so it goes to the API host configured when it is called, not one
-  kept from startup: make sure `:environment` (or `:base_url`) names the
-  environment the user signed in to.
-
-  Registration itself needs no `:client_id`: it runs before there is one.
+  The request goes to the API host the application started with, like every
+  other request, so register against the environment it is running in. It
+  needs no `:client_id`: it runs before there is one.
   """
 
   alias Teya.Client

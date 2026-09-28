@@ -27,7 +27,7 @@ defmodule Teya.SSE do
   """
 
   alias ReqServerSentEvents.Frame
-  alias Teya.{Auth, Error, HTTP}
+  alias Teya.{Client, Error, HTTP}
 
   @default_max_error_body_bytes 65_536
 
@@ -36,7 +36,8 @@ defmodule Teya.SSE do
   @max_frame_bytes 1_048_576
 
   @doc false
-  # Starts a subscribe task for `path`, built with Client.path/1, and returns
+  # Starts a subscribe task for `path`, text or a template as Client.path/1
+  # takes, and returns
   # `{:ok, task}`. The task sends it to the host of the set whose token it
   # carries. Every message
   # it sends `pid` carries `task.ref`, so two streams for the same id can be
@@ -49,6 +50,9 @@ defmodule Teya.SSE do
   # the caller sends it once the task has started, and the task waits for it
   # before it opens the stream.
   def subscribe(path, set, id, pid, ok_tag, error_tag) do
+    # Built here, in the caller, so a bad id raises where the mistake was
+    # made. The task builds it again, with its host, in session_url/2.
+    Client.path(path)
     caller = self()
 
     task =
@@ -92,8 +96,8 @@ defmodule Teya.SSE do
   # The host comes with the token, in one answer from the set's auth
   # process, and is joined to the path only then.
   defp run_subscription(path, set, {ref, id}, pid, {ok_tag, error_tag}) do
-    case Auth.session(set) do
-      {:ok, token, base_url} -> stream(base_url <> path, token, {ref, id}, ok_tag, error_tag, pid)
+    case Client.session_url(path, set) do
+      {:ok, token, url} -> stream(url, token, {ref, id}, ok_tag, error_tag, pid)
       {:error, error} -> send(pid, {error_tag, ref, id, error})
     end
 
@@ -131,7 +135,12 @@ defmodule Teya.SSE do
   #
   # Returns `{:ok, data}`, `:none` when the stream closed without such an
   # event, or `{:error, %Teya.Error{}}`.
-  def first(url, token, event_type, owner) do
+  def first(path, set, event_type, owner) do
+    with {:ok, token, url} <- Client.session_url(path, set),
+         do: read_first(url, token, event_type, owner)
+  end
+
+  defp read_first(url, token, event_type, owner) do
     handler = fn {:sse_event, %Frame{} = frame}, acc ->
       take_first(frame, event_type, owner, acc)
     end

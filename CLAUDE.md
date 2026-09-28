@@ -47,14 +47,17 @@ lib/teya/
                         run in tasks, and waiting callers share one fetch
   client.ex           — HTTP layer: picks a set of credentials (Auth.set_for/2:
                         :credentials option, else :poslink or :online by
-                        path, else top-level), calls Auth.token/1, adds Bearer header,
-                        auto-generates Idempotency-Key on POST/PATCH;
-                        every path is a plain string or {template, values},
-                        such as {"/v1/tokens/:id", id: token_id}; path/1 and
-                        url/1 encode each value (never interpolate a value
-                        into a path: a test in path_segment_test.exs fails
-                        the build if lib/ does; build stream URLs before any
-                        task starts);
+                        path, else top-level); session_url/2 takes a token
+                        and its host from one Auth.session/1 reply and joins
+                        the host to the path (the one place that happens);
+                        adds Bearer header, auto-generates Idempotency-Key
+                        on POST/PATCH; every path is a plain string or
+                        {template, values}, such as {"/v1/tokens/:id", id:
+                        token_id}, and path/1 encodes each value (never
+                        interpolate a value into a path: a test in
+                        path_segment_test.exs fails the build if lib/ does;
+                        streams check their path in the caller, before any
+                        task starts, and join the host in the task);
                         idempotent_post/2 for a POST whose spec documents
                         Idempotency-Key, retried when :retry_idempotent_posts
                         is set; post_without_idempotency_key/2 for a POST
@@ -70,7 +73,9 @@ lib/teya/
                         that host in one reply, and requests and streams use
                         both, so a config change while running cannot split
                         host and token. request_with_token/4 (ePOS
-                        registration) has no set, so it uses the live host
+                        registration) has no set, so it uses
+                        started_base_url/0, the host the application started
+                        with, stored only after a successful start
   sse.ex              — SSE helpers: subscribe/6 starts a task that sends each
                         event to a process, with the task's ref;
                         first/4 returns the first event of a given name;

@@ -128,7 +128,7 @@ defmodule Teya.POSLink.Receipt do
     # Built before the task starts, so an id that cannot be a path segment
     # raises where the mistake was made.
     set = Auth.set_for(opts, :poslink)
-    path = Client.path({"/poslink/v1/receipt-requests/:id/status", id: receipt_id})
+    path = {"/poslink/v1/receipt-requests/:id/status", id: receipt_id}
 
     SSE.subscribe(path, set, receipt_id, pid, :poslink_receipt, :poslink_receipt_error)
   end

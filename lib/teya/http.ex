@@ -125,7 +125,10 @@ defmodule Teya.HTTP do
   # Request options for one kind of request, falling back to :req_options
   # when none are set for it.
   def options(key) do
-    Application.get_env(:teya, key, Application.get_env(:teya, :req_options, []))
+    case Application.fetch_env(:teya, key) do
+      {:ok, options} -> options
+      :error -> Application.get_env(:teya, :req_options, [])
+    end
   end
 
   @doc false

@@ -13,6 +13,13 @@ defmodule Teya.TestEnv do
     on_exit(fn -> restore(key, original) end)
   end
 
+  # Removes a setting for the running test only.
+  def delete(key) do
+    original = Application.fetch_env(:teya, key)
+    Application.delete_env(:teya, key)
+    on_exit(fn -> restore(key, original) end)
+  end
+
   # Adds options to a keyword-list setting, such as :req_options.
   def add(key, extra), do: put(key, Application.get_env(:teya, key, []) ++ extra)
 

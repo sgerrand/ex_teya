@@ -160,7 +160,9 @@ defmodule Teya.Auth do
 
   defp timed_out, do: %Error{message: "timed out waiting for an access token"}
 
-  defp request_failed, do: %Error{message: "the token request failed"}
+  @request_failed "the token request failed"
+
+  defp request_failed, do: %Error{message: @request_failed}
 
   defp gives_up_at(:infinity), do: :infinity
   defp gives_up_at(timeout), do: System.monotonic_time(:millisecond) + timeout
@@ -403,7 +405,7 @@ defmodule Teya.Auth do
 
     case Req.request(req) do
       {:ok, resp} -> resp |> HTTP.decode_json() |> token_result()
-      {:error, reason} -> {:error, Error.from_reason(reason, "the token request failed")}
+      {:error, reason} -> {:error, Error.from_reason(reason, @request_failed)}
     end
   end
 

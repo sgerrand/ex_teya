@@ -335,11 +335,12 @@ defmodule Teya.SSE do
   defp crash_name(kind, _reason), do: kind
 
   # A frame with no data, such as a keepalive, or data that is not a JSON
-  # object, carries nothing to pass on.
+  # object, carries nothing to pass on. Strings are copied, as in
+  # HTTP.decode_json/2, so a kept value does not keep the received chunk.
   defp decode_frame(%Frame{data: nil}), do: nil
 
   defp decode_frame(%Frame{data: data, event: event}) do
-    case Jason.decode(data) do
+    case Jason.decode(data, strings: :copy) do
       {:ok, decoded} when is_map(decoded) -> {event, decoded}
       _ -> nil
     end

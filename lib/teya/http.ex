@@ -106,8 +106,10 @@ defmodule Teya.HTTP do
     end
   end
 
+  # Strings are copied out of the body, so a value the caller keeps does not
+  # keep the whole body alive with it.
   defp decode(resp, on_error) do
-    case Jason.decode(resp.body) do
+    case Jason.decode(resp.body, strings: :copy) do
       {:ok, decoded} -> {:ok, %{resp | body: decoded}}
       {:error, _error} -> on_error
     end

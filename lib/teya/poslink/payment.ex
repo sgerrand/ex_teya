@@ -170,8 +170,14 @@ defmodule Teya.POSLink.Payment do
     # fields that changed, and returning one as the payment would leave out
     # identifiers the caller needs, such as gateway_payment_id for a refund.
     case SSE.first(stream_path(payment_request_id), opts, "full", timeout) do
-      :none -> {:error, Error.from_reason(:no_snapshot, "the stream closed without a snapshot")}
-      result -> result
+      :none ->
+        {:error, Error.from_reason(:no_snapshot, "the stream closed without a snapshot")}
+
+      {:error, %Error{reason: :timeout} = error} ->
+        {:error, %{error | message: "no snapshot arrived in time"}}
+
+      result ->
+        result
     end
   end
 

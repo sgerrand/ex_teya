@@ -148,7 +148,7 @@ defmodule Teya.SSE do
          Error.from_reason({:exit, exit_name(reason)}, "the task reading the stream exited")}
 
       nil ->
-        {:error, Error.from_reason(:timeout, "no snapshot arrived in time")}
+        {:error, Error.from_reason(:timeout, "no #{inspect(event_type)} event arrived in time")}
     end
   end
 

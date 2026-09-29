@@ -29,7 +29,7 @@ defmodule Teya.POSLink.Payment do
     stream always starts with a full snapshot of the payment request.
   """
 
-  alias Teya.{Auth, Client, Error, SSE}
+  alias Teya.{Client, Error, SSE}
 
   @doc """
   Creates a payment request at a terminal.
@@ -164,46 +164,20 @@ defmodule Teya.POSLink.Payment do
   def get(payment_request_id, opts \\ []) do
     timeout = Keyword.get(opts, :timeout, 30_000)
 
-    caller = self()
-    set = Auth.set_for(opts, :poslink)
-    path = stream_path(payment_request_id)
-    # Built here, in the caller, so a bad id raises where the mistake was
-    # made, rather than in the task.
-    Client.path(path)
+    # The snapshot comes back as the read's result rather than as a message,
+    # so nothing from this stream can mix with a subscribe/2 stream's
+    # messages. Only a "full" event is a snapshot: a "diff" carries just the
+    # fields that changed, and returning one as the payment would leave out
+    # identifiers the caller needs, such as gateway_payment_id for a refund.
+    case SSE.first(stream_path(payment_request_id), opts, "full", timeout) do
+      :none ->
+        {:error, Error.from_reason(:no_snapshot, "the stream closed without a snapshot")}
 
-    task =
-      Task.Supervisor.async_nolink(Teya.TaskSupervisor, fn ->
-        SSE.guard(fn -> fetch_snapshot(path, set, caller) end)
-      end)
+      {:error, %Error{reason: :timeout} = error} ->
+        {:error, %{error | message: "no snapshot arrived in time"}}
 
-    case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
-      {:ok, result} ->
+      result ->
         result
-
-      # Only when the task was killed from outside: it catches its own crashes.
-      {:exit, reason} ->
-        {:error,
-         Error.from_reason({:exit, exit_name(reason)}, "the task reading the stream exited")}
-
-      nil ->
-        {:error, Error.from_reason(:timeout, "no snapshot arrived in time")}
-    end
-  end
-
-  # An exit reason other than a single word may hold anything, so only that
-  # it was something else is kept.
-  defp exit_name(reason) when is_atom(reason), do: reason
-  defp exit_name(_reason), do: :other
-
-  # The snapshot comes back as the task's result rather than as a message, so
-  # nothing from this stream can mix with a subscribe/2 stream's messages.
-  # Only a "full" event is a snapshot: a "diff" carries just the fields that
-  # changed, and returning one as the payment would leave out identifiers the
-  # caller needs, such as gateway_payment_id for a refund.
-  defp fetch_snapshot(path, set, caller) do
-    case SSE.first(path, set, "full", caller) do
-      :none -> {:error, Error.from_reason(:no_snapshot, "the stream closed without a snapshot")}
-      result -> result
     end
   end
 
@@ -348,13 +322,16 @@ defmodule Teya.POSLink.Payment do
     do: subscribe(payment_request_id, pid, [])
 
   def subscribe(payment_request_id, pid, opts) when is_pid(pid) and is_list(opts) do
-    set = Auth.set_for(opts, :poslink)
-    path = stream_path(payment_request_id)
-
-    SSE.subscribe(path, set, payment_request_id, pid, :poslink_payment, :poslink_payment_error)
+    SSE.subscribe(
+      stream_path(payment_request_id),
+      payment_request_id,
+      pid,
+      opts,
+      {:poslink_payment, :poslink_payment_error}
+    )
   end
 
-  # A template, built and checked by Client.path/1 in the caller, before any
-  # task starts, so an id that cannot be a path segment raises there.
+  # A template, built and checked by SSE in the caller, before any task
+  # starts, so an id that cannot be a path segment raises there.
   defp stream_path(id), do: {"/poslink/v3/payment-requests/:id", id: id}
 end

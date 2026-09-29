@@ -23,13 +23,10 @@ defmodule Teya.Token do
   """
   @spec delete(String.t(), String.t(), keyword()) :: :ok | {:error, Teya.Error.t()}
   def delete(token_id, store_id, opts \\ []) do
-    case Client.request(
-           :delete,
-           {"/v1/tokens/:id", id: token_id},
-           Keyword.put(opts, :params, %{store_id: store_id})
-         ) do
-      {:ok, _} -> :ok
-      {:error, _} = err -> err
-    end
+    path = {"/v1/tokens/:id", id: token_id}
+
+    with {:ok, _body} <-
+           Client.request(:delete, path, Keyword.put(opts, :params, %{store_id: store_id})),
+         do: :ok
   end
 end

@@ -15,27 +15,33 @@ defmodule Teya.APICase do
   # raises, crashing Auth and leaving a small window where `Process.whereis`
   # may return nil or a freshly restarted PID with no stub allowed.
   setup do
-    auth_pid = Process.whereis(Teya.Auth)
+    if auth_pid = Process.whereis(Teya.Auth), do: reset_auth(auth_pid, "test_access_token")
+    :ok
+  end
 
-    if auth_pid do
-      :sys.replace_state(auth_pid, fn state ->
-        if state.refresh_timer_ref, do: Process.cancel_timer(state.refresh_timer_ref)
+  @doc """
+  Resets the auth process's state: no fetch, waiters, failure or refresh
+  timer, and `token` cached for an hour, or no token when it is nil.
+  """
+  def reset_auth(auth_pid, token \\ nil) do
+    :sys.replace_state(auth_pid, fn state ->
+      if state.refresh_timer_ref, do: Process.cancel_timer(state.refresh_timer_ref)
+      expires_at = if token, do: System.monotonic_time(:second) + 3600
 
-        %{
-          state
-          | token: "test_access_token",
-            expires_at: System.monotonic_time(:second) + 3600,
-            usable_until: System.monotonic_time(:second) + 3600,
-            refresh_timer_ref: nil,
-            refresh_tag: nil,
-            failed_at: nil,
-            failure: nil,
-            fetch: nil,
-            waiters: [],
-            retry_count: 0
-        }
-      end)
-    end
+      %{
+        state
+        | token: token,
+          expires_at: expires_at,
+          usable_until: expires_at,
+          refresh_timer_ref: nil,
+          refresh_tag: nil,
+          failed_at: nil,
+          failure: nil,
+          fetch: nil,
+          waiters: [],
+          retry_count: 0
+      }
+    end)
 
     :ok
   end

@@ -26,7 +26,7 @@ defmodule Teya.POSLink.Receipt do
     stream.
   """
 
-  alias Teya.{Auth, Client, SSE}
+  alias Teya.{Client, SSE}
 
   @doc """
   Submits a receipt print request to a terminal.
@@ -125,11 +125,14 @@ defmodule Teya.POSLink.Receipt do
     do: subscribe_status(receipt_id, pid, [])
 
   def subscribe_status(receipt_id, pid, opts) when is_pid(pid) and is_list(opts) do
-    # SSE.subscribe/6 builds and checks the path in this process, before any
+    # SSE.subscribe/5 builds and checks the path in this process, before any
     # task starts, so an id that cannot be a path segment raises here.
-    set = Auth.set_for(opts, :poslink)
-    path = {"/poslink/v1/receipt-requests/:id/status", id: receipt_id}
-
-    SSE.subscribe(path, set, receipt_id, pid, :poslink_receipt, :poslink_receipt_error)
+    SSE.subscribe(
+      {"/poslink/v1/receipt-requests/:id/status", id: receipt_id},
+      receipt_id,
+      pid,
+      opts,
+      {:poslink_receipt, :poslink_receipt_error}
+    )
   end
 end

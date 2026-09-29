@@ -160,6 +160,10 @@ defmodule Teya.Auth do
 
   defp timed_out, do: %Error{message: "timed out waiting for an access token"}
 
+  @request_failed "the token request failed"
+
+  defp request_failed, do: %Error{message: @request_failed}
+
   defp gives_up_at(:infinity), do: :infinity
   defp gives_up_at(timeout), do: System.monotonic_time(:millisecond) + timeout
 
@@ -231,7 +235,7 @@ defmodule Teya.Auth do
   # The task died without answering, killed from outside, say. It catches its
   # own errors, so this is rare.
   def handle_info({:DOWN, ref, :process, _pid, _reason}, %{fetch: %{ref: ref}} = state) do
-    {:noreply, finish_fetch(state, {:error, %Error{message: "the token request failed"}})}
+    {:noreply, finish_fetch(state, {:error, request_failed()})}
   end
 
   def handle_info({:fetch_timeout, ref}, %{fetch: %{ref: ref, pid: pid}} = state) do
@@ -285,7 +289,7 @@ defmodule Teya.Auth do
     fetch_token(config)
   catch
     # Raised errors, exits and throws alike.
-    _kind, _reason -> {:error, %Error{message: "the token request failed"}}
+    _kind, _reason -> {:error, request_failed()}
   end
 
   defp finish_fetch(%{fetch: fetch} = state, {:ok, token, expires_at}) do
@@ -391,25 +395,17 @@ defmodule Teya.Auth do
         "scope" => Enum.join(config.scopes, " ")
       })
 
+    defaults = [method: :post, url: config.token_url, body: body, receive_timeout: 10_000]
+
     req =
-      [
-        method: :post,
-        url: config.token_url,
-        body: body,
-        user_agent: HTTP.user_agent(),
-        receive_timeout: 10_000
-      ]
-      |> Keyword.merge(HTTP.options(:auth_req_options))
-      # Decoded here instead: see HTTP.decode_json/1.
-      |> Keyword.put(:decode_body, false)
-      |> Req.new()
+      HTTP.new_request(:auth_req_options, defaults, [])
       # The body is a form whatever the options say about content types. They
       # fall back to :req_options, which are meant for JSON API calls.
       |> Req.merge(headers: [{"content-type", "application/x-www-form-urlencoded"}])
 
     case Req.request(req) do
       {:ok, resp} -> resp |> HTTP.decode_json() |> token_result()
-      {:error, reason} -> {:error, Error.from_reason(reason, "the token request failed")}
+      {:error, reason} -> {:error, Error.from_reason(reason, @request_failed)}
     end
   end
 

@@ -106,8 +106,10 @@ defmodule Teya.HTTP do
     end
   end
 
+  # Strings are copied out of the body, so a value the caller keeps does not
+  # keep the whole body alive with it.
   defp decode(resp, on_error) do
-    case Jason.decode(resp.body) do
+    case Jason.decode(resp.body, strings: :copy) do
       {:ok, decoded} -> {:ok, %{resp | body: decoded}}
       {:error, _error} -> on_error
     end
@@ -123,6 +125,24 @@ defmodule Teya.HTTP do
   # Request options for one kind of request, falling back to :req_options
   # when none are set for it.
   def options(key) do
-    Application.get_env(:teya, key, Application.get_env(:teya, :req_options, []))
+    case Application.fetch_env(:teya, key) do
+      {:ok, options} -> options
+      :error -> Application.get_env(:teya, :req_options, [])
+    end
+  end
+
+  @doc false
+  # Builds a request of one kind: the caller's `defaults`, then the options
+  # configured for that kind (see options/1), then the caller's `forced`
+  # options, which config cannot change. The user agent is Req's own option,
+  # so it gives way to one configured as an option or a header. The body is
+  # never decoded by Req: see decode_json/2.
+  def new_request(key, defaults, forced) do
+    [user_agent: @user_agent]
+    |> Keyword.merge(defaults)
+    |> Keyword.merge(options(key))
+    |> Keyword.merge(forced)
+    |> Keyword.put(:decode_body, false)
+    |> Req.new()
   end
 end

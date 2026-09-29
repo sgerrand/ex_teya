@@ -262,7 +262,7 @@ defmodule Teya.EnvironmentTest do
     defp restore_start do
       sets = :persistent_term.get({Teya.Auth, :started_sets}, [])
       base_url = HTTP.started_base_url()
-      on_exit(fn -> Teya.Application.record_start(sets, base_url) end)
+      on_exit(fn -> Teya.StartRecord.record(sets, base_url) end)
     end
 
     test "a start that resolves no host erases the one an earlier run left" do
@@ -271,7 +271,7 @@ defmodule Teya.EnvironmentTest do
       TestEnv.put(:environment, :sandbox)
 
       # As a later start in the same VM, with an environment it did not know.
-      Teya.Application.record_start([], nil)
+      Teya.StartRecord.record([], nil)
 
       # Registration then reports the environment instead of using the old host.
       assert_raise ArgumentError, ~r/:environment must be/, fn ->

@@ -1,28 +1,14 @@
 defmodule Teya.AuthTest do
   use ExUnit.Case, async: false
 
+  import Teya.APICase, only: [reset_auth: 1]
+
   alias Teya.TestEnv
 
   setup do
     auth_pid = Process.whereis(Teya.Auth)
     # Reset cached token to force a fresh fetch on each test
-    :sys.replace_state(auth_pid, fn state ->
-      if state.refresh_timer_ref, do: Process.cancel_timer(state.refresh_timer_ref)
-
-      %{
-        state
-        | token: nil,
-          expires_at: nil,
-          usable_until: nil,
-          refresh_timer_ref: nil,
-          refresh_tag: nil,
-          failed_at: nil,
-          failure: nil,
-          fetch: nil,
-          waiters: [],
-          retry_count: 0
-      }
-    end)
+    reset_auth(auth_pid)
 
     # A refresh timer left running would fire during a later test, one that
     # allows no token stub to the auth process, and crash it. Some tests here

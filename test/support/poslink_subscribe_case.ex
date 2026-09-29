@@ -3,38 +3,19 @@ defmodule Teya.POSLink.SubscribeCase do
 
   # Test case template for POSLink streaming (subscribe) tests.
   #
-  # Unlike Teya.APICase, this module does NOT reset the auth token to nil or
-  # set up the Teya.Auth HTTP stub. Instead, it pre-seeds a valid token
-  # directly into the GenServer state. This avoids a race condition where a
-  # Task spawned by subscribe/2 outlives the test process: if the token is
-  # already cached, Auth.token/0 returns immediately without making any HTTP
-  # request, so there is no stub lookup that could fail after the test process
-  # exits.
+  # Like Teya.APICase, it pre-seeds a valid token directly into the auth
+  # process's state rather than stubbing the token endpoint. This avoids a
+  # race condition where a Task spawned by subscribe/2 outlives the test
+  # process: if the token is already cached, Auth.token/0 returns immediately
+  # without making any HTTP request, so there is no stub lookup that could
+  # fail after the test process exits.
 
   use ExUnit.CaseTemplate
 
+  import Teya.APICase, only: [reset_auth: 1, reset_auth: 2]
+
   setup do
-    auth_pid = Process.whereis(Teya.Auth)
-
-    if auth_pid do
-      :sys.replace_state(auth_pid, fn state ->
-        if state.refresh_timer_ref, do: Process.cancel_timer(state.refresh_timer_ref)
-
-        %{
-          state
-          | token: "test_access_token",
-            expires_at: System.monotonic_time(:second) + 3600,
-            usable_until: System.monotonic_time(:second) + 3600,
-            refresh_timer_ref: nil,
-            refresh_tag: nil,
-            failed_at: nil,
-            failure: nil,
-            fetch: nil,
-            waiters: []
-        }
-      end)
-    end
-
+    if auth_pid = Process.whereis(Teya.Auth), do: reset_auth(auth_pid, "test_access_token")
     :ok
   end
 
@@ -71,42 +52,13 @@ defmodule Teya.POSLink.SubscribeCase do
     Req.Test.stub(Teya.Auth, handler)
     Req.Test.allow(Teya.Auth, self(), auth_pid)
 
-    :sys.replace_state(auth_pid, fn state ->
-      if state.refresh_timer_ref, do: Process.cancel_timer(state.refresh_timer_ref)
-
-      %{
-        state
-        | token: nil,
-          expires_at: nil,
-          usable_until: nil,
-          refresh_timer_ref: nil,
-          refresh_tag: nil,
-          failed_at: nil,
-          failure: nil,
-          fetch: nil,
-          waiters: [],
-          retry_count: 0
-      }
-    end)
-
-    :ok
-  end
-
-  @doc "Sends a JSON response with the given status and body map."
-  def json_response(conn, status, body) do
-    conn
-    |> Plug.Conn.put_status(status)
-    |> Req.Test.json(body)
-  end
-
-  @doc "Sends a Teya-style error response."
-  def error_response(conn, status, code, description) do
-    json_response(conn, status, %{"code" => code, "description" => description})
+    reset_auth(auth_pid)
   end
 
   using do
     quote do
       import Teya.POSLink.SubscribeCase
+      import Teya.APICase, only: [json_response: 3, error_response: 4]
     end
   end
 end

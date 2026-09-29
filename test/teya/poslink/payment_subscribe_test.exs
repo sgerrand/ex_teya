@@ -718,7 +718,7 @@ defmodule Teya.POSLink.PaymentSubscribeTest do
       )
 
       assert :none =
-               Teya.SSE.first(
+               Teya.SSE.first_event(
                  {"/poslink/v3/payment-requests/:id", id: "pr-uuid-37"},
                  nil,
                  "full",

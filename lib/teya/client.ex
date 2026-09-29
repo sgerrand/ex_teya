@@ -200,28 +200,17 @@ defmodule Teya.Client do
   # - :retry — Req's :retry option, unless :req_options sets one
   # - :idempotency_key — false sends no Idempotency-Key, even on a POST
   defp send_request(method, url, opts, token, settings) do
-    req_opts = Application.get_env(:teya, :req_options, [])
-
-    req =
-      [
-        method: method,
-        url: url,
-        # Req's own option, which gives way to a user-agent set in
-        # :req_options, as an option or a header.
-        user_agent: HTTP.user_agent(),
-        receive_timeout: 30_000
-      ]
+    defaults =
+      [method: method, url: url, receive_timeout: 30_000]
       |> put_if_present(:json, Keyword.get(opts, :body))
       |> put_if_present(:params, Keyword.get(opts, :params))
-      # Before the configured options, so a :retry among them wins.
+      # A default, so a :retry in :req_options wins.
       |> put_if_present(:retry, settings[:retry])
-      |> Keyword.merge(req_opts)
-      # Decoded here instead: see HTTP.decode_json/1.
-      |> Keyword.put(:decode_body, false)
-      # Set after the configured options, so an :auth among them cannot send
-      # the wrong credentials to Teya in place of this token.
-      |> Keyword.put(:auth, {:bearer, token})
-      |> Req.new()
+
+    # :auth is forced, so an :auth in :req_options cannot send the wrong
+    # credentials to Teya in place of this token.
+    req =
+      HTTP.new_request(:req_options, defaults, auth: {:bearer, token})
       # Any idempotency-key set in config is dropped, whatever the method:
       # one key there would mark every POST as a retry of the first, and it
       # means nothing on other methods. POST and PATCH get their own.

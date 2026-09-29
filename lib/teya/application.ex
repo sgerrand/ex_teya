@@ -19,16 +19,6 @@ defmodule Teya.Application do
     Supervisor.start_link(children, strategy: :one_for_one, name: Teya.Supervisor)
   end
 
-  @doc false
-  # What a start resolved, recorded in full: a host of nil, from an
-  # environment it did not know, erases any host an earlier run left, so a
-  # request with no set reports the environment rather than go to that run's
-  # host.
-  def record_start(sets, base_url) do
-    Teya.Auth.put_started_sets(sets)
-    Teya.HTTP.put_started_base_url(base_url)
-  end
-
   # The environment's URLs, read once for every set and for requests that
   # use no set. An :environment the library does not know is reported where
   # it is used, by the sets of credentials and by a request, not here: an

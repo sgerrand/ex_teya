@@ -22,10 +22,20 @@ defmodule Teya.StartRecord do
   def init({sets, base_url}) do
     # So terminate/2 runs when the supervisor stops this process.
     Process.flag(:trap_exit, true)
-    Teya.Application.record_start(sets, base_url)
+    record(sets, base_url)
     {:ok, nil}
   end
 
   @impl true
-  def terminate(_reason, _state), do: Teya.Application.record_start([], nil)
+  def terminate(_reason, _state), do: record([], nil)
+
+  @doc false
+  # What a start resolved, recorded in full: a host of nil, from an
+  # environment it did not know, erases any host an earlier run left, so a
+  # request with no set reports the environment rather than go to that run's
+  # host.
+  def record(sets, base_url) do
+    Teya.Auth.put_started_sets(sets)
+    Teya.HTTP.put_started_base_url(base_url)
+  end
 end

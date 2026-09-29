@@ -6,7 +6,7 @@ defmodule Teya.SSE do
   stream into events, and JSON-decodes the `data` field of each one. There are
   two ways to read a stream:
 
-  - `subscribe/6` starts a task that follows it to the end and sends each
+  - `subscribe/5` starts a task that follows it to the end and sends each
     event to a process as `{ok_tag, ref, id, event_type, data}`, where `ref`
     is the `ref` of the `%Task{}` it returns. Non-200 responses, transport
     errors and crashes are sent as `{error_tag, ref, id, %Teya.Error{}}`.
@@ -27,7 +27,7 @@ defmodule Teya.SSE do
   """
 
   alias ReqServerSentEvents.Frame
-  alias Teya.{Client, Error, HTTP}
+  alias Teya.{Auth, Client, Error, HTTP}
 
   @default_max_error_body_bytes 65_536
 
@@ -37,11 +37,11 @@ defmodule Teya.SSE do
 
   @doc false
   # Starts a subscribe task for `path`, text or a template as Client.path/1
-  # takes, and returns
-  # `{:ok, task}`. The task sends it to the host of the set whose token it
-  # carries. Every message
-  # it sends `pid` carries `task.ref`, so two streams for the same id can be
-  # told apart:
+  # takes, and returns `{:ok, task}`. The set of credentials is picked from
+  # `opts` and the path built here, in the caller, so a bad id or an unknown
+  # set raises where the mistake was made. The task builds the path again,
+  # with its host, in session_url/2. Every message it sends `pid` carries
+  # `task.ref`, so two streams for the same id can be told apart:
   #
   #     {ok_tag, ref, id, event, data}
   #     {error_tag, ref, id, %Teya.Error{}}
@@ -49,34 +49,44 @@ defmodule Teya.SSE do
   # A task cannot see its own ref, which belongs to the caller's monitor, so
   # the caller sends it once the task has started, and the task waits for it
   # before it opens the stream.
-  def subscribe(path, set, id, pid, ok_tag, error_tag) do
-    # Built here, in the caller, so a bad id raises where the mistake was
-    # made. The task builds it again, with its host, in session_url/2.
-    Client.path(path)
+  def subscribe(path, id, pid, opts, tags) do
+    set = checked_set(path, opts)
     caller = self()
 
     task =
       Task.Supervisor.async_nolink(Teya.TaskSupervisor, fn ->
-        subscription(path, set, id, pid, {ok_tag, error_tag}, caller)
+        subscription(path, set, id, pid, tags, caller)
       end)
 
     send(task.pid, {:teya_subscription_ref, task.ref})
     {:ok, task}
   end
 
+  # POSLink streams use POSLink's credentials unless opts name others. The
+  # set is picked before the path is built, so an unknown set raises first.
+  defp checked_set(path, opts) do
+    set = Auth.set_for(opts, :poslink)
+    Client.path(path)
+    set
+  end
+
   @doc false
   # The subscribe task: waits for its ref, then streams. The caller sends
-  # the ref as soon as subscribe/6 has the task, so it comes unless the
+  # the ref as soon as subscribe/5 has the task, so it comes unless the
   # caller dies first, and the monitor tells which. There is no timeout: a
   # caller that is only slow still sends the ref it returns, and streaming
   # without it would send messages that ref can never match.
   #
-  # If the caller dies first, nobody can hold the ref, since subscribe/6
+  # If the caller dies first, nobody can hold the ref, since subscribe/5
   # never returned it, so the task streams anyway with nil as the ref: a
   # recipient other than the caller that matches any ref still hears from
   # the stream, as an unlinked task would carry on for it before refs were
   # added.
-  def subscription(path, set, id, pid, tags, caller) do
+  #
+  # Returns :ok however it ends. The task's result goes to the caller as
+  # its reply, so an error returned here would reach the caller a second
+  # time, in another shape, and reach it even when it is not `pid`.
+  def subscription(path, set, id, pid, {ok_tag, error_tag}, caller) do
     monitor = Process.monitor(caller)
 
     ref =
@@ -86,25 +96,20 @@ defmodule Teya.SSE do
       end
 
     Process.demonitor(monitor, [:flush])
-    {_ok_tag, error_tag} = tags
-    guard(fn -> run_subscription(path, set, {ref, id}, pid, tags) end, pid, error_tag, {ref, id})
-  end
 
-  # Returns :ok however it ends. The task's result goes to the caller as
-  # its reply, so an error returned here would reach the caller a second
-  # time, in another shape, and reach it even when it is not `pid`.
-  # The host comes with the token, in one answer from the set's auth
-  # process, and is joined to the path only then.
-  defp run_subscription(path, set, {ref, id}, pid, {ok_tag, error_tag}) do
-    case Client.session_url(path, set) do
-      {:ok, token, url} -> stream(url, token, {ref, id}, ok_tag, error_tag, pid)
-      {:error, error} -> send(pid, {error_tag, ref, id, error})
-    end
+    # The host comes with the token, in one answer from the set's auth
+    # process, and is joined to the path only then.
+    result =
+      guard(fn ->
+        with {:ok, token, url} <- Client.session_url(path, set),
+             do: stream(url, token, {ref, id}, ok_tag, pid)
+      end)
 
+    with {:error, error} <- result, do: send(pid, {error_tag, ref, id, error})
     :ok
   end
 
-  defp stream(url, token, {ref, id}, ok_tag, error_tag, pid) do
+  defp stream(url, token, {ref, id}, ok_tag, pid) do
     # Only a 200 response reaches this handler: collect_error_body/1 keeps
     # every other status's bytes for the error instead.
     handler = fn {:sse_event, %Frame{} = frame}, {req, resp} ->
@@ -112,51 +117,72 @@ defmodule Teya.SSE do
       {:cont, {req, resp}}
     end
 
-    case url |> request(token, handler) |> run() do
-      {:ok, %{status: 200}} ->
-        :ok
-
-      {:ok, resp} ->
-        send(pid, {error_tag, ref, id, error_from_response(resp)})
-
-      {:error, reason} ->
-        send(pid, {error_tag, ref, id, Error.from_reason(reason, "the stream failed")})
-    end
+    with {:ok, _resp} <- open(url, token, handler), do: :ok
   end
 
   @doc false
-  # Reads the stream until the first event named `event_type`, closes it
-  # there, and returns that event's data. Nothing is sent to any process, so
-  # no mailbox ever sees the stream.
-  #
-  # `owner` is the process waiting for the answer. Once it has died, the read
-  # stops at the next event rather than holding a connection open for nobody,
-  # which could otherwise last as long as the payment if no such event came.
+  # Reads the stream at `path` until the first event named `event_type`,
+  # closes it there, and returns that event's data. The read runs in a task,
+  # so nothing is sent to any process and no mailbox ever sees the stream.
+  # The set is picked and the path built in the caller, as for subscribe/5.
   #
   # Returns `{:ok, data}`, `:none` when the stream closed without such an
-  # event, or `{:error, %Teya.Error{}}`.
-  def first(path, set, event_type, owner) do
-    with {:ok, token, url} <- Client.session_url(path, set),
-         do: read_first(url, token, event_type, owner)
+  # event, or `{:error, %Teya.Error{}}`, including when no such event came
+  # within `timeout`.
+  def first(path, opts, event_type, timeout) do
+    set = checked_set(path, opts)
+    caller = self()
+
+    task =
+      Task.Supervisor.async_nolink(Teya.TaskSupervisor, fn ->
+        guard(fn -> first_event(path, set, event_type, caller) end)
+      end)
+
+    case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
+      {:ok, result} ->
+        result
+
+      # Only when the task was killed from outside: it catches its own crashes.
+      {:exit, reason} ->
+        {:error,
+         Error.from_reason({:exit, exit_name(reason)}, "the task reading the stream exited")}
+
+      nil ->
+        {:error, Error.from_reason(:timeout, "no snapshot arrived in time")}
+    end
   end
 
-  defp read_first(url, token, event_type, owner) do
+  # An exit reason other than a single word may hold anything, so only that
+  # it was something else is kept.
+  defp exit_name(reason) when is_atom(reason), do: reason
+  defp exit_name(_reason), do: :other
+
+  @doc false
+  # The body of first/4's task. `owner` is the process waiting for the
+  # answer. Once it has died, the read stops at the next event rather than
+  # holding a connection open for nobody, which could otherwise last as long
+  # as the payment if no such event came.
+  def first_event(path, set, event_type, owner) do
     handler = fn {:sse_event, %Frame{} = frame}, acc ->
       take_first(frame, event_type, owner, acc)
     end
 
+    with {:ok, token, url} <- Client.session_url(path, set),
+         {:ok, resp} <- open(url, token, handler) do
+      case Req.Response.get_private(resp, :sse_first) do
+        nil -> :none
+        data -> {:ok, data}
+      end
+    end
+  end
+
+  # Opens the stream and reads it through `handler` to its end. Returns
+  # `{:ok, resp}` for a 200, and `{:error, %Teya.Error{}}` otherwise.
+  defp open(url, token, handler) do
     case url |> request(token, handler) |> run() do
-      {:ok, %{status: 200} = resp} ->
-        case Req.Response.get_private(resp, :sse_first) do
-          nil -> :none
-          data -> {:ok, data}
-        end
-
-      {:ok, resp} ->
-        {:error, error_from_response(resp)}
-
-      {:error, reason} ->
-        {:error, Error.from_reason(reason, "the stream failed")}
+      {:ok, %{status: 200} = resp} -> {:ok, resp}
+      {:ok, resp} -> {:error, error_from_response(resp)}
+      {:error, reason} -> {:error, Error.from_reason(reason, "the stream failed")}
     end
   end
 
@@ -291,27 +317,15 @@ defmodule Teya.SSE do
     end
   end
 
-  @doc false
   # Runs a stream task's work, turning any crash into an error there, in the
   # task. Left to crash, the task would log a crash report, and the exception,
   # the value that failed to match or the stacktrace could hold the bearer
   # token or what the stream sent. Only the crash's kind and, for a raised
   # error, the exception's name are kept.
-  def guard(fun) do
+  defp guard(fun) do
     fun.()
   catch
     kind, reason -> {:error, crashed(kind, reason)}
-  end
-
-  @doc false
-  # The same for a subscribe task, whose crash is sent to `pid` as the
-  # stream's error message.
-  def guard(fun, pid, error_tag, {ref, id}) do
-    fun.()
-  catch
-    kind, reason ->
-      send(pid, {error_tag, ref, id, crashed(kind, reason)})
-      :ok
   end
 
   defp crashed(kind, reason),

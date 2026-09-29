@@ -85,10 +85,12 @@ lib/teya/
                         registration) has no set, so it uses
                         started_base_url/0: the host Teya.StartRecord
                         recorded (erased when none resolved)
-  sse.ex              — SSE helpers: subscribe/6 starts a task that sends each
+  sse.ex              — SSE helpers: subscribe/5 starts a task that sends each
                         event to a process, with the task's ref;
-                        first/4 returns the first event of a given name;
-                        frames are decoded by the req_server_sent_events plugin
+                        first/4 reads the first event of a given name in a
+                        task and returns it; both pick the :poslink set and
+                        check the path in the caller; frames are decoded by
+                        the req_server_sent_events plugin
   checkout.ex         — POST/GET /v2/checkout/sessions
   transaction.ex      — POST /v3/transactions/online, GET /v2/transactions/online/{id}
   pay_by_link.ex      — POST /v2/payment-links, GET /v1/payment-links/{id},
@@ -118,7 +120,7 @@ lib/teya/
 ### POSLink streaming (Approach 2: task + message-passing)
 
 `Payment.subscribe/3` and `Receipt.subscribe_status/3` call
-`Teya.SSE.subscribe/6`, which uses
+`Teya.SSE.subscribe/5`, which uses
 `Task.Supervisor.async_nolink(Teya.TaskSupervisor, ...)` to open an SSE
 connection (`Req.get/2` with an `into:` handler) and forward parsed events as
 messages to `pid`, the caller by default. The task always returns `:ok`, so
@@ -129,21 +131,21 @@ its reply to the caller never repeats an error sent to `pid`:
 
 `ref` is the `ref` of the `%Task{}` the subscribe function returns, so two
 streams for the same id can be told apart. A task cannot see its own ref, so
-`Teya.SSE.subscribe/6` sends it to the task once started, and the task waits
+`Teya.SSE.subscribe/5` sends it to the task once started, and the task waits
 for it before opening the stream, with no timeout: a live caller always sends
 it. If the caller dies first (the task monitors it), the task streams anyway
 with `nil` as the ref, as an unlinked task would have carried on before refs
 were added.
 
 SSE bytes are decoded by the `req_server_sent_events` plugin, which both
-`Teya.SSE.subscribe/6` and `Teya.SSE.first/4` attach. They read their request
+`Teya.SSE.subscribe/5` and `Teya.SSE.first/4` attach. They read their request
 options from `:sse_req_options`, falling back to `:req_options`. `event_type` is `"full"` (complete snapshot) or
 `"diff"` (partial update), and is `nil` for a frame with no event line. `data`
 is a decoded JSON map.
 
-`Payment.get/2` does not use messages. It runs `Teya.SSE.first/4` in a task of
-its own, whose `into:` handler halts on the first `"full"` event and hands the
-data back as the task's result. Nothing reaches the caller's mailbox, so it
+`Payment.get/2` does not use messages. It calls `Teya.SSE.first/4`, which
+reads the stream in a task of its own, whose `into:` handler halts on the
+first `"full"` event and hands the data back as the task's result. Nothing reaches the caller's mailbox, so it
 cannot mix with a `subscribe/2` stream for the same payment.
 
 ## Testing

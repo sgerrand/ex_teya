@@ -142,7 +142,6 @@ defmodule Teya.Auth do
       {:ok, _token, _base_url} = ok -> ok
       # Nothing was sent to Teya, so the caller may send it again.
       {:error, %Error{} = error} -> {:error, %{error | reason: {:no_token, error.reason}}}
-      {:error, other} -> {:error, Error.from_reason({:no_token, other}, "no access token")}
     end
   end
 
@@ -159,6 +158,8 @@ defmodule Teya.Auth do
   end
 
   defp timed_out, do: %Error{message: "timed out waiting for an access token"}
+
+  defp request_failed, do: %Error{message: "the token request failed"}
 
   defp gives_up_at(:infinity), do: :infinity
   defp gives_up_at(timeout), do: System.monotonic_time(:millisecond) + timeout
@@ -231,7 +232,7 @@ defmodule Teya.Auth do
   # The task died without answering, killed from outside, say. It catches its
   # own errors, so this is rare.
   def handle_info({:DOWN, ref, :process, _pid, _reason}, %{fetch: %{ref: ref}} = state) do
-    {:noreply, finish_fetch(state, {:error, %Error{message: "the token request failed"}})}
+    {:noreply, finish_fetch(state, {:error, request_failed()})}
   end
 
   def handle_info({:fetch_timeout, ref}, %{fetch: %{ref: ref, pid: pid}} = state) do
@@ -285,7 +286,7 @@ defmodule Teya.Auth do
     fetch_token(config)
   catch
     # Raised errors, exits and throws alike.
-    _kind, _reason -> {:error, %Error{message: "the token request failed"}}
+    _kind, _reason -> {:error, request_failed()}
   end
 
   defp finish_fetch(%{fetch: fetch} = state, {:ok, token, expires_at}) do

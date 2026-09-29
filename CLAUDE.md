@@ -67,9 +67,11 @@ lib/teya/
                         Idempotency-Key, retried when :retry_idempotent_posts
                         is set; post_without_idempotency_key/2 for a POST
                         whose spec does not document the key (DCC offers)
-  http.ex             — shared by every module that makes a request: the user
-                        agent, each request kind's options with their
-                        fallback to :req_options, and base_url/0 and
+  http.ex             — shared by every module that makes a request:
+                        new_request/3 builds each one (the user agent, the
+                        caller's defaults, that kind's options with their
+                        fallback to :req_options, then options config cannot
+                        change, and Req's body decoding off), and base_url/0 and
                         token_url/0 (:base_url/:token_url, else the
                         :environment's URLs; the only place they are
                         written out). urls/0 reads both in one pass;

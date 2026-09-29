@@ -176,27 +176,22 @@ defmodule Teya.SSE do
   end
 
   defp request(url, token, handler) do
-    configured = HTTP.options(:sse_req_options)
-
     # Req retries a failed GET by default, which for a stream means opening it
     # again without a word: the reader never learns the connection dropped,
     # and the new stream replays its snapshot. Readers are told of a dropped
     # stream and reconnect themselves, so retrying is off unless configured.
-    # The user agent is Req's own option, which gives way to one configured
-    # as an option or a header.
-    [retry: false, user_agent: HTTP.user_agent()]
-    |> Keyword.merge(configured)
-    |> Keyword.merge(
+    # An error body that ran past the cap is cut short, and Req's decoder
+    # would answer broken JSON with an exception in place of the response,
+    # taking the status with it, so new_request/3 leaves it to be decoded
+    # here.
+    forced = [
       url: url,
       auth: {:bearer, token},
       into: handler,
-      # An error body that ran past the cap is cut short, and Req's decoder
-      # answers broken JSON with an exception in place of the response,
-      # taking the status with it. Decode it here instead.
-      decode_body: false,
       receive_timeout: Application.get_env(:teya, :sse_stream_timeout_ms, 60_000)
-    )
-    |> Req.new()
+    ]
+
+    HTTP.new_request(:sse_req_options, [retry: false], forced)
     # The library sets Idempotency-Key itself, on API calls that need one. A
     # key in config that the options fall back to means nothing on a stream.
     |> Req.Request.delete_header("idempotency-key")

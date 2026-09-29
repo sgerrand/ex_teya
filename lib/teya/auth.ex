@@ -391,18 +391,10 @@ defmodule Teya.Auth do
         "scope" => Enum.join(config.scopes, " ")
       })
 
+    defaults = [method: :post, url: config.token_url, body: body, receive_timeout: 10_000]
+
     req =
-      [
-        method: :post,
-        url: config.token_url,
-        body: body,
-        user_agent: HTTP.user_agent(),
-        receive_timeout: 10_000
-      ]
-      |> Keyword.merge(HTTP.options(:auth_req_options))
-      # Decoded here instead: see HTTP.decode_json/1.
-      |> Keyword.put(:decode_body, false)
-      |> Req.new()
+      HTTP.new_request(:auth_req_options, defaults, [])
       # The body is a form whatever the options say about content types. They
       # fall back to :req_options, which are meant for JSON API calls.
       |> Req.merge(headers: [{"content-type", "application/x-www-form-urlencoded"}])

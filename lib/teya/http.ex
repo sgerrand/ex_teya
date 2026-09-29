@@ -125,4 +125,19 @@ defmodule Teya.HTTP do
   def options(key) do
     Application.get_env(:teya, key, Application.get_env(:teya, :req_options, []))
   end
+
+  @doc false
+  # Builds a request of one kind: the caller's `defaults`, then the options
+  # configured for that kind (see options/1), then the caller's `forced`
+  # options, which config cannot change. The user agent is Req's own option,
+  # so it gives way to one configured as an option or a header. The body is
+  # never decoded by Req: see decode_json/2.
+  def new_request(key, defaults, forced) do
+    [user_agent: @user_agent]
+    |> Keyword.merge(defaults)
+    |> Keyword.merge(options(key))
+    |> Keyword.merge(forced)
+    |> Keyword.put(:decode_body, false)
+    |> Req.new()
+  end
 end

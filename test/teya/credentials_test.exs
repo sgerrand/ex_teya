@@ -6,7 +6,7 @@ defmodule Teya.CredentialsTest do
 
   import Teya.POSLink.SubscribeCase, only: [stub_sse: 1]
 
-  alias Teya.{Auth, Checkout, Config, StartRecord, TestEnv}
+  alias Teya.{Auth, Checkout, Config, TestEnv}
   alias Teya.POSLink.{Payment, Receipt, Store}
 
   # Configures the named sets and starts an auth process for each, holding
@@ -20,20 +20,12 @@ defmodule Teya.CredentialsTest do
       )
     )
 
-    started(names)
+    TestEnv.record_started_sets(names)
 
     for name <- names do
       start_supervised!({Auth, Config.from_env(name)})
       seed(name, "#{name}-token")
     end
-  end
-
-  # Records the sets as started, as the application does at boot, and puts
-  # back what was there when the test ends.
-  defp started(names) do
-    {sets, base_url} = {StartRecord.sets(), StartRecord.base_url()}
-    StartRecord.record(names, base_url)
-    on_exit(fn -> StartRecord.record(sets, base_url) end)
   end
 
   defp seed(name, token) do
@@ -188,7 +180,7 @@ defmodule Teya.CredentialsTest do
         ]
       )
 
-      started([:poslink])
+      TestEnv.record_started_sets([:poslink])
       pid = start_supervised!({Auth, Config.from_env(:poslink)})
       test = self()
 
@@ -214,7 +206,7 @@ defmodule Teya.CredentialsTest do
     end
 
     test "names itself in its refresh logs, whether the refresh works or fails" do
-      started([:store_b])
+      TestEnv.record_started_sets([:store_b])
       TestEnv.put(:credentials, store_b: [client_id: "b", client_secret: "secret", scopes: ["s"]])
       pid = start_supervised!({Auth, Config.from_env(:store_b)})
 

@@ -245,7 +245,7 @@ test makes callers wait on a task that is not theirs.
 
 The test config names no sets, so tests run against the top-level
 `Teya.Auth`. A test that needs sets (see `credentials_test.exs`) records them
-with `Teya.StartRecord.record/2` and starts their auth processes with
+with `TestEnv.record_started_sets/1` and starts their auth processes with
 `start_supervised!/1`, so each test's sets are stopped when it ends.
 
 ## Documentation conventions

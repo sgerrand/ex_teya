@@ -119,8 +119,7 @@ defmodule Teya.EnvironmentTest do
         {name, [client_id: "id", client_secret: "secret", scopes: ["s"]]}
       ])
 
-      restore_start()
-      StartRecord.record([name], StartRecord.base_url())
+      TestEnv.record_started_sets([name])
 
       pid = start_supervised!({Teya.Auth, Config.from_env(name)})
 
@@ -257,14 +256,8 @@ defmodule Teya.EnvironmentTest do
       assert StartRecord.sets() == sets
     end
 
-    # Puts back what the running test application recorded when it started.
-    defp restore_start do
-      {sets, base_url} = {StartRecord.sets(), StartRecord.base_url()}
-      on_exit(fn -> StartRecord.record(sets, base_url) end)
-    end
-
     test "a start that resolves no host erases the one an earlier run left" do
-      restore_start()
+      TestEnv.keep_start_record()
       unset_urls()
       TestEnv.put(:environment, :sandbox)
 

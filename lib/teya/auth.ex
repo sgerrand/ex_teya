@@ -397,11 +397,15 @@ defmodule Teya.Auth do
 
     defaults = [method: :post, url: config.token_url, body: body, receive_timeout: 10_000]
 
+    # Never redirected: a 307 or 308 would send the form, client secret and
+    # all, again to whatever host the reply names.
     req =
-      HTTP.new_request(:auth_req_options, defaults, [])
+      HTTP.new_request(:auth_req_options, defaults, redirect: false)
       # The body is a form whatever the options say about content types. They
-      # fall back to :req_options, which are meant for JSON API calls.
+      # fall back to :req_options, which are meant for JSON API calls, and
+      # whose authorization header, if any, is not for the token endpoint.
       |> Req.merge(headers: [{"content-type", "application/x-www-form-urlencoded"}])
+      |> Req.Request.delete_header("authorization")
 
     case Req.request(req) do
       {:ok, resp} -> resp |> HTTP.decode_json() |> token_result()

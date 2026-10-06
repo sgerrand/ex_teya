@@ -716,17 +716,18 @@ so they can identify your integration. To send your own, use Req's
 config :teya, req_options: [user_agent: "acme-shop/1.0"]
 ```
 
-Other headers and options you set there are used too, with five exceptions
-the library always sets itself. What a request is — its `:method`, `:url`,
-`:path_params`, `:params`, its body (`:json`, `:form`, `:form_multipart`,
-`:body`) and `:into` — comes from the call alone, so those options are
-ignored. API calls always send the library's own bearer token, so an `:auth`
-option there is ignored. Replies are decoded by
-the library, so options such as `:decoders`, `:decode_json` and `:raw` are
-ignored, and JSON keys are always strings. API calls carry their own
+Only options that say how a request is sent are taken from there:
+`:headers`, `:user_agent`, `:receive_timeout`, `:pool_timeout`,
+`:connect_options` (for a proxy, say), `:finch`, `:inet6`, `:retry`,
+`:retry_delay`, `:retry_log_level`, `:max_retries`, `:redirect`,
+`:max_redirects`, and `:plug` and `:adapter` for tests. Every other option is
+ignored. What a request is — where it goes, its query and body, and the
+credentials it carries — comes from the call alone, and replies are decoded
+by the library, so JSON keys are always strings. API calls carry their own
 `Idempotency-Key`, since one key shared by every request would make each POST
 look like a retry of the first. Token requests are always sent as a form,
-whatever content type is set.
+whatever content type is set, with no `authorization` header, and never
+follow a redirect, so the client secret cannot be sent on to another host.
 
 Token requests and SSE streams use `:auth_req_options` and `:sse_req_options`
 when you set them, and `:req_options` when you do not. Every other call, DCC

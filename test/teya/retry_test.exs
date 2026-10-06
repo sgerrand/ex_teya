@@ -117,8 +117,7 @@ defmodule Teya.RetryTest do
       %{
         state
         | token: token,
-          failure: failure,
-          failed_at: failure && System.monotonic_time(:millisecond)
+          failure: failure && {System.monotonic_time(:millisecond), failure}
       }
     end)
   end

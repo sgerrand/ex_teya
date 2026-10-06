@@ -81,8 +81,7 @@ defmodule Teya.POSLink.EposTest do
       state
       | token: nil,
         usable_until: nil,
-        failed_at: System.monotonic_time(:millisecond),
-        failure: %Error{message: "no credentials yet"}
+        failure: {System.monotonic_time(:millisecond), %Error{message: "no credentials yet"}}
     }
   end
 

@@ -15,20 +15,18 @@ defmodule Teya.Auth do
   # fetch is the task under way, if any: its monitor, its pid, whether it is a
   # background refresh, and the timer that ends it if it runs too long.
   # waiters are the callers who need a token that is not cached, each with
-  # the time it stops waiting; the one fetch answers them all. usable_until is when the cached token stops being
-  # handed out, a little before expires_at. refresh_tag marks the refresh
-  # timer that is current, so a stale one that already fired is ignored.
-  # failed_at and failure hold the last failed fetch, which callers share for
-  # a moment rather than each setting off another.
+  # the time it stops waiting; the one fetch answers them all. usable_until
+  # is when the cached token stops being handed out, a little before it
+  # expires. refresh_timer_ref is the refresh timer that is current; its
+  # message carries the same ref, so a stale one that already fired is
+  # ignored. failure is the last failed fetch, as {failed_at, error}, which
+  # callers share for a moment rather than each setting off another.
   defstruct [
     :config,
     :token,
-    :expires_at,
     :usable_until,
     :refresh_timer_ref,
-    :refresh_tag,
     :fetch,
-    :failed_at,
     :failure,
     waiters: [],
     retry_count: 0
@@ -117,7 +115,7 @@ defmodule Teya.Auth do
   # were rotated, say — would fetch again and again.
   @failure_hold_ms 1_000
 
-  # Process.send_after/3 takes at most 2^32 - 1 milliseconds, about 49 days.
+  # A timer waits at most 2^32 - 1 milliseconds, about 49 days.
   @max_timer_ms 4_294_967_295
 
   @doc """
@@ -196,8 +194,8 @@ defmodule Teya.Auth do
       usable?(state) ->
         {:reply, {:ok, state.token, state.config.base_url}, state}
 
-      recently_failed?(state) ->
-        {:reply, {:error, state.failure}, state}
+      error = recent_failure(state) ->
+        {:reply, {:error, error}, state}
 
       # Its caller has already given up, so do not fetch for it.
       gives_up_at <= now ->
@@ -218,14 +216,14 @@ defmodule Teya.Auth do
     do: Enum.filter(waiters, fn {_from, gives_up_at} -> gives_up_at > now end)
 
   @impl true
-  def handle_info({:refresh, tag}, %{refresh_tag: tag} = state) do
+  def handle_info({:timeout, ref, :refresh}, %{refresh_timer_ref: ref} = state) do
     Logger.debug("#{label(state)}: proactive token refresh started")
-    {:noreply, start_fetch(%{state | refresh_tag: nil}, :refresh)}
+    {:noreply, start_fetch(%{state | refresh_timer_ref: nil}, :refresh)}
   end
 
   # A refresh timer that fired after a newer one replaced it, its message
   # already sent when the timer was cancelled.
-  def handle_info({:refresh, _stale_tag}, state), do: {:noreply, state}
+  def handle_info({:timeout, _stale_ref, :refresh}, state), do: {:noreply, state}
 
   def handle_info({ref, result}, %{fetch: %{ref: ref}} = state) do
     Process.demonitor(ref, [:flush])
@@ -266,10 +264,12 @@ defmodule Teya.Auth do
 
   defp usable?(_state), do: false
 
-  defp recently_failed?(%{failed_at: nil}), do: false
+  # The last failure while it is still held, or nil.
+  defp recent_failure(%{failure: {failed_at, error}}) do
+    if System.monotonic_time(:millisecond) - failed_at < @failure_hold_ms, do: error
+  end
 
-  defp recently_failed?(%{failed_at: failed_at}),
-    do: System.monotonic_time(:millisecond) - failed_at < @failure_hold_ms
+  defp recent_failure(_state), do: nil
 
   # One fetch at a time: a caller who arrives while one is under way waits
   # for it, whether it was started by another caller or by the refresh timer.
@@ -313,8 +313,7 @@ defmodule Teya.Auth do
       state
       | fetch: nil,
         waiters: [],
-        failed_at: System.monotonic_time(:millisecond),
-        failure: reason
+        failure: {System.monotonic_time(:millisecond), reason}
     }
 
     if retry?, do: schedule_retry(state, reason), else: state
@@ -345,9 +344,7 @@ defmodule Teya.Auth do
     state = %{
       state
       | token: token,
-        expires_at: expires_at,
         usable_until: expires_at - @expiry_skew_seconds,
-        failed_at: nil,
         failure: nil,
         retry_count: 0
     }
@@ -369,21 +366,19 @@ defmodule Teya.Auth do
       else: cancel_refresh(state)
   end
 
-  # A fresh tag for each timer: cancelling a timer does not take back a
-  # message it has already sent, so the tag is what tells a stale refresh
-  # from the current one.
+  # Cancelling a timer does not take back a message it has already sent, so
+  # each message carries its timer's ref, which tells a stale refresh from
+  # the current one.
   defp schedule(state, delay_ms) do
     state = cancel_refresh(state)
-    tag = make_ref()
-    ref = Process.send_after(self(), {:refresh, tag}, delay_ms)
-    %{state | refresh_timer_ref: ref, refresh_tag: tag}
+    %{state | refresh_timer_ref: :erlang.start_timer(delay_ms, self(), :refresh)}
   end
 
-  defp cancel_refresh(%{refresh_timer_ref: nil} = state), do: %{state | refresh_tag: nil}
+  defp cancel_refresh(%{refresh_timer_ref: nil} = state), do: state
 
   defp cancel_refresh(%{refresh_timer_ref: ref} = state) do
     Process.cancel_timer(ref)
-    %{state | refresh_timer_ref: nil, refresh_tag: nil}
+    %{state | refresh_timer_ref: nil}
   end
 
   defp fetch_token(%Config{} = config) do

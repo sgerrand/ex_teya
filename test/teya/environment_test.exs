@@ -55,7 +55,7 @@ defmodule Teya.EnvironmentTest do
 
       on_exit(fn ->
         :sys.replace_state(auth_pid, fn state ->
-          if state.refresh_timer_ref, do: Process.cancel_timer(state.refresh_timer_ref)
+          cancel_refresh(state)
           seeded
         end)
       end)
@@ -65,7 +65,7 @@ defmodule Teya.EnvironmentTest do
 
     defp fetch_token(auth_pid) do
       :sys.replace_state(auth_pid, fn state ->
-        %{state | config: Config.from_env(), token: nil, expires_at: nil, usable_until: nil}
+        %{state | config: Config.from_env(), token: nil, usable_until: nil}
       end)
 
       test = self()
@@ -127,7 +127,7 @@ defmodule Teya.EnvironmentTest do
 
       :sys.replace_state(pid, fn state ->
         now = System.monotonic_time(:second)
-        %{state | token: "#{name}-token", expires_at: now + 3600, usable_until: now + 3600}
+        %{state | token: "#{name}-token", usable_until: now + 3600}
       end)
     end
 

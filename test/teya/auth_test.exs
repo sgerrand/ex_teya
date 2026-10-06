@@ -1,7 +1,7 @@
 defmodule Teya.AuthTest do
   use ExUnit.Case, async: false
 
-  import Teya.APICase, only: [reset_auth: 1]
+  import Teya.APICase, only: [reset_auth: 1, cancel_refresh: 1]
 
   alias Teya.TestEnv
 
@@ -15,10 +15,7 @@ defmodule Teya.AuthTest do
     # leave one due within seconds, so stop it when each test ends.
     on_exit(fn ->
       if pid = Process.whereis(Teya.Auth) do
-        :sys.replace_state(pid, fn state ->
-          if state.refresh_timer_ref, do: Process.cancel_timer(state.refresh_timer_ref)
-          %{state | refresh_timer_ref: nil}
-        end)
+        :sys.replace_state(pid, &cancel_refresh/1)
       end
     end)
 
@@ -42,11 +39,21 @@ defmodule Teya.AuthTest do
     end
   end
 
-  # Fires a refresh as its timer would: with the tag the process expects.
+  # Fires a refresh as its timer would: with the ref of the timer the
+  # process holds, which stands in for the real one.
   defp start_refresh(auth_pid) do
-    tag = make_ref()
-    :sys.replace_state(auth_pid, &%{&1 | refresh_tag: tag})
-    send(auth_pid, {:refresh, tag})
+    ref = make_ref()
+    :sys.replace_state(auth_pid, &%{cancel_refresh(&1) | refresh_timer_ref: ref})
+    send(auth_pid, {:timeout, ref, :refresh})
+  end
+
+  # The token was fetched between `before` and now, and lives `lifetime`
+  # seconds from when its reply arrived, so it is handed out until exactly
+  # 5 seconds before that.
+  defp assert_usable_for(auth_pid, before, lifetime) do
+    usable_until = :sys.get_state(auth_pid).usable_until
+
+    assert usable_until in (before + lifetime - 5)..(System.monotonic_time(:second) + lifetime - 5)
   end
 
   defp await_settled(auth_pid, attempts \\ 200) do
@@ -147,7 +154,7 @@ defmodule Teya.AuthTest do
             %{"accessToken" => "secret-token-1"},
             %{"access_token" => %{"value" => "secret-token-1"}}
           ] do
-        :sys.replace_state(auth_pid, &%{&1 | token: nil, expires_at: nil, failed_at: nil})
+        :sys.replace_state(auth_pid, &%{&1 | token: nil, usable_until: nil, failure: nil})
         stub_auth(auth_pid, fn conn -> Req.Test.json(conn, body) end)
 
         assert {:error, %Teya.Error{status: 200} = error} = Teya.Auth.token()
@@ -158,7 +165,7 @@ defmodule Teya.AuthTest do
 
     test "uses a token whose lifetime is missing or given as text", %{auth_pid: auth_pid} do
       for {expires_in, lifetime} <- [{nil, 300}, {"3600", 3600}, {"soon", 300}] do
-        :sys.replace_state(auth_pid, &%{&1 | token: nil, expires_at: nil, failed_at: nil})
+        :sys.replace_state(auth_pid, &%{&1 | token: nil, usable_until: nil, failure: nil})
 
         body =
           if expires_in,
@@ -167,10 +174,10 @@ defmodule Teya.AuthTest do
 
         stub_auth(auth_pid, fn conn -> Req.Test.json(conn, body) end)
 
+        before = System.monotonic_time(:second)
         assert {:ok, "tok"} = Teya.Auth.token()
 
-        remaining = :sys.get_state(auth_pid).expires_at - System.monotonic_time(:second)
-        assert remaining in (lifetime - 5)..lifetime, "expires_in #{inspect(expires_in)}"
+        assert_usable_for(auth_pid, before, lifetime)
       end
     end
 
@@ -252,14 +259,14 @@ defmodule Teya.AuthTest do
         Req.Test.json(conn, %{"access_token" => "fresh", "expires_in" => 3600})
       end)
 
+      before = System.monotonic_time(:second)
       assert {:ok, "fresh"} = Teya.Auth.token()
-      state = :sys.get_state(auth_pid)
-      assert state.expires_at - state.usable_until == 5
+      assert_usable_for(auth_pid, before, 3600)
 
       # Three seconds from expiry the old token is no longer handed out.
       :sys.replace_state(auth_pid, fn state ->
         now = System.monotonic_time(:second)
-        %{state | token: "old", expires_at: now + 3, usable_until: now - 2}
+        %{state | token: "old", usable_until: now - 2}
       end)
 
       assert {:ok, "fresh"} = Teya.Auth.token()
@@ -300,7 +307,7 @@ defmodule Teya.AuthTest do
     } do
       :sys.replace_state(auth_pid, fn state ->
         now = System.monotonic_time(:second)
-        %{state | token: "still-good", expires_at: now + 10, usable_until: now + 5}
+        %{state | token: "still-good", usable_until: now + 5}
       end)
 
       stub_auth(auth_pid, fn conn ->
@@ -333,9 +340,9 @@ defmodule Teya.AuthTest do
         Req.Test.json(conn, %{"access_token" => "decimal", "expires_in" => 60.0})
       end)
 
+      before = System.monotonic_time(:second)
       assert {:ok, "decimal"} = Teya.Auth.token()
-      remaining = :sys.get_state(auth_pid).expires_at - System.monotonic_time(:second)
-      assert remaining in 55..60
+      assert_usable_for(auth_pid, before, 60)
     end
 
     test "fetches when a cached token has no time it may be used until", %{auth_pid: auth_pid} do
@@ -343,7 +350,7 @@ defmodule Teya.AuthTest do
         Req.Test.json(conn, %{"access_token" => "replacement", "expires_in" => 3600})
       end)
 
-      :sys.replace_state(auth_pid, &%{&1 | token: "stale", expires_at: nil, usable_until: nil})
+      :sys.replace_state(auth_pid, &%{&1 | token: "stale", usable_until: nil})
 
       assert {:ok, "replacement"} = Teya.Auth.token()
     end
@@ -356,7 +363,7 @@ defmodule Teya.AuthTest do
 
       :sys.replace_state(auth_pid, fn state ->
         now = System.monotonic_time(:second)
-        %{state | token: "current", expires_at: now + 20, usable_until: now + 15}
+        %{state | token: "current", usable_until: now + 15}
       end)
 
       start_refresh(auth_pid)
@@ -436,8 +443,10 @@ defmodule Teya.AuthTest do
 
       assert {:error, %Teya.Error{}} = Teya.Auth.token()
 
-      assert %{fetch: nil, failure: %Teya.Error{message: "the token request took too long"}} =
-               await_settled(auth_pid)
+      assert %{
+               fetch: nil,
+               failure: {_failed_at, %Teya.Error{message: "the token request took too long"}}
+             } = await_settled(auth_pid)
     end
 
     test "ignores a refresh queued before a caller's fetch stored a new token", %{
@@ -451,19 +460,24 @@ defmodule Teya.AuthTest do
       end)
 
       # A refresh timer is current, and its token has run out.
-      tag = make_ref()
+      timer = make_ref()
       expired_at = System.monotonic_time(:second) - 1
 
       :sys.replace_state(
         auth_pid,
-        &%{&1 | token: "expired", usable_until: expired_at, refresh_tag: tag}
+        &%{
+          cancel_refresh(&1)
+          | token: "expired",
+            usable_until: expired_at,
+            refresh_timer_ref: timer
+        }
       )
 
       # A caller's fetch stores a new token, and with it a new refresh timer.
       assert {:ok, "fresh"} = Teya.Auth.token()
 
       # The old timer's message, already sent before it was cancelled, arrives.
-      send(auth_pid, {:refresh, tag})
+      send(auth_pid, {:timeout, timer, :refresh})
 
       assert %{fetch: nil} = :sys.get_state(auth_pid)
       assert :counters.get(fetches, 1) == 1
@@ -479,12 +493,17 @@ defmodule Teya.AuthTest do
         conn |> Plug.Conn.put_status(503) |> Req.Test.json(%{"error" => "down"})
       end)
 
-      tag = make_ref()
+      timer = make_ref()
       expired_at = System.monotonic_time(:second) - 1
 
       :sys.replace_state(
         auth_pid,
-        &%{&1 | token: "expired", usable_until: expired_at, refresh_tag: tag}
+        &%{
+          cancel_refresh(&1)
+          | token: "expired",
+            usable_until: expired_at,
+            refresh_timer_ref: timer
+        }
       )
 
       # The caller's fetch fails; with a token cached, a retry is scheduled.
@@ -492,7 +511,7 @@ defmodule Teya.AuthTest do
       %{refresh_timer_ref: retry_timer} = :sys.get_state(auth_pid)
       assert is_reference(retry_timer)
 
-      send(auth_pid, {:refresh, tag})
+      send(auth_pid, {:timeout, timer, :refresh})
 
       # No fetch now; the retry keeps its delay.
       assert %{fetch: nil, refresh_timer_ref: ^retry_timer} = :sys.get_state(auth_pid)
@@ -528,8 +547,8 @@ defmodule Teya.AuthTest do
     end
 
     test "ignores a refresh whose timer has been replaced", %{auth_pid: auth_pid} do
-      :sys.replace_state(auth_pid, &%{&1 | refresh_tag: make_ref()})
-      send(auth_pid, {:refresh, make_ref()})
+      :sys.replace_state(auth_pid, &%{cancel_refresh(&1) | refresh_timer_ref: make_ref()})
+      send(auth_pid, {:timeout, make_ref(), :refresh})
 
       assert %{fetch: nil} = :sys.get_state(auth_pid)
     end
@@ -626,8 +645,7 @@ defmodule Teya.AuthTest do
       :sys.replace_state(auth_pid, fn state ->
         %{
           state
-          | failed_at: System.monotonic_time(:millisecond),
-            failure: %Req.TransportError{reason: :closed}
+          | failure: {System.monotonic_time(:millisecond), %Req.TransportError{reason: :closed}}
         }
       end)
 
@@ -641,7 +659,7 @@ defmodule Teya.AuthTest do
       garbled = ~s({"access_token":"SECRET-TOKEN", "client_secret":"SECRET-KEY" broken)
 
       for status <- [200, 401] do
-        :sys.replace_state(auth_pid, &%{&1 | failed_at: nil, failure: nil})
+        :sys.replace_state(auth_pid, &%{&1 | failure: nil})
 
         stub_auth(auth_pid, fn conn ->
           conn
@@ -660,7 +678,7 @@ defmodule Teya.AuthTest do
       end)
 
       :sys.replace_state(auth_pid, fn state ->
-        %{state | token: "old_token", expires_at: System.monotonic_time(:second) - 1}
+        %{state | token: "old_token", usable_until: System.monotonic_time(:second) - 1}
       end)
 
       assert {:ok, "fresh_token"} = Teya.Auth.token()
@@ -668,15 +686,32 @@ defmodule Teya.AuthTest do
   end
 
   describe "proactive refresh" do
-    test "cancels a live refresh before scheduling a retry", %{auth_pid: auth_pid} do
+    test "cancels a live refresh timer when a caller's failed fetch schedules a retry", %{
+      auth_pid: auth_pid
+    } do
       stub_auth(auth_pid, fn conn ->
         conn |> Plug.Conn.put_status(503) |> Req.Test.json(%{"error" => "down"})
       end)
 
-      live = Process.send_after(auth_pid, :never_sent, 60_000)
-      :sys.replace_state(auth_pid, &%{&1 | refresh_timer_ref: live})
-      refresh(auth_pid)
+      live = :erlang.start_timer(60_000, auth_pid, :refresh)
+      expired_at = System.monotonic_time(:second) - 1
 
+      :sys.replace_state(
+        auth_pid,
+        &%{
+          cancel_refresh(&1)
+          | token: "expired",
+            usable_until: expired_at,
+            refresh_timer_ref: live
+        }
+      )
+
+      # The caller's fetch fails; with a token cached, a retry takes the place
+      # of the live timer. Callers are answered before the retry is
+      # scheduled, so read the state first, which waits for it.
+      assert {:error, %Teya.Error{}} = Teya.Auth.token()
+      assert %{refresh_timer_ref: retry} = :sys.get_state(auth_pid)
+      assert is_reference(retry) and retry != live
       assert Process.read_timer(live) == false
     end
 

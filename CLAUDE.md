@@ -197,7 +197,11 @@ before expiry, or halfway through the life of a token that lives less than a
 minute. A token that lives a second or less gets no background refresh; a new
 one is fetched when the next caller needs it.
 
-If a background refresh (`handle_info(:refresh, state)`) fails, the GenServer
+The refresh timer is started with `:erlang.start_timer/3`, so its message is
+`{:timeout, ref, :refresh}`, and only the ref in `refresh_timer_ref` starts a
+refresh: a stale timer's message is ignored.
+
+If a background refresh fails, the GenServer
 retries after 1 second, doubling each time up to 1 minute — it does **not**
 crash. `Auth.token/1` keeps returning the cached token, even while refreshes
 fail, until 5 seconds before it expires, and only then fetches synchronously.
@@ -236,11 +240,15 @@ each. `Auth.set_for/2` picks the set for a call from the names the
 application started with (`Auth.put_started_sets/1`, a `:persistent_term`),
 not the live config.
 
-In tests, a fetch finishes after the call that started it returns, so a test
-that sends `:refresh` must wait for the fetch to settle before reading the
-state (see `refresh/1` in `auth_test.exs`). Test setup that resets the auth
-state must also reset `fetch` and `waiters`, or a fetch left from an earlier
-test makes callers wait on a task that is not theirs.
+In tests, a refresh is fired by putting a ref in `refresh_timer_ref` and
+sending `{:timeout, ref, :refresh}` (see `start_refresh/1` in
+`auth_test.exs`). A fetch finishes after the call that started it returns,
+so such a test must wait for the fetch to settle before reading the state
+(see `refresh/1`). Test setup that resets the auth state must also reset
+`fetch` and `waiters`, or a fetch left from an earlier test makes callers
+wait on a task that is not theirs. `Teya.APICase.reset_auth/2` does all of
+this, and `Teya.APICase.cancel_refresh/1` stops a refresh timer so it cannot
+fire into a later test.
 
 The test config names no sets, so tests run against the top-level
 `Teya.Auth`. A test that needs sets (see `credentials_test.exs`) records them

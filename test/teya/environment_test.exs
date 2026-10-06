@@ -55,7 +55,7 @@ defmodule Teya.EnvironmentTest do
 
       on_exit(fn ->
         :sys.replace_state(auth_pid, fn state ->
-          if state.refresh_timer_ref, do: Process.cancel_timer(state.refresh_timer_ref)
+          cancel_refresh(state)
           seeded
         end)
       end)

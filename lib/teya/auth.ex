@@ -194,8 +194,8 @@ defmodule Teya.Auth do
       usable?(state) ->
         {:reply, {:ok, state.token, state.config.base_url}, state}
 
-      recently_failed?(state) ->
-        {:reply, {:error, elem(state.failure, 1)}, state}
+      error = recent_failure(state) ->
+        {:reply, {:error, error}, state}
 
       # Its caller has already given up, so do not fetch for it.
       gives_up_at <= now ->
@@ -264,10 +264,12 @@ defmodule Teya.Auth do
 
   defp usable?(_state), do: false
 
-  defp recently_failed?(%{failure: nil}), do: false
+  # The last failure while it is still held, or nil.
+  defp recent_failure(%{failure: {failed_at, error}}) do
+    if System.monotonic_time(:millisecond) - failed_at < @failure_hold_ms, do: error
+  end
 
-  defp recently_failed?(%{failure: {failed_at, _error}}),
-    do: System.monotonic_time(:millisecond) - failed_at < @failure_hold_ms
+  defp recent_failure(_state), do: nil
 
   # One fetch at a time: a caller who arrives while one is under way waits
   # for it, whether it was started by another caller or by the refresh timer.

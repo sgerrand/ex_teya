@@ -9,7 +9,7 @@ defmodule Teya.APICase do
   end
 
   # Pre-seed a valid token directly into the Auth GenServer state. Resetting to
-  # nil and stubbing the token endpoint races with stale `:refresh` messages
+  # nil and stubbing the token endpoint races with stale refresh messages
   # left by prior tests (e.g. retry timers from auth_test.exs): when a refresh
   # fires after the owning test process has exited, the `Req.Test` stub lookup
   # raises, crashing Auth and leaving a small window where `Process.whereis`
@@ -25,13 +25,10 @@ defmodule Teya.APICase do
   """
   def reset_auth(auth_pid, token \\ nil) do
     :sys.replace_state(auth_pid, fn state ->
-      if state.refresh_timer_ref, do: Process.cancel_timer(state.refresh_timer_ref)
-
       %{
-        state
+        cancel_refresh(state)
         | token: token,
           usable_until: if(token, do: System.monotonic_time(:second) + 3600),
-          refresh_timer_ref: nil,
           failure: nil,
           fetch: nil,
           waiters: [],
@@ -40,6 +37,16 @@ defmodule Teya.APICase do
     end)
 
     :ok
+  end
+
+  @doc """
+  Cancels the refresh timer an auth process's `state` holds, if any, and
+  clears it, so it cannot fire into a later test. For use inside
+  `:sys.replace_state/2`.
+  """
+  def cancel_refresh(state) do
+    if state.refresh_timer_ref, do: Process.cancel_timer(state.refresh_timer_ref)
+    %{state | refresh_timer_ref: nil}
   end
 
   @doc """

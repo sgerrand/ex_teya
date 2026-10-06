@@ -50,10 +50,7 @@ defmodule Teya.CredentialsTest do
   defp refresh(pid) do
     ref = make_ref()
 
-    :sys.replace_state(pid, fn state ->
-      if state.refresh_timer_ref, do: Process.cancel_timer(state.refresh_timer_ref)
-      %{state | refresh_timer_ref: ref, failure: nil}
-    end)
+    :sys.replace_state(pid, &%{cancel_refresh(&1) | refresh_timer_ref: ref, failure: nil})
 
     send(pid, {:timeout, ref, :refresh})
     await_settled(pid, 200)

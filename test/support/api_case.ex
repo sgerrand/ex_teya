@@ -26,16 +26,12 @@ defmodule Teya.APICase do
   def reset_auth(auth_pid, token \\ nil) do
     :sys.replace_state(auth_pid, fn state ->
       if state.refresh_timer_ref, do: Process.cancel_timer(state.refresh_timer_ref)
-      expires_at = if token, do: System.monotonic_time(:second) + 3600
 
       %{
         state
         | token: token,
-          expires_at: expires_at,
-          usable_until: expires_at,
+          usable_until: if(token, do: System.monotonic_time(:second) + 3600),
           refresh_timer_ref: nil,
-          refresh_tag: nil,
-          failed_at: nil,
           failure: nil,
           fetch: nil,
           waiters: [],

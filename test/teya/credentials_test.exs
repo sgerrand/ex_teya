@@ -39,7 +39,7 @@ defmodule Teya.CredentialsTest do
   defp seed(name, token) do
     :sys.replace_state(server(name), fn state ->
       now = System.monotonic_time(:second)
-      %{state | token: token, expires_at: now + 3600, usable_until: now + 3600}
+      %{state | token: token, usable_until: now + 3600}
     end)
   end
 
@@ -48,9 +48,14 @@ defmodule Teya.CredentialsTest do
   # Fires a background refresh as its timer would, and waits for the fetch
   # it starts to settle.
   defp refresh(pid) do
-    tag = make_ref()
-    :sys.replace_state(pid, &%{&1 | refresh_tag: tag, failed_at: nil, failure: nil})
-    send(pid, {:refresh, tag})
+    ref = make_ref()
+
+    :sys.replace_state(pid, fn state ->
+      if state.refresh_timer_ref, do: Process.cancel_timer(state.refresh_timer_ref)
+      %{state | refresh_timer_ref: ref, failure: nil}
+    end)
+
+    send(pid, {:timeout, ref, :refresh})
     await_settled(pid, 200)
   end
 

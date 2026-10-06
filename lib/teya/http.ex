@@ -131,16 +131,32 @@ defmodule Teya.HTTP do
     end
   end
 
+  # What a request is: where it goes, its method, query and body. These come
+  # from the library alone, so config cannot send a request somewhere else
+  # or change what it says, such as a token request carrying the client
+  # secret, or a token deletion losing the store_id that scopes it.
+  @request_keys [
+    :method,
+    :url,
+    :path_params,
+    :params,
+    :json,
+    :form,
+    :form_multipart,
+    :body,
+    :into
+  ]
+
   @doc false
   # Builds a request of one kind: the caller's `defaults`, then the options
-  # configured for that kind (see options/1), then the caller's `forced`
-  # options, which config cannot change. The user agent is Req's own option,
-  # so it gives way to one configured as an option or a header. The body is
-  # never decoded by Req: see decode_json/2.
+  # configured for that kind (see options/1) less @request_keys, then the
+  # caller's `forced` options, which config cannot change. The user agent is
+  # Req's own option, so it gives way to one configured as an option or a
+  # header. The body is never decoded by Req: see decode_json/2.
   def new_request(key, defaults, forced) do
     [user_agent: @user_agent]
     |> Keyword.merge(defaults)
-    |> Keyword.merge(options(key))
+    |> Keyword.merge(key |> options() |> Keyword.drop(@request_keys))
     |> Keyword.merge(forced)
     |> Keyword.put(:decode_body, false)
     |> Req.new()

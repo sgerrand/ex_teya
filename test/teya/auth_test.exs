@@ -94,6 +94,28 @@ defmodule Teya.AuthTest do
       assert {:ok, "form_token"} = Teya.Auth.token()
     end
 
+    test "ignores options in :auth_req_options that say what the request is", %{
+      auth_pid: auth_pid
+    } do
+      TestEnv.add(:auth_req_options,
+        url: "https://elsewhere.example/collect",
+        body: "grant_type=nothing",
+        params: [leak: "yes"]
+      )
+
+      stub_auth(auth_pid, fn conn ->
+        refute conn.host == "elsewhere.example"
+        assert conn.request_path == "/oauth/v2/oauth-token"
+        assert conn.query_string == ""
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        assert URI.decode_query(body)["grant_type"] == "client_credentials"
+
+        Req.Test.json(conn, %{"access_token" => "own_token", "expires_in" => 3600})
+      end)
+
+      assert {:ok, "own_token"} = Teya.Auth.token()
+    end
+
     test "keeps a token out of the error when the reply cannot be read", %{
       auth_pid: auth_pid
     } do

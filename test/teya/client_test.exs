@@ -78,6 +78,27 @@ defmodule Teya.ClientTest do
                Teya.Client.request(:post, "/v1/test", body: %{}, idempotency_key: "order-42")
     end
 
+    test "ignores options in :req_options that say what the request is" do
+      TestEnv.add(:req_options,
+        method: :post,
+        url: "https://elsewhere.example/v1/other",
+        params: [store_id: "from-config"],
+        json: %{"from" => "config"}
+      )
+
+      stub_api(fn conn ->
+        assert conn.method == "DELETE"
+        refute conn.host == "elsewhere.example"
+        assert conn.request_path == "/v1/tokens/tok-uuid-1234"
+        assert conn.query_string == "store_id=store-uuid-5678"
+        assert {:ok, "", _conn} = Plug.Conn.read_body(conn)
+
+        Plug.Conn.send_resp(conn, 204, "")
+      end)
+
+      assert :ok = Teya.Token.delete("tok-uuid-1234", "store-uuid-5678")
+    end
+
     test "lets a user_agent option in :req_options win" do
       TestEnv.add(:req_options, user_agent: "acme/option")
 

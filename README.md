@@ -716,9 +716,12 @@ so they can identify your integration. To send your own, use Req's
 config :teya, req_options: [user_agent: "acme-shop/1.0"]
 ```
 
-Other headers and options you set there are used too, with four exceptions
-the library always sets itself. API calls always send the library's own
-bearer token, so an `:auth` option there is ignored. Replies are decoded by
+Other headers and options you set there are used too, with five exceptions
+the library always sets itself. What a request is — its `:method`, `:url`,
+`:path_params`, `:params`, its body (`:json`, `:form`, `:form_multipart`,
+`:body`) and `:into` — comes from the call alone, so those options are
+ignored. API calls always send the library's own bearer token, so an `:auth`
+option there is ignored. Replies are decoded by
 the library, so options such as `:decoders`, `:decode_json` and `:raw` are
 ignored, and JSON keys are always strings. API calls carry their own
 `Idempotency-Key`, since one key shared by every request would make each POST

@@ -6,7 +6,7 @@ defmodule Teya.CredentialsTest do
 
   import Teya.POSLink.SubscribeCase, only: [stub_sse: 1]
 
-  alias Teya.{Auth, Checkout, Config, TestEnv}
+  alias Teya.{Auth, Checkout, Config, StartRecord, TestEnv}
   alias Teya.POSLink.{Payment, Receipt, Store}
 
   # Configures the named sets and starts an auth process for each, holding
@@ -31,9 +31,9 @@ defmodule Teya.CredentialsTest do
   # Records the sets as started, as the application does at boot, and puts
   # back what was there when the test ends.
   defp started(names) do
-    before = :persistent_term.get({Auth, :started_sets}, [])
-    Auth.put_started_sets(names)
-    on_exit(fn -> Auth.put_started_sets(before) end)
+    {sets, base_url} = {StartRecord.sets(), StartRecord.base_url()}
+    StartRecord.record(names, base_url)
+    on_exit(fn -> StartRecord.record(sets, base_url) end)
   end
 
   defp seed(name, token) do

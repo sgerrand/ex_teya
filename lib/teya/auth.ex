@@ -78,14 +78,7 @@ defmodule Teya.Auth do
     end
   end
 
-  @sets_key {__MODULE__, :started_sets}
-
-  @doc false
-  # The names of the sets the application started an auth process for,
-  # kept when it starts.
-  def put_started_sets(names), do: :persistent_term.put(@sets_key, names)
-
-  defp started_sets, do: :persistent_term.get(@sets_key, [])
+  defp started_sets, do: Teya.StartRecord.sets()
 
   # How long a caller waits for a token, and how long a fetch may run before
   # it is stopped. It is longer than the token request's own 10-second reply

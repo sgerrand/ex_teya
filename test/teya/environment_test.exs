@@ -5,7 +5,7 @@ defmodule Teya.EnvironmentTest do
 
   import Teya.POSLink.SubscribeCase, only: [stub_sse: 1]
 
-  alias Teya.{Checkout, Config, HTTP, TestEnv}
+  alias Teya.{Checkout, Config, HTTP, StartRecord, TestEnv}
   alias Teya.POSLink.{Epos, Payment}
 
   # The test config sets both URLs. Unset them, so the environment decides.
@@ -119,9 +119,8 @@ defmodule Teya.EnvironmentTest do
         {name, [client_id: "id", client_secret: "secret", scopes: ["s"]]}
       ])
 
-      before = :persistent_term.get({Teya.Auth, :started_sets}, [])
-      Teya.Auth.put_started_sets([name])
-      on_exit(fn -> Teya.Auth.put_started_sets(before) end)
+      restore_start()
+      StartRecord.record([name], StartRecord.base_url())
 
       pid = start_supervised!({Teya.Auth, Config.from_env(name)})
 
@@ -243,26 +242,25 @@ defmodule Teya.EnvironmentTest do
       TestEnv.put(:credentials, online: [client_id: "a", client_secret: "b", scopes: ["s"]])
       assert {:error, _reason} = Application.ensure_all_started(:teya)
 
-      assert HTTP.recorded_base_url() == nil
-      assert :persistent_term.get({Teya.Auth, :started_sets}, []) == []
+      assert StartRecord.base_url() == nil
+      assert StartRecord.sets() == []
     end
 
     test "keeps the host it started with when a second start finds it running" do
       TestEnv.put(:base_url, "https://proxy.example")
       TestEnv.put(:credentials, online: [client_id: "a", client_secret: "b", scopes: ["s"]])
-      sets = :persistent_term.get({Teya.Auth, :started_sets}, [])
+      sets = StartRecord.sets()
 
       assert {:error, {:already_started, _pid}} = Teya.Application.start(:normal, [])
 
       assert HTTP.started_base_url() == "https://api.teya.test"
-      assert :persistent_term.get({Teya.Auth, :started_sets}, []) == sets
+      assert StartRecord.sets() == sets
     end
 
     # Puts back what the running test application recorded when it started.
     defp restore_start do
-      sets = :persistent_term.get({Teya.Auth, :started_sets}, [])
-      base_url = HTTP.started_base_url()
-      on_exit(fn -> Teya.StartRecord.record(sets, base_url) end)
+      {sets, base_url} = {StartRecord.sets(), StartRecord.base_url()}
+      on_exit(fn -> StartRecord.record(sets, base_url) end)
     end
 
     test "a start that resolves no host erases the one an earlier run left" do
@@ -271,7 +269,7 @@ defmodule Teya.EnvironmentTest do
       TestEnv.put(:environment, :sandbox)
 
       # As a later start in the same VM, with an environment it did not know.
-      Teya.StartRecord.record([], nil)
+      StartRecord.record([], nil)
 
       # Registration then reports the environment instead of using the old host.
       assert_raise ArgumentError, ~r/:environment must be/, fn ->
@@ -284,8 +282,8 @@ defmodule Teya.EnvironmentTest do
 
       :ok = Application.stop(:teya)
 
-      assert HTTP.recorded_base_url() == nil
-      assert :persistent_term.get({Teya.Auth, :started_sets}, []) == []
+      assert StartRecord.base_url() == nil
+      assert StartRecord.sets() == []
     end
 
     test "is not stopped by an environment it does not know, with no credentials" do

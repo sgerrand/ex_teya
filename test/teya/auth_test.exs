@@ -94,6 +94,52 @@ defmodule Teya.AuthTest do
       assert {:ok, "form_token"} = Teya.Auth.token()
     end
 
+    test "ignores options in :auth_req_options that say what the request is", %{
+      auth_pid: auth_pid
+    } do
+      TestEnv.add(:auth_req_options,
+        method: :get,
+        url: "https://elsewhere.example/collect",
+        body: "grant_type=nothing",
+        form: [grant_type: "nothing"],
+        json: %{"grant_type" => "nothing"},
+        params: [leak: "yes"],
+        auth: {:bearer, "config-token"},
+        headers: [{"authorization", "Bearer header-token"}]
+      )
+
+      stub_auth(auth_pid, fn conn ->
+        assert conn.method == "POST"
+        refute conn.host == "elsewhere.example"
+        assert conn.request_path == "/oauth/v2/oauth-token"
+        assert conn.query_string == ""
+        assert Plug.Conn.get_req_header(conn, "authorization") == []
+        {:ok, body, conn} = Plug.Conn.read_body(conn)
+        assert URI.decode_query(body)["grant_type"] == "client_credentials"
+
+        Req.Test.json(conn, %{"access_token" => "own_token", "expires_in" => 3600})
+      end)
+
+      assert {:ok, "own_token"} = Teya.Auth.token()
+    end
+
+    test "does not follow a redirect from the token endpoint", %{auth_pid: auth_pid} do
+      TestEnv.add(:auth_req_options, redirect: true)
+      test_pid = self()
+
+      stub_auth(auth_pid, fn conn ->
+        send(test_pid, :token_request)
+
+        conn
+        |> Plug.Conn.put_resp_header("location", "https://elsewhere.example/collect")
+        |> Plug.Conn.send_resp(307, "")
+      end)
+
+      assert {:error, %Teya.Error{reason: {:no_token, _reason}}} = Teya.Auth.token()
+      assert_received :token_request
+      refute_received :token_request
+    end
+
     test "keeps a token out of the error when the reply cannot be read", %{
       auth_pid: auth_pid
     } do

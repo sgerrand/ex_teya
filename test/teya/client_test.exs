@@ -78,6 +78,45 @@ defmodule Teya.ClientTest do
                Teya.Client.request(:post, "/v1/test", body: %{}, idempotency_key: "order-42")
     end
 
+    test "ignores options in :req_options that say what the request is" do
+      TestEnv.add(:req_options,
+        method: :post,
+        url: "https://elsewhere.example/v1/other",
+        params: [store_id: "from-config"],
+        json: %{"from" => "config"}
+      )
+
+      stub_api(fn conn ->
+        assert conn.method == "DELETE"
+        refute conn.host == "elsewhere.example"
+        assert conn.request_path == "/v1/tokens/tok-uuid-1234"
+        assert conn.query_string == "store_id=store-uuid-5678"
+        assert {:ok, "", _conn} = Plug.Conn.read_body(conn)
+
+        Plug.Conn.send_resp(conn, 204, "")
+      end)
+
+      assert :ok = Teya.Token.delete("tok-uuid-1234", "store-uuid-5678")
+    end
+
+    test "ignores options in :req_options that change how the reply is read" do
+      TestEnv.add(:req_options,
+        aws_sigv4: [access_key_id: "AKIA", secret_access_key: "secret", service: "s3"],
+        compress_body: true,
+        http_errors: :raise,
+        cache: true
+      )
+
+      stub_api(fn conn ->
+        assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer test_access_token"]
+        assert Plug.Conn.get_req_header(conn, "content-encoding") == []
+        error_response(conn, 422, "INVALID", "bad request")
+      end)
+
+      assert {:error, %Teya.Error{status: 422, code: "INVALID"}} =
+               Teya.Client.request(:post, "/v1/test", body: %{"a" => 1})
+    end
+
     test "lets a user_agent option in :req_options win" do
       TestEnv.add(:req_options, user_agent: "acme/option")
 

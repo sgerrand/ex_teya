@@ -131,16 +131,40 @@ defmodule Teya.HTTP do
     end
   end
 
+  # The only options taken from config: how a request is sent, never what
+  # it is. Anything else, such as :url, :params, a body, :auth, :aws_sigv4,
+  # :redirect_trusted, :compress_body, :http_errors or :cache, could send a
+  # request somewhere else, change what it carries — a token request holds
+  # the client secret — or change how its reply is read, so it is ignored.
+  # :plug and :adapter stand in for the HTTP client, for tests.
+  @configurable [
+    :connect_options,
+    :finch,
+    :inet6,
+    :pool_timeout,
+    :receive_timeout,
+    :headers,
+    :user_agent,
+    :retry,
+    :retry_delay,
+    :retry_log_level,
+    :max_retries,
+    :redirect,
+    :max_redirects,
+    :plug,
+    :adapter
+  ]
+
   @doc false
   # Builds a request of one kind: the caller's `defaults`, then the options
-  # configured for that kind (see options/1), then the caller's `forced`
-  # options, which config cannot change. The user agent is Req's own option,
-  # so it gives way to one configured as an option or a header. The body is
-  # never decoded by Req: see decode_json/2.
+  # configured for that kind (see options/1) that are in @configurable, then
+  # the caller's `forced` options, which config cannot change. The user agent
+  # is Req's own option, so it gives way to one configured as an option or a
+  # header. The body is never decoded by Req: see decode_json/2.
   def new_request(key, defaults, forced) do
     [user_agent: @user_agent]
     |> Keyword.merge(defaults)
-    |> Keyword.merge(options(key))
+    |> Keyword.merge(key |> options() |> Keyword.take(@configurable))
     |> Keyword.merge(forced)
     |> Keyword.put(:decode_body, false)
     |> Req.new()

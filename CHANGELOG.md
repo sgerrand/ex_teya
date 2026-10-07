@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.0.1](https://github.com/sgerrand/ex_teya/compare/v1.0.0...v1.0.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* **deps:** bump req_server_sent_events from 0.2.3 to 0.2.4 ([#61](https://github.com/sgerrand/ex_teya/issues/61)) ([b080a3d](https://github.com/sgerrand/ex_teya/commit/b080a3dbe2eaec95ddcc5615e09d293b68384f2a))
+* **http:** take only transport options from config ([#63](https://github.com/sgerrand/ex_teya/issues/63)) ([8a21a16](https://github.com/sgerrand/ex_teya/commit/8a21a16a223204696ecbea9e5e386f7cc7e62ee1))
+
 ## [1.0.0](https://github.com/sgerrand/ex_teya/compare/v0.4.3...v1.0.0) (2026-09-28)
 
 

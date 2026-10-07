@@ -125,7 +125,7 @@ defmodule Teya.POSLink.Receipt do
     do: subscribe_status(receipt_id, pid, [])
 
   def subscribe_status(receipt_id, pid, opts) when is_pid(pid) and is_list(opts) do
-    # SSE.subscribe/5 builds and checks the path in this process, before any
+    # Client.target/2 builds and checks the path in this process, before any
     # task starts, so an id that cannot be a path segment raises here.
     SSE.subscribe(
       {"/poslink/v1/receipt-requests/:id/status", id: receipt_id},

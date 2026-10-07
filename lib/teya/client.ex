@@ -165,24 +165,30 @@ defmodule Teya.Client do
   end
 
   # A request with an auth process's token, which a retry asks for again.
-  # The set of credentials is picked before anything else, so an unknown
-  # name raises in the caller.
   defp authed_request(method, path, opts, settings) do
-    path = path(path)
-    set = Auth.set_for(opts, api(path))
+    {built_path, set} = target(path, opts)
 
-    with {:ok, token, url} <- built_session_url(path, set),
+    with {:ok, token, url} <- session_url(built_path, set),
          do: send_request(method, url, opts, token, [credentials: set] ++ settings)
   end
 
   @doc false
-  # A token for `set` and the full URL for `path` (text or a template) on
-  # the host that token belongs to, both from one reply of the set's auth
-  # process, so they always come from one environment. The path is built
-  # first, so a bad id raises before anything is asked of the auth process.
-  def session_url(path, set), do: built_session_url(path(path), set)
+  # Builds `path` (text or a template) and picks the set of credentials a
+  # request to it uses: the one named in `opts`, else the one for its API.
+  # Every request and stream starts here, in the calling process, so a bad
+  # id or an unknown set raises where the mistake was made, before anything
+  # is asked of an auth process or any task starts. The path is built first,
+  # so a bad id raises before an unknown set.
+  def target(path, opts) do
+    built_path = path(path)
+    {built_path, Auth.set_for(opts, api(built_path))}
+  end
 
-  defp built_session_url(built_path, set) do
+  @doc false
+  # A token for `set` and the full URL for a path target/2 built, on the
+  # host that token belongs to, both from one reply of the set's auth
+  # process, so they always come from one environment.
+  def session_url(built_path, set) do
     with {:ok, token, base_url} <- Auth.session(set), do: {:ok, token, join(base_url, built_path)}
   end
 

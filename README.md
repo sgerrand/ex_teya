@@ -569,9 +569,10 @@ Teya.Checkout.create_session(params, idempotency_key: order_id)
 ```
 
 Those requests are the POSTs listed under [Retries](#retries). Every other
-request carries no `Idempotency-Key`, since Teya does not document it there,
-and raises `ArgumentError` if given `:idempotency_key`. Repeating one of
-those writes can act twice. They include:
+request carries no `Idempotency-Key`, since Teya does not document it there.
+Every other write also raises `ArgumentError` if given an `:idempotency_key`,
+so you learn it is not sent; reads ignore it. Repeating one of those writes
+can act twice. They include:
 
 - `Teya.Receipt.create/3`, `Teya.Reversal.create/2` and
   `Teya.POSLink.Receipt.create/2`
@@ -732,9 +733,10 @@ Only options that say how a request is sent are taken from there:
 `:max_redirects`, and `:plug` and `:adapter` for tests. Every other option is
 ignored. What a request is — where it goes, its query and body, and the
 credentials it carries — comes from the call alone, and replies are decoded
-by the library, so JSON keys are always strings. API calls carry their own
-`Idempotency-Key`, since one key shared by every request would make each POST
-look like a retry of the first. Token requests are always sent as a form,
+by the library, so JSON keys are always strings. An `Idempotency-Key` header
+there is dropped too: the calls listed under [Idempotency Keys](#idempotency-keys)
+carry their own, and one key shared by every request would make each look
+like a retry of the first. Token requests are always sent as a form,
 whatever content type is set, with no `authorization` header, and never
 follow a redirect, so the client secret cannot be sent on to another host.
 

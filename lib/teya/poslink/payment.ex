@@ -87,6 +87,9 @@ defmodule Teya.POSLink.Payment do
 
   - `payment_request_id` — UUID returned from `create/2`
 
+  Raises `ArgumentError` if given an `:idempotency_key`: Teya documents no
+  `Idempotency-Key` header for this endpoint, so none is sent.
+
   ## Examples
 
       {:ok, %{"status" => "CANCELLING"}} = Teya.POSLink.Payment.cancel(payment_request_id)

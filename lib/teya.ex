@@ -127,8 +127,9 @@ defmodule Teya do
 
       Teya.Checkout.create_session(params, idempotency_key: order_id)
 
-  Every other request carries none, since Teya documents none for it, and
-  raises `ArgumentError` if given `:idempotency_key`. The README lists which
-  is which.
+  Every other request carries none, since Teya documents none for it. Every
+  other write also raises `ArgumentError` if given an `:idempotency_key`, so
+  you learn it is not sent; reads ignore it. The README lists which is
+  which.
   """
 end

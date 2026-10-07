@@ -23,12 +23,13 @@ defmodule Teya.Client do
   It sends no `Idempotency-Key`: only an endpoint whose spec documents the
   header gets one, through `idempotent_post/2`. Sending it anywhere else
   could be refused, and a caller could not rely on a reused key to
-  deduplicate. Raises `ArgumentError` when given `:idempotency_key`, so a
-  caller who counts on the key to make a retry safe learns that it is not
-  sent, rather than losing that protection without a word.
+  deduplicate. A write (any method but GET) raises `ArgumentError` when
+  given an `:idempotency_key` other than nil, so a caller who counts on the
+  key to make a retry safe learns that it is not sent, rather than losing
+  that protection without a word. A GET ignores it, as it always has.
   """
   def request(method, path, opts \\ []) do
-    no_idempotency_key!(opts)
+    no_idempotency_key!(method, opts)
     authed_request(method, path, opts, [])
   end
 
@@ -58,9 +59,7 @@ defmodule Teya.Client do
     retry =
       if Application.get_env(:teya, :retry_idempotent_posts, false), do: &transient?/2
 
-    # Made up here when none is given, nil included, so a request that may
-    # be retried never goes without one.
-    key = Keyword.get(opts, :idempotency_key) || generate_key()
+    key = idempotency_key!(opts)
 
     authed_request(:post, path, opts, retry: retry, idempotency_key: key)
   end
@@ -74,18 +73,39 @@ defmodule Teya.Client do
   options every resource function passes along. Takes the same options.
   """
   def request_with_token(token, method, path, opts) when is_binary(token) and token != "" do
-    no_idempotency_key!(opts)
+    no_idempotency_key!(method, opts)
 
     # No set holds this token, so it goes to the host the application
     # started with, as every set's does.
     send_request(method, join(HTTP.started_base_url(), path(path)), opts, token, [])
   end
 
-  defp no_idempotency_key!(opts) do
-    if Keyword.has_key?(opts, :idempotency_key) do
+  # Only a write can be repeated by mistake, so only a write is refused a
+  # key. A GET, or a key of nil, as a caller reusing one list of options or
+  # passing a key it may not have would send, is let through.
+  defp no_idempotency_key!(:get, _opts), do: :ok
+
+  defp no_idempotency_key!(_method, opts) do
+    if opts[:idempotency_key] != nil do
       raise ArgumentError,
             "this endpoint takes no :idempotency_key: Teya documents no " <>
               "Idempotency-Key header for it, so none is sent"
+    end
+  end
+
+  # The caller's key, or one made up when it is left out, nil or empty, so a
+  # request that may be retried never goes without one, nor with a blank one
+  # every request would share.
+  defp idempotency_key!(opts) do
+    case opts[:idempotency_key] do
+      key when key in [nil, ""] ->
+        generate_key()
+
+      key when is_binary(key) ->
+        key
+
+      key ->
+        raise ArgumentError, ":idempotency_key must be text, got: #{inspect(key)}"
     end
   end
 

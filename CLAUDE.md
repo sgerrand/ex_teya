@@ -66,8 +66,9 @@ lib/teya/
                         Idempotency-Key: the only call that sends the key
                         (the caller's or a made-up one), retried when
                         :retry_idempotent_posts is set; request/3 and
-                        request_with_token/4 send none, and raise
-                        ArgumentError when given :idempotency_key
+                        request_with_token/4 send none, and a write
+                        (not a GET) raises ArgumentError when given a
+                        non-nil :idempotency_key
   http.ex             — shared by every module that makes a request:
                         new_request/3 builds each one (the user agent, the
                         caller's defaults, that kind's options with their

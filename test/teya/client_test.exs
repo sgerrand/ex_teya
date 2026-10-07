@@ -102,14 +102,32 @@ defmodule Teya.ClientTest do
       end
     end
 
-    test "idempotent_post/2 makes up a key when given nil" do
+    test "idempotent_post/2 makes up a key when given nil or an empty one" do
       stub_api(fn conn ->
         assert [key] = Plug.Conn.get_req_header(conn, "idempotency-key")
         assert key =~ ~r/\A[0-9a-f]{32}\z/
         json_response(conn, 200, %{"ok" => true})
       end)
 
-      assert {:ok, _} = Teya.Client.idempotent_post("/v1/test", body: %{}, idempotency_key: nil)
+      for key <- [nil, ""] do
+        assert {:ok, _} = Teya.Client.idempotent_post("/v1/test", body: %{}, idempotency_key: key)
+      end
+    end
+
+    test "idempotent_post/2 raises for a key that is not text" do
+      assert_raise ArgumentError, ~r/must be text, got: 42/, fn ->
+        Teya.Client.idempotent_post("/v1/test", body: %{}, idempotency_key: 42)
+      end
+    end
+
+    test "lets a GET, or a write given a nil key, through with no key" do
+      stub_api(fn conn ->
+        assert Plug.Conn.get_req_header(conn, "idempotency-key") == []
+        json_response(conn, 200, %{"ok" => true})
+      end)
+
+      assert {:ok, _} = Teya.Client.request(:get, "/v1/test", idempotency_key: "order-42")
+      assert {:ok, _} = Teya.Client.request(:post, "/v1/test", idempotency_key: nil)
     end
 
     test "ignores options in :req_options that say what the request is" do

@@ -31,6 +31,9 @@ defmodule Teya.Reversal do
   - `transaction_id` — ID of the transaction to reverse
   - `idempotency_key` — idempotency key used when creating the original transaction
 
+  Raises `ArgumentError` if given an `:idempotency_key`: Teya documents no
+  `Idempotency-Key` header for this endpoint, so none is sent.
+
   ## Examples
 
       {:ok, response} = Teya.Reversal.create(%{

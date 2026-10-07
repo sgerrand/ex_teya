@@ -63,6 +63,9 @@ defmodule Teya.DCC do
   - `cardholder_currency` — the card's currency
   - `cardholder_amount` — amount in the card currency's minor units
 
+  Raises `ArgumentError` if given an `:idempotency_key`: Teya documents no
+  `Idempotency-Key` header for this endpoint, so none is sent.
+
   ## Examples
 
       case Teya.DCC.quote(%{

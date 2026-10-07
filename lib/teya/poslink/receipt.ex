@@ -47,10 +47,6 @@ defmodule Teya.POSLink.Receipt do
 
   - `merchant_reference` — caller-supplied reference (max 60 chars)
 
-  ## Options
-
-  - `:idempotency_key` — override the auto-generated idempotency key
-
   ## Examples
 
       {:ok, %{"receipt_id" => id}} =

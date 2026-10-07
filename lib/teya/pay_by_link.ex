@@ -71,10 +71,6 @@ defmodule Teya.PayByLink do
   Currently supports updating `expires_at` (ISO 8601 datetime string) to extend
   or shorten the link's validity.
 
-  ## Options
-
-  - `idempotency_key` — override the auto-generated idempotency key
-
   ## Examples
 
       {:ok, _} = Teya.PayByLink.update(payment_link_id, %{"expires_at" => "2025-06-30T23:59:59Z"})

@@ -9,7 +9,8 @@ defmodule Teya.POSLink.ReceiptTest do
       stub_api(fn conn ->
         assert conn.method == "POST"
         assert conn.request_path == "/poslink/v1/receipt-requests"
-        assert Plug.Conn.get_req_header(conn, "idempotency-key") != []
+        # Its spec documents no Idempotency-Key, so none is sent.
+        assert Plug.Conn.get_req_header(conn, "idempotency-key") == []
         assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer test_access_token"]
 
         json_response(conn, 201, %{
@@ -32,9 +33,9 @@ defmodule Teya.POSLink.ReceiptTest do
       assert response["status"] == "ENQUEUED"
     end
 
-    test "accepts a custom idempotency key" do
+    test "sends no idempotency key, even one it is given" do
       stub_api(fn conn ->
-        assert Plug.Conn.get_req_header(conn, "idempotency-key") == ["receipt-ref-99"]
+        assert Plug.Conn.get_req_header(conn, "idempotency-key") == []
         json_response(conn, 201, %{"receipt_id" => "receipt-uuid-2", "status" => "ENQUEUED"})
       end)
 

@@ -87,10 +87,6 @@ defmodule Teya.POSLink.Payment do
 
   - `payment_request_id` — UUID returned from `create/2`
 
-  ## Options
-
-  - `:idempotency_key` — override the auto-generated idempotency key
-
   ## Examples
 
       {:ok, %{"status" => "CANCELLING"}} = Teya.POSLink.Payment.cancel(payment_request_id)

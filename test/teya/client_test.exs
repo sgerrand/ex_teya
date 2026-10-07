@@ -26,7 +26,7 @@ defmodule Teya.ClientTest do
         json_response(conn, 200, %{"ok" => true})
       end)
 
-      assert {:ok, _} = Teya.Client.request(:post, "/v1/test", body: %{})
+      assert {:ok, _} = Teya.Client.idempotent_post("/v1/test", body: %{})
     end
 
     test "lets a configured user-agent win" do
@@ -75,7 +75,19 @@ defmodule Teya.ClientTest do
       end)
 
       assert {:ok, _} =
-               Teya.Client.request(:post, "/v1/test", body: %{}, idempotency_key: "order-42")
+               Teya.Client.idempotent_post("/v1/test", body: %{}, idempotency_key: "order-42")
+    end
+
+    test "sends no idempotency key on a POST or PATCH, even one it is given" do
+      stub_api(fn conn ->
+        assert Plug.Conn.get_req_header(conn, "idempotency-key") == []
+        json_response(conn, 200, %{"ok" => true})
+      end)
+
+      for method <- [:post, :patch] do
+        assert {:ok, _} =
+                 Teya.Client.request(method, "/v1/test", body: %{}, idempotency_key: "order-42")
+      end
     end
 
     test "ignores options in :req_options that say what the request is" do

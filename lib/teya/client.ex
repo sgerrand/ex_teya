@@ -15,11 +15,15 @@ defmodule Teya.Client do
 
   - `:body` — request body, serialised as JSON
   - `:params` — query parameters map or keyword list
-  - `:idempotency_key` — custom idempotency key for POST/PATCH (auto-generated if omitted)
   - `:credentials` — the named set of credentials to use; see `Teya.Auth.set_for/2`
 
   Nothing else is read from `opts`. Settings for the underlying `Req`
   request, such as timeouts or extra headers, come from `:req_options`.
+
+  It sends no `Idempotency-Key`: only an endpoint whose spec documents the
+  header gets one, through `idempotent_post/2`. Sending it anywhere else
+  could be refused, and a caller could not rely on a reused key to
+  deduplicate.
   """
   def request(method, path, opts \\ []) do
     authed_request(method, path, opts, [])
@@ -39,16 +43,19 @@ defmodule Teya.Client do
   #{div(@max_retry_after_ms, 1000)} seconds, or cannot be read. The caller
   would sit blocked for that wait, so the error comes back at once. A
   `:retry` in `:req_options` still wins. Takes the same options as
-  `request/3`.
+  `request/3`, plus `:idempotency_key`, the key to send; one is made up
+  when it is left out.
 
   Use it only for an endpoint whose spec documents the header. Anything
-  else, such as a receipt that would be emailed twice, uses `request/3`.
+  else, such as a receipt that would be emailed twice, uses `request/3`,
+  which sends no key. It is a separate function, not an option, so the key
+  cannot be dropped from an endpoint that honours it.
   """
   def idempotent_post(path, opts) do
     retry =
       if Application.get_env(:teya, :retry_idempotent_posts, false), do: &transient?/2
 
-    authed_request(:post, path, opts, retry: retry)
+    authed_request(:post, path, opts, retry: retry, idempotency_key: true)
   end
 
   @doc """
@@ -63,19 +70,6 @@ defmodule Teya.Client do
     # No set holds this token, so it goes to the host the application
     # started with, as every set's does.
     send_request(method, join(HTTP.started_base_url(), path(path)), opts, token, [])
-  end
-
-  @doc """
-  Makes a POST that carries no `Idempotency-Key` header.
-
-  For an endpoint whose spec does not document the header, such as DCC
-  offers: sending it anyway could be refused, and a caller could not rely on
-  a reused key to deduplicate. It is a separate function, not an option, so
-  the key cannot be dropped from an endpoint that honours it. Takes the same
-  options as `request/3`, less `:idempotency_key`, which it ignores.
-  """
-  def post_without_idempotency_key(path, opts) do
-    authed_request(:post, path, opts, idempotency_key: false)
   end
 
   # Lower-case letters, digits and hyphens, as every Teya path is made of.
@@ -198,7 +192,7 @@ defmodule Teya.Client do
   # - :credentials — the token came from the auth process for this set
   #   (nil for the top-level credentials), so a retry asks it again
   # - :retry — Req's :retry option, unless :req_options sets one
-  # - :idempotency_key — false sends no Idempotency-Key, even on a POST
+  # - :idempotency_key — true sends an Idempotency-Key, from opts or made up
   defp send_request(method, url, opts, token, settings) do
     defaults =
       [method: method, url: url, receive_timeout: 30_000]
@@ -213,9 +207,9 @@ defmodule Teya.Client do
       HTTP.new_request(:req_options, defaults, auth: {:bearer, token})
       # Any idempotency-key set in config is dropped, whatever the method:
       # one key there would mark every POST as a retry of the first, and it
-      # means nothing on other methods. POST and PATCH get their own.
+      # means nothing on other endpoints. idempotent_post/2 sets its own.
       |> Req.Request.delete_header("idempotency-key")
-      |> Req.merge(headers: idempotency_headers(method, opts, settings))
+      |> Req.merge(headers: idempotency_headers(opts, settings))
       |> refresh_token_on_retry(settings)
 
     case Req.request(req) do
@@ -287,8 +281,8 @@ defmodule Teya.Client do
   defp put_if_present(opts, _key, nil), do: opts
   defp put_if_present(opts, key, value), do: Keyword.put(opts, key, value)
 
-  defp idempotency_headers(method, opts, settings) do
-    if method in [:post, :patch] and Keyword.get(settings, :idempotency_key, true),
+  defp idempotency_headers(opts, settings) do
+    if settings[:idempotency_key],
       do: [{"idempotency-key", Keyword.get_lazy(opts, :idempotency_key, &generate_key/0)}],
       else: []
   end

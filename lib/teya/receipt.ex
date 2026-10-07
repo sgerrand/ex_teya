@@ -13,10 +13,6 @@ defmodule Teya.Receipt do
   `transaction_id` is the UUID of the completed transaction. The API returns HTTP 202
   (accepted for processing) on success — receipt delivery is asynchronous.
 
-  ## Options
-
-  - `idempotency_key` — override the auto-generated idempotency key
-
   ## Examples
 
       {:ok, _} = Teya.Receipt.create(transaction_id, %{"email" => "customer@example.com"})

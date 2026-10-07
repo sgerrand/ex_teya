@@ -255,12 +255,13 @@ defmodule Teya.RetryTest do
       assert length(attempts()) == 1
     end
 
-    test "sends every other write once" do
+    test "sends every other write once, with no idempotency key" do
       for call <- not_retried() do
         stub_failing_once(&unavailable/1)
 
         assert {:error, %Teya.Error{status: 503}} = call.(%{})
-        assert length(attempts()) == 1
+        # One attempt, which carried no key.
+        assert attempts() == [[]]
       end
     end
 

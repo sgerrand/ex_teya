@@ -561,15 +561,22 @@ send:
 
 ### Idempotency Keys
 
-POST and PATCH requests automatically include a random `Idempotency-Key` header. Supply your own to safely retry a request:
+A request whose Teya spec documents the `Idempotency-Key` header carries
+one: a random key, or your own. Supply your own to safely retry a request:
 
 ```elixir
 Teya.Checkout.create_session(params, idempotency_key: order_id)
 ```
 
-DCC offers (`Teya.DCC.quote/2`) are the exception: Teya documents no
-`Idempotency-Key` for them, so none is sent, and a repeated call creates a
-new quote.
+Those requests are the POSTs listed under [Retries](#retries). Every other
+request carries no `Idempotency-Key`, since Teya does not document it there,
+and repeating one can act twice. That covers:
+
+- `Teya.Receipt.create/3`, `Teya.Reversal.create/2` and
+  `Teya.POSLink.Receipt.create/2`
+- `Teya.PayByLink.update/3` and `Teya.POSLink.Payment.cancel/2`
+- `Teya.POSLink.Epos.register/2`
+- `Teya.DCC.quote/2`, where a repeated call creates a new quote
 
 ### Retries
 

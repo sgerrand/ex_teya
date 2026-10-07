@@ -92,6 +92,6 @@ defmodule Teya.DCC do
   """
   @spec quote(map(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def quote(params, opts \\ []) do
-    Client.post_without_idempotency_key("/fx/v1/dcc/offers", Keyword.put(opts, :body, params))
+    Client.request(:post, "/fx/v1/dcc/offers", Keyword.put(opts, :body, params))
   end
 end

@@ -3,7 +3,7 @@ defmodule Teya.Auth do
   use GenServer
   require Logger
 
-  alias Teya.{Config, Error, HTTP}
+  alias Teya.{Config, Error, HTTP, StartRecord}
 
   @refresh_margin_seconds 30
   @base_retry_delay_ms 1_000
@@ -63,27 +63,18 @@ defmodule Teya.Auth do
     case Keyword.fetch(opts, :credentials) do
       {:ok, :default} -> nil
       {:ok, name} -> started!(name)
-      :error -> if api in started_sets(), do: api
+      :error -> if api in StartRecord.sets(), do: api
     end
   end
 
   defp started!(name) do
-    if name in started_sets() do
+    if name in StartRecord.sets() do
       name
     else
       raise ArgumentError,
             "no credentials named #{inspect(name)} are configured under :credentials"
     end
   end
-
-  @sets_key {__MODULE__, :started_sets}
-
-  @doc false
-  # The names of the sets the application started an auth process for,
-  # kept when it starts.
-  def put_started_sets(names), do: :persistent_term.put(@sets_key, names)
-
-  defp started_sets, do: :persistent_term.get(@sets_key, [])
 
   # How long a caller waits for a token, and how long a fetch may run before
   # it is stopped. It is longer than the token request's own 10-second reply

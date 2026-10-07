@@ -16,6 +16,8 @@ defmodule Teya.StartRecord do
 
   use GenServer
 
+  @key __MODULE__
+
   def start_link({sets, base_url}), do: GenServer.start_link(__MODULE__, {sets, base_url})
 
   @impl true
@@ -27,15 +29,24 @@ defmodule Teya.StartRecord do
   end
 
   @impl true
-  def terminate(_reason, _state), do: record([], nil)
+  def terminate(_reason, _state), do: :persistent_term.erase(@key)
 
   @doc false
-  # What a start resolved, recorded in full: a host of nil, from an
-  # environment it did not know, erases any host an earlier run left, so a
-  # request with no set reports the environment rather than go to that run's
-  # host.
-  def record(sets, base_url) do
-    Teya.Auth.put_started_sets(sets)
-    Teya.HTTP.put_started_base_url(base_url)
-  end
+  # What a start resolved, recorded in full, under one key: a host of nil,
+  # from an environment it did not know, replaces any host an earlier run
+  # left, so a request with no set reports the environment rather than go to
+  # that run's host.
+  def record(sets, base_url), do: :persistent_term.put(@key, {sets, base_url})
+
+  @doc false
+  # The names of the sets of credentials the application started an auth
+  # process for, or [] when nothing is recorded.
+  def sets, do: elem(read(), 0)
+
+  @doc false
+  # The API's host as the application resolved it when it started, or nil
+  # when it could not resolve one, or nothing is recorded.
+  def base_url, do: elem(read(), 1)
+
+  defp read, do: :persistent_term.get(@key, {[], nil})
 end

@@ -25,24 +25,14 @@ defmodule Teya.HTTP do
   # The API's base URL: :base_url if set, otherwise the :environment's.
   def base_url, do: url(:base_url)
 
-  @started_key {__MODULE__, :started_base_url}
-
   @doc false
   # The API's base URL as the application resolved it when it started, for
   # a request with a token no set of credentials holds, such as ePOS
   # registration: it then goes where every set's requests go, whatever the
-  # config says now. Before the application has started, it is base_url/0.
-  def started_base_url, do: recorded_base_url() || base_url()
-
-  @doc false
-  # The host recorded at start, or nil. An application that could not
-  # resolve one then, from an environment it did not know, has no startup
-  # host to keep to.
-  def recorded_base_url, do: :persistent_term.get(@started_key, nil)
-
-  @doc false
-  def put_started_base_url(nil), do: :persistent_term.erase(@started_key)
-  def put_started_base_url(url), do: :persistent_term.put(@started_key, url)
+  # config says now. With none recorded — before the application has
+  # started, or after a start that could not resolve one from an environment
+  # it did not know — it is base_url/0.
+  def started_base_url, do: Teya.StartRecord.base_url() || base_url()
 
   @doc false
   # The token endpoint: :token_url if set, otherwise the :environment's.

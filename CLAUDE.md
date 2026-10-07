@@ -36,9 +36,11 @@ lib/teya/
                         set), and one per named set under :credentials, each
                         under a name of its own
   start_record.ex     — first child of Teya.Supervisor: records the started
-                        set names and host when it starts, clears them when
-                        the tree stops or fails to start; only the start that
-                        registers the supervisor's name gets that far
+                        set names and host when it starts, under one
+                        :persistent_term key (read with sets/0 and
+                        base_url/0), clears them when the tree stops or fails
+                        to start; only the start that registers the
+                        supervisor's name gets that far
   config.ex           — %Teya.Config{} struct; from_env/0 (top-level credentials),
                         from_env/1 (a named set), sets/0
   error.ex            — %Teya.Error{code, message, status, invalid_parameters, reason}
@@ -85,8 +87,8 @@ lib/teya/
                         use both, so a config change while running cannot
                         split host and token. request_with_token/4 (ePOS
                         registration) has no set, so it uses
-                        started_base_url/0: the host Teya.StartRecord
-                        recorded (erased when none resolved)
+                        started_base_url/0: StartRecord.base_url/0, or
+                        base_url/0 when none was recorded
   sse.ex              — SSE helpers: subscribe/5 starts a task that sends each
                         event to a process, with the task's ref;
                         first/4 reads the first event of a given name in a
@@ -237,8 +239,7 @@ registry, so no auth process depends on another process: one that fails is
 restarted alone. Each has
 its own token, refresh and failure state, and everything above applies to
 each. `Auth.set_for/2` picks the set for a call from the names the
-application started with (`Auth.put_started_sets/1`, a `:persistent_term`),
-not the live config.
+application started with (`Teya.StartRecord.sets/0`), not the live config.
 
 In tests, a refresh is fired by putting a ref in `refresh_timer_ref` and
 sending `{:timeout, ref, :refresh}` (see `start_refresh/1` in
@@ -252,7 +253,7 @@ fire into a later test.
 
 The test config names no sets, so tests run against the top-level
 `Teya.Auth`. A test that needs sets (see `credentials_test.exs`) records them
-with `Auth.put_started_sets/1` and starts their auth processes with
+with `TestEnv.record_started_sets/1` and starts their auth processes with
 `start_supervised!/1`, so each test's sets are stopped when it ends.
 
 ## Documentation conventions

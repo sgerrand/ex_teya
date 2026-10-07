@@ -121,10 +121,14 @@ defmodule Teya do
 
   ## Idempotency
 
-  POST and PATCH requests automatically include a random `Idempotency-Key` header,
-  except DCC offers, whose endpoint documents none. Pass
-  `idempotency_key: "your-key"` in the options to supply your own:
+  A request whose Teya spec documents the `Idempotency-Key` header, such as
+  `Teya.Checkout.create_session/2`, carries one: a random key, or your own,
+  passed as `idempotency_key: "your-key"` in the options:
 
       Teya.Checkout.create_session(params, idempotency_key: order_id)
+
+  Every other request carries none, since Teya documents none for it, and
+  raises `ArgumentError` if given `:idempotency_key`. The README lists which
+  is which.
   """
 end

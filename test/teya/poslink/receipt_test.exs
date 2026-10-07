@@ -33,19 +33,10 @@ defmodule Teya.POSLink.ReceiptTest do
       assert response["status"] == "ENQUEUED"
     end
 
-    test "sends no idempotency key, even one it is given" do
-      stub_api(fn conn ->
-        assert Plug.Conn.get_req_header(conn, "idempotency-key") == []
-        json_response(conn, 201, %{"receipt_id" => "receipt-uuid-2", "status" => "ENQUEUED"})
-      end)
-
-      params = %{
-        "store_id" => "store-uuid-1",
-        "terminal_id" => "term-uuid-1",
-        "content" => %{"type" => "JSON", "data" => %{}}
-      }
-
-      assert {:ok, _} = Receipt.create(params, idempotency_key: "receipt-ref-99")
+    test "raises when given an idempotency key, which its spec documents none of" do
+      assert_raise ArgumentError, ~r/takes no :idempotency_key/, fn ->
+        Receipt.create(%{}, idempotency_key: "receipt-ref-99")
+      end
     end
 
     test "returns Teya.Error on 400 bad request" do

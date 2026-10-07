@@ -10,6 +10,7 @@ defmodule Teya.RetryTest do
     Capture,
     CardPresent,
     Checkout,
+    DCC,
     Moto,
     PayByLink,
     Receipt,
@@ -46,6 +47,7 @@ defmodule Teya.RetryTest do
       fn _params -> POSLink.Payment.cancel("pr-1") end,
       fn _params -> POSLink.Store.put_config("s-1", "KEY", "on") end,
       fn _params -> Token.delete("tok-1", "s-1") end,
+      &DCC.quote(&1),
       &POSLink.Epos.register(&1, user_token: "user-jwt")
     ]
   end

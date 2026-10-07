@@ -23,9 +23,12 @@ defmodule Teya.Client do
   It sends no `Idempotency-Key`: only an endpoint whose spec documents the
   header gets one, through `idempotent_post/2`. Sending it anywhere else
   could be refused, and a caller could not rely on a reused key to
-  deduplicate.
+  deduplicate. Raises `ArgumentError` when given `:idempotency_key`, so a
+  caller who counts on the key to make a retry safe learns that it is not
+  sent, rather than losing that protection without a word.
   """
   def request(method, path, opts \\ []) do
+    no_idempotency_key!(opts)
     authed_request(method, path, opts, [])
   end
 
@@ -55,7 +58,11 @@ defmodule Teya.Client do
     retry =
       if Application.get_env(:teya, :retry_idempotent_posts, false), do: &transient?/2
 
-    authed_request(:post, path, opts, retry: retry, idempotency_key: true)
+    # Made up here when none is given, nil included, so a request that may
+    # be retried never goes without one.
+    key = Keyword.get(opts, :idempotency_key) || generate_key()
+
+    authed_request(:post, path, opts, retry: retry, idempotency_key: key)
   end
 
   @doc """
@@ -67,9 +74,19 @@ defmodule Teya.Client do
   options every resource function passes along. Takes the same options.
   """
   def request_with_token(token, method, path, opts) when is_binary(token) and token != "" do
+    no_idempotency_key!(opts)
+
     # No set holds this token, so it goes to the host the application
     # started with, as every set's does.
     send_request(method, join(HTTP.started_base_url(), path(path)), opts, token, [])
+  end
+
+  defp no_idempotency_key!(opts) do
+    if Keyword.has_key?(opts, :idempotency_key) do
+      raise ArgumentError,
+            "this endpoint takes no :idempotency_key: Teya documents no " <>
+              "Idempotency-Key header for it, so none is sent"
+    end
   end
 
   # Lower-case letters, digits and hyphens, as every Teya path is made of.
@@ -192,7 +209,7 @@ defmodule Teya.Client do
   # - :credentials — the token came from the auth process for this set
   #   (nil for the top-level credentials), so a retry asks it again
   # - :retry — Req's :retry option, unless :req_options sets one
-  # - :idempotency_key — true sends an Idempotency-Key, from opts or made up
+  # - :idempotency_key — the Idempotency-Key to send, from idempotent_post/2
   defp send_request(method, url, opts, token, settings) do
     defaults =
       [method: method, url: url, receive_timeout: 30_000]
@@ -209,7 +226,7 @@ defmodule Teya.Client do
       # one key there would mark every POST as a retry of the first, and it
       # means nothing on other endpoints. idempotent_post/2 sets its own.
       |> Req.Request.delete_header("idempotency-key")
-      |> Req.merge(headers: idempotency_headers(opts, settings))
+      |> Req.merge(headers: idempotency_headers(settings[:idempotency_key]))
       |> refresh_token_on_retry(settings)
 
     case Req.request(req) do
@@ -281,11 +298,8 @@ defmodule Teya.Client do
   defp put_if_present(opts, _key, nil), do: opts
   defp put_if_present(opts, key, value), do: Keyword.put(opts, key, value)
 
-  defp idempotency_headers(opts, settings) do
-    if settings[:idempotency_key],
-      do: [{"idempotency-key", Keyword.get_lazy(opts, :idempotency_key, &generate_key/0)}],
-      else: []
-  end
+  defp idempotency_headers(nil), do: []
+  defp idempotency_headers(key), do: [{"idempotency-key", key}]
 
   defp generate_key do
     :crypto.strong_rand_bytes(16) |> Base.encode16(case: :lower)

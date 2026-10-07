@@ -331,7 +331,7 @@ defmodule Teya.POSLink.Payment do
     )
   end
 
-  # A template, built and checked by SSE in the caller, before any task
-  # starts, so an id that cannot be a path segment raises there.
+  # A template, built and checked by Client.target/2 in the caller, before
+  # any task starts, so an id that cannot be a path segment raises there.
   defp stream_path(id), do: {"/poslink/v3/payment-requests/:id", id: id}
 end

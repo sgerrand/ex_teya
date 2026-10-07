@@ -27,7 +27,7 @@ defmodule Teya.SSE do
   """
 
   alias ReqServerSentEvents.Frame
-  alias Teya.{Auth, Client, Error, HTTP}
+  alias Teya.{Client, Error, HTTP}
 
   @default_max_error_body_bytes 65_536
 
@@ -37,11 +37,11 @@ defmodule Teya.SSE do
 
   @doc false
   # Starts a subscribe task for `path`, text or a template as Client.path/1
-  # takes, and returns `{:ok, task}`. The set of credentials is picked from
-  # `opts` and the path built here, in the caller, so a bad id or an unknown
-  # set raises where the mistake was made. The task builds the path again,
-  # with its host, in session_url/2. Every message it sends `pid` carries
-  # `task.ref`, so two streams for the same id can be told apart:
+  # takes, and returns `{:ok, task}`. The path is built and the set of
+  # credentials picked here, in the caller, by Client.target/2, as for every
+  # request; the task only joins the built path to its host. Every message
+  # it sends `pid` carries `task.ref`, so two streams for the same id can be
+  # told apart:
   #
   #     {ok_tag, ref, id, event, data}
   #     {error_tag, ref, id, %Teya.Error{}}
@@ -50,24 +50,16 @@ defmodule Teya.SSE do
   # the caller sends it once the task has started, and the task waits for it
   # before it opens the stream.
   def subscribe(path, id, pid, opts, tags) do
-    set = checked_set(path, opts)
+    {built_path, set} = Client.target(path, opts)
     caller = self()
 
     task =
       Task.Supervisor.async_nolink(Teya.TaskSupervisor, fn ->
-        subscription(path, set, id, pid, tags, caller)
+        subscription(built_path, set, id, pid, tags, caller)
       end)
 
     send(task.pid, {:teya_subscription_ref, task.ref})
     {:ok, task}
-  end
-
-  # POSLink streams use POSLink's credentials unless opts name others. The
-  # set is picked before the path is built, so an unknown set raises first.
-  defp checked_set(path, opts) do
-    set = Auth.set_for(opts, :poslink)
-    Client.path(path)
-    set
   end
 
   @doc false
@@ -86,7 +78,7 @@ defmodule Teya.SSE do
   # Returns :ok however it ends. The task's result goes to the caller as
   # its reply, so an error returned here would reach the caller a second
   # time, in another shape, and reach it even when it is not `pid`.
-  def subscription(path, set, id, pid, {ok_tag, error_tag}, caller) do
+  def subscription(built_path, set, id, pid, {ok_tag, error_tag}, caller) do
     monitor = Process.monitor(caller)
 
     ref =
@@ -101,7 +93,7 @@ defmodule Teya.SSE do
     # process, and is joined to the path only then.
     result =
       guard(fn ->
-        with {:ok, token, url} <- Client.session_url(path, set),
+        with {:ok, token, url} <- Client.session_url(built_path, set),
              do: stream(url, token, {ref, id}, ok_tag, pid)
       end)
 
@@ -124,18 +116,18 @@ defmodule Teya.SSE do
   # Reads the stream at `path` until the first event named `event_type`,
   # closes it there, and returns that event's data. The read runs in a task,
   # so nothing is sent to any process and no mailbox ever sees the stream.
-  # The set is picked and the path built in the caller, as for subscribe/5.
+  # The path is built and the set picked in the caller, as for subscribe/5.
   #
   # Returns `{:ok, data}`, `:none` when the stream closed without such an
   # event, or `{:error, %Teya.Error{}}`, including when no such event came
   # within `timeout`.
   def first(path, opts, event_type, timeout) do
-    set = checked_set(path, opts)
+    {built_path, set} = Client.target(path, opts)
     caller = self()
 
     task =
       Task.Supervisor.async_nolink(Teya.TaskSupervisor, fn ->
-        guard(fn -> first_event(path, set, event_type, caller) end)
+        guard(fn -> first_event(built_path, set, event_type, caller) end)
       end)
 
     case Task.yield(task, timeout) || Task.shutdown(task, :brutal_kill) do
@@ -162,12 +154,12 @@ defmodule Teya.SSE do
   # answer. Once it has died, the read stops at the next event rather than
   # holding a connection open for nobody, which could otherwise last as long
   # as the payment if no such event came.
-  def first_event(path, set, event_type, owner) do
+  def first_event(built_path, set, event_type, owner) do
     handler = fn {:sse_event, %Frame{} = frame}, acc ->
       take_first(frame, event_type, owner, acc)
     end
 
-    with {:ok, token, url} <- Client.session_url(path, set),
+    with {:ok, token, url} <- Client.session_url(built_path, set),
          {:ok, resp} <- open(url, token, handler) do
       case Req.Response.get_private(resp, :sse_first) do
         nil -> :none

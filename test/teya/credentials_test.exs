@@ -131,6 +131,22 @@ defmodule Teya.CredentialsTest do
         assert_raise ArgumentError, ~r/no credentials named/, call
       end
     end
+
+    test "a bad id raises before a name that is not configured, for streams as for requests" do
+      start_sets([:poslink])
+      stub_api(fn _conn -> flunk("no request should be sent") end)
+
+      calls = [
+        fn -> Payment.cancel("", credentials: :nope) end,
+        fn -> Payment.get("", credentials: :nope) end,
+        fn -> Payment.subscribe("", self(), credentials: :nope) end,
+        fn -> Receipt.subscribe_status("", self(), credentials: :nope) end
+      ]
+
+      for call <- calls do
+        assert_raise ArgumentError, ~r/path segment/, call
+      end
+    end
   end
 
   describe "POSLink streams" do

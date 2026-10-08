@@ -572,15 +572,18 @@ Teya.Checkout.create_session(params, idempotency_key: order_id)
 Those requests are the POSTs listed under [Retries](#retries). Every other
 request carries no `Idempotency-Key`, since Teya does not document it there.
 Every other write also raises `ArgumentError` if given an `:idempotency_key`,
-so you learn it is not sent; reads ignore it. Repeating one of those writes
-can act twice. They include:
+so you learn it is not sent; reads ignore it. Those writes include:
 
 - `Teya.Receipt.create/3`, `Teya.Reversal.create/2` and
   `Teya.POSLink.Receipt.create/2`
 - `Teya.PayByLink.update/3` and `Teya.POSLink.Payment.cancel/2`
-- `Teya.POSLink.Epos.register/2`
 - `Teya.POSLink.Store.put_config/4` and `Teya.Token.delete/3`
 - `Teya.DCC.quote/2`, where a repeated call creates a new quote
+- `Teya.POSLink.Epos.register/2`
+
+Repeating one of them can act twice, except `Teya.POSLink.Epos.register/2`:
+Teya makes registration idempotent by its partner, `store_id` and
+`epos_external_id`, so registering again returns the same credentials.
 
 ### Retries
 

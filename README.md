@@ -738,9 +738,10 @@ Only options that say how a request is sent are taken from there:
 ignored. What a request is — where it goes, its query and body, and the
 credentials it carries — comes from the call alone, and replies are decoded
 by the library, so JSON keys are always strings. An `Idempotency-Key` header
-there is dropped too: the calls listed under [Retries](#retries) carry their
-own, and one key shared by every request would make each look like a retry
-of the first. Token requests are always sent as a form,
+there is dropped too, from every request, token requests and streams
+included: the calls listed under [Retries](#retries) carry their own, and one
+key shared by every request would make each look like a retry of the first.
+Token requests are always sent as a form,
 whatever content type is set, with no `authorization` header, and never
 follow a redirect, so the client secret cannot be sent on to another host.
 

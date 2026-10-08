@@ -74,8 +74,9 @@ lib/teya/
                         caller's defaults, that kind's options with their
                         fallback to :req_options, of which only the options
                         that say how a request is sent are kept (@configurable),
-                        then options config cannot change, and Req's body
-                        decoding off), and base_url/0 and
+                        then options config cannot change, Req's body
+                        decoding off, and any idempotency-key header from
+                        config dropped), and base_url/0 and
                         token_url/0 (:base_url/:token_url, else the
                         :environment's URLs; the only place they are
                         written out). urls/0 reads both in one pass;

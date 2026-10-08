@@ -253,10 +253,7 @@ defmodule Teya.Client do
     # credentials to Teya in place of this token.
     req =
       HTTP.new_request(:req_options, defaults, auth: {:bearer, token})
-      # Any idempotency-key set in config is dropped, whatever the method:
-      # one key there would mark every POST as a retry of the first, and it
-      # means nothing on other endpoints. idempotent_post/2 sets its own.
-      |> Req.Request.delete_header("idempotency-key")
+      # new_request/3 drops any key from config; idempotent_post/2 sets its own.
       |> Req.merge(headers: idempotency_headers(settings[:idempotency_key]))
       |> refresh_token_on_retry(settings)
 

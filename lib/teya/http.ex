@@ -161,6 +161,11 @@ defmodule Teya.HTTP do
   # the caller's `forced` options, which config cannot change. The user agent
   # is Req's own option, so it gives way to one configured as an option or a
   # header. The body is never decoded by Req: see decode_json/2.
+  #
+  # An idempotency-key header from config is dropped, from every kind of
+  # request: one key there would mark every write as a retry of the first,
+  # and it means nothing to a token request or a stream. The only key sent is
+  # the one Client.idempotent_post/2 adds after this.
   def new_request(key, defaults, forced) do
     [user_agent: @user_agent]
     |> Keyword.merge(defaults)
@@ -168,5 +173,6 @@ defmodule Teya.HTTP do
     |> Keyword.merge(forced)
     |> Keyword.put(:decode_body, false)
     |> Req.new()
+    |> Req.Request.delete_header("idempotency-key")
   end
 end

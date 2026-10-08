@@ -160,13 +160,10 @@ defmodule Teya.DCCTest do
   end
 
   describe "idempotency key" do
-    test "is not sent, even when the caller gives one" do
-      stub_api(fn conn ->
-        assert Plug.Conn.get_req_header(conn, "idempotency-key") == []
-        json_response(conn, 200, %{"quote_id" => "q-1"})
-      end)
-
-      assert {:ok, _} = Teya.DCC.quote(%{"store_id" => "s-1"}, idempotency_key: "order-1")
+    test "cannot be given" do
+      assert_raise ArgumentError, ~r/takes no :idempotency_key/, fn ->
+        Teya.DCC.quote(%{"store_id" => "s-1"}, idempotency_key: "order-1")
+      end
     end
 
     test "is not sent when one is set in :req_options" do

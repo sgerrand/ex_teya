@@ -62,7 +62,8 @@ defmodule Teya.PayByLinkTest do
       stub_api(fn conn ->
         assert conn.method == "PATCH"
         assert conn.request_path == "/v2/payment-links/pbl-uuid-1234"
-        assert Plug.Conn.get_req_header(conn, "idempotency-key") != []
+        # Its spec documents no Idempotency-Key, so none is sent.
+        assert Plug.Conn.get_req_header(conn, "idempotency-key") == []
 
         json_response(conn, 200, %{
           "payment_link_id" => "pbl-uuid-1234",

@@ -13,9 +13,8 @@ defmodule Teya.Receipt do
   `transaction_id` is the UUID of the completed transaction. The API returns HTTP 202
   (accepted for processing) on success — receipt delivery is asynchronous.
 
-  ## Options
-
-  - `idempotency_key` — override the auto-generated idempotency key
+  Raises `ArgumentError` if given an `:idempotency_key`: Teya documents no
+  `Idempotency-Key` header for this endpoint, so none is sent.
 
   ## Examples
 

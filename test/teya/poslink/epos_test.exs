@@ -11,6 +11,8 @@ defmodule Teya.POSLink.EposTest do
       stub_api(fn conn ->
         assert conn.method == "POST"
         assert conn.request_path == "/poslink/v1/epos/register"
+        # Its spec documents no Idempotency-Key, so none is sent.
+        assert Plug.Conn.get_req_header(conn, "idempotency-key") == []
 
         # The user's token, not the library's own.
         assert Plug.Conn.get_req_header(conn, "authorization") == ["Bearer user-jwt"]

@@ -43,6 +43,10 @@ defmodule Teya.POSLink.Epos do
 
   - `:user_token` — the signed-in user's token (required)
 
+  Raises `ArgumentError` if given an `:idempotency_key`: Teya documents no
+  `Idempotency-Key` header for this endpoint, so none is sent. It needs
+  none: registering again is safe, as above.
+
   ## Examples
 
       {:ok, %{"client_id" => id, "client_secret" => secret, "scopes" => scopes}} =

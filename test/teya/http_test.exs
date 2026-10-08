@@ -23,6 +23,18 @@ defmodule Teya.HTTPTest do
     end
   end
 
+  describe "new_request/3 with an idempotency key in config" do
+    test "drops it, from a kind that falls back to :req_options too" do
+      TestEnv.delete(:auth_req_options)
+      TestEnv.add(:req_options, headers: [{"idempotency-key", "from-config"}])
+
+      for key <- [:req_options, :auth_req_options, :sse_req_options] do
+        req = HTTP.new_request(key, [url: "https://api.teya.test/x"], [])
+        assert Req.Request.get_header(req, "idempotency-key") == [], inspect(key)
+      end
+    end
+  end
+
   describe "options/1" do
     test "uses the options set for that kind of request" do
       TestEnv.put(:sse_req_options, retry: false)

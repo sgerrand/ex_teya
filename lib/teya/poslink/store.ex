@@ -94,6 +94,9 @@ defmodule Teya.POSLink.Store do
   - `config_key` — the setting to change, such as `"PAT_ENABLED"`
   - `value` — the new value: a string, boolean or integer
 
+  Raises `ArgumentError` if given an `:idempotency_key`: Teya documents no
+  `Idempotency-Key` header for this endpoint, so none is sent.
+
   ## Examples
 
       {:ok, %{"value" => "true"}} =

@@ -71,9 +71,8 @@ defmodule Teya.PayByLink do
   Currently supports updating `expires_at` (ISO 8601 datetime string) to extend
   or shorten the link's validity.
 
-  ## Options
-
-  - `idempotency_key` — override the auto-generated idempotency key
+  Raises `ArgumentError` if given an `:idempotency_key`: Teya documents no
+  `Idempotency-Key` header for this endpoint, so none is sent.
 
   ## Examples
 

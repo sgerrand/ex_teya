@@ -26,7 +26,7 @@ defmodule Teya.ClientTest do
         json_response(conn, 200, %{"ok" => true})
       end)
 
-      assert {:ok, _} = Teya.Client.request(:post, "/v1/test", body: %{})
+      assert {:ok, _} = Teya.Client.idempotent_post("/v1/test", body: %{})
     end
 
     test "lets a configured user-agent win" do
@@ -75,7 +75,71 @@ defmodule Teya.ClientTest do
       end)
 
       assert {:ok, _} =
-               Teya.Client.request(:post, "/v1/test", body: %{}, idempotency_key: "order-42")
+               Teya.Client.idempotent_post("/v1/test", body: %{}, idempotency_key: "order-42")
+    end
+
+    test "sends no idempotency key on a POST or PATCH" do
+      stub_api(fn conn ->
+        assert Plug.Conn.get_req_header(conn, "idempotency-key") == []
+        json_response(conn, 200, %{"ok" => true})
+      end)
+
+      for method <- [:post, :patch] do
+        assert {:ok, _} = Teya.Client.request(method, "/v1/test", body: %{})
+      end
+    end
+
+    test "raises when given an idempotency key, rather than drop it" do
+      for call <- [
+            fn -> Teya.Client.request(:post, "/v1/test", idempotency_key: "order-42") end,
+            fn -> Teya.Client.request(:delete, "/v1/test", idempotency_key: "") end,
+            fn ->
+              Teya.Client.request_with_token("user-jwt", :post, "/v1/test",
+                idempotency_key: "order-42"
+              )
+            end
+          ] do
+        assert_raise ArgumentError, ~r/takes no :idempotency_key/, call
+      end
+    end
+
+    test "idempotent_post/2 makes up a key when given nil" do
+      stub_api(fn conn ->
+        assert [key] = Plug.Conn.get_req_header(conn, "idempotency-key")
+        assert key =~ ~r/\A[0-9a-f]{32}\z/
+        json_response(conn, 200, %{"ok" => true})
+      end)
+
+      assert {:ok, _} = Teya.Client.idempotent_post("/v1/test", body: %{}, idempotency_key: nil)
+    end
+
+    test "idempotent_post/2 sends an integer key as text" do
+      stub_api(fn conn ->
+        assert Plug.Conn.get_req_header(conn, "idempotency-key") == ["42"]
+        json_response(conn, 200, %{"ok" => true})
+      end)
+
+      assert {:ok, _} = Teya.Client.idempotent_post("/v1/test", body: %{}, idempotency_key: 42)
+    end
+
+    test "idempotent_post/2 raises for an empty key, or one that is not text or an integer" do
+      assert_raise ArgumentError, ~r/cannot be empty/, fn ->
+        Teya.Client.idempotent_post("/v1/test", body: %{}, idempotency_key: "")
+      end
+
+      assert_raise ArgumentError, ~r/must be text or an integer, got: :order/, fn ->
+        Teya.Client.idempotent_post("/v1/test", body: %{}, idempotency_key: :order)
+      end
+    end
+
+    test "lets a GET, or a write given a nil key, through with no key" do
+      stub_api(fn conn ->
+        assert Plug.Conn.get_req_header(conn, "idempotency-key") == []
+        json_response(conn, 200, %{"ok" => true})
+      end)
+
+      assert {:ok, _} = Teya.Client.request(:get, "/v1/test", idempotency_key: "order-42")
+      assert {:ok, _} = Teya.Client.request(:post, "/v1/test", idempotency_key: nil)
     end
 
     test "ignores options in :req_options that say what the request is" do

@@ -10,6 +10,7 @@ defmodule Teya.RetryTest do
     Capture,
     CardPresent,
     Checkout,
+    DCC,
     Moto,
     PayByLink,
     Receipt,
@@ -46,6 +47,7 @@ defmodule Teya.RetryTest do
       fn _params -> POSLink.Payment.cancel("pr-1") end,
       fn _params -> POSLink.Store.put_config("s-1", "KEY", "on") end,
       fn _params -> Token.delete("tok-1", "s-1") end,
+      &DCC.quote(&1),
       &POSLink.Epos.register(&1, user_token: "user-jwt")
     ]
   end
@@ -255,12 +257,13 @@ defmodule Teya.RetryTest do
       assert length(attempts()) == 1
     end
 
-    test "sends every other write once" do
+    test "sends every other write once, with no idempotency key" do
       for call <- not_retried() do
         stub_failing_once(&unavailable/1)
 
         assert {:error, %Teya.Error{status: 503}} = call.(%{})
-        assert length(attempts()) == 1
+        # One attempt, which carried no key.
+        assert attempts() == [[]]
       end
     end
 

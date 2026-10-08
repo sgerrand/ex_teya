@@ -87,9 +87,8 @@ defmodule Teya.POSLink.Payment do
 
   - `payment_request_id` — UUID returned from `create/2`
 
-  ## Options
-
-  - `:idempotency_key` — override the auto-generated idempotency key
+  Raises `ArgumentError` if given an `:idempotency_key`: Teya documents no
+  `Idempotency-Key` header for this endpoint, so none is sent.
 
   ## Examples
 

@@ -92,6 +92,7 @@ defmodule Teya.ClientTest do
     test "raises when given an idempotency key, rather than drop it" do
       for call <- [
             fn -> Teya.Client.request(:post, "/v1/test", idempotency_key: "order-42") end,
+            fn -> Teya.Client.request(:delete, "/v1/test", idempotency_key: "") end,
             fn ->
               Teya.Client.request_with_token("user-jwt", :post, "/v1/test",
                 idempotency_key: "order-42"
@@ -102,21 +103,32 @@ defmodule Teya.ClientTest do
       end
     end
 
-    test "idempotent_post/2 makes up a key when given nil or an empty one" do
+    test "idempotent_post/2 makes up a key when given nil" do
       stub_api(fn conn ->
         assert [key] = Plug.Conn.get_req_header(conn, "idempotency-key")
         assert key =~ ~r/\A[0-9a-f]{32}\z/
         json_response(conn, 200, %{"ok" => true})
       end)
 
-      for key <- [nil, ""] do
-        assert {:ok, _} = Teya.Client.idempotent_post("/v1/test", body: %{}, idempotency_key: key)
-      end
+      assert {:ok, _} = Teya.Client.idempotent_post("/v1/test", body: %{}, idempotency_key: nil)
     end
 
-    test "idempotent_post/2 raises for a key that is not text" do
-      assert_raise ArgumentError, ~r/must be text, got: 42/, fn ->
-        Teya.Client.idempotent_post("/v1/test", body: %{}, idempotency_key: 42)
+    test "idempotent_post/2 sends an integer key as text" do
+      stub_api(fn conn ->
+        assert Plug.Conn.get_req_header(conn, "idempotency-key") == ["42"]
+        json_response(conn, 200, %{"ok" => true})
+      end)
+
+      assert {:ok, _} = Teya.Client.idempotent_post("/v1/test", body: %{}, idempotency_key: 42)
+    end
+
+    test "idempotent_post/2 raises for an empty key, or one that is not text or an integer" do
+      assert_raise ArgumentError, ~r/cannot be empty/, fn ->
+        Teya.Client.idempotent_post("/v1/test", body: %{}, idempotency_key: "")
+      end
+
+      assert_raise ArgumentError, ~r/must be text or an integer, got: :order/, fn ->
+        Teya.Client.idempotent_post("/v1/test", body: %{}, idempotency_key: :order)
       end
     end
 

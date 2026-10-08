@@ -562,7 +562,8 @@ send:
 ### Idempotency Keys
 
 A request whose Teya spec documents the `Idempotency-Key` header carries
-one: a random key, or your own. Supply your own to safely retry a request:
+one: a random key, or your own, as text or an integer. An empty key raises
+`ArgumentError`. Supply your own to safely retry a request:
 
 ```elixir
 Teya.Checkout.create_session(params, idempotency_key: order_id)
@@ -734,9 +735,9 @@ Only options that say how a request is sent are taken from there:
 ignored. What a request is — where it goes, its query and body, and the
 credentials it carries — comes from the call alone, and replies are decoded
 by the library, so JSON keys are always strings. An `Idempotency-Key` header
-there is dropped too: the calls listed under [Idempotency Keys](#idempotency-keys)
-carry their own, and one key shared by every request would make each look
-like a retry of the first. Token requests are always sent as a form,
+there is dropped too: the calls listed under [Retries](#retries) carry their
+own, and one key shared by every request would make each look like a retry
+of the first. Token requests are always sent as a form,
 whatever content type is set, with no `authorization` header, and never
 follow a redirect, so the client secret cannot be sent on to another host.
 

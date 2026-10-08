@@ -47,8 +47,10 @@ defmodule Teya.Client do
   #{div(@max_retry_after_ms, 1000)} seconds, or cannot be read. The caller
   would sit blocked for that wait, so the error comes back at once. A
   `:retry` in `:req_options` still wins. Takes the same options as
-  `request/3`, plus `:idempotency_key`, the key to send; one is made up
-  when it is left out.
+  `request/3`, plus `:idempotency_key`, the key to send: text, or an
+  integer, sent as text. One is made up when it is left out or nil. An
+  empty key raises `ArgumentError`, since it is more likely a bug than a
+  choice, and a made-up key in its place would make a resend act twice.
 
   Use it only for an endpoint whose spec documents the header. Anything
   else, such as a receipt that would be emailed twice, uses `request/3`,
@@ -81,8 +83,9 @@ defmodule Teya.Client do
   end
 
   # Only a write can be repeated by mistake, so only a write is refused a
-  # key. A GET, or a key of nil, as a caller reusing one list of options or
-  # passing a key it may not have would send, is let through.
+  # key. A GET, or a key of nil, which means no key, as for
+  # idempotent_post/2, is let through. Any other key, an empty one included,
+  # raises, as an empty key does there.
   defp no_idempotency_key!(:get, _opts), do: :ok
 
   defp no_idempotency_key!(_method, opts) do
@@ -93,19 +96,27 @@ defmodule Teya.Client do
     end
   end
 
-  # The caller's key, or one made up when it is left out, nil or empty, so a
-  # request that may be retried never goes without one, nor with a blank one
-  # every request would share.
+  # The caller's key, or one made up when it is left out or nil, so a
+  # request that may be retried never goes without one. An integer, such as
+  # a database id, is sent as text, as Req would send it. An empty key is
+  # refused rather than replaced: a resend would get another made-up key
+  # and act twice, where the caller meant one key for both.
   defp idempotency_key!(opts) do
     case opts[:idempotency_key] do
-      key when key in [nil, ""] ->
+      nil ->
         generate_key()
+
+      "" ->
+        raise ArgumentError, ":idempotency_key cannot be empty"
 
       key when is_binary(key) ->
         key
 
+      key when is_integer(key) ->
+        Integer.to_string(key)
+
       key ->
-        raise ArgumentError, ":idempotency_key must be text, got: #{inspect(key)}"
+        raise ArgumentError, ":idempotency_key must be text or an integer, got: #{inspect(key)}"
     end
   end
 

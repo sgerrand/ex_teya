@@ -218,9 +218,6 @@ defmodule Teya.SSE do
     ]
 
     HTTP.new_request(:sse_req_options, [retry: false], forced)
-    # The library sets Idempotency-Key itself, on API calls that need one. A
-    # key in config that the options fall back to means nothing on a stream.
-    |> Req.Request.delete_header("idempotency-key")
     # A 200 body with no frame delimiter — a proxy's HTML page, say — would
     # otherwise sit in the plugin's buffer and grow until the body ends.
     |> ReqServerSentEvents.attach(max_frame_size: @max_frame_bytes)

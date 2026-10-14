@@ -31,11 +31,8 @@ defmodule Teya.Reversal do
   - `transaction_id` — ID of the transaction to reverse
   - `idempotency_key` — idempotency key used when creating the original transaction
 
-  ## Options
-
-  - `idempotency_key` — override the auto-generated idempotency key for *this*
-    reversal request (distinct from the `idempotency_key` body field used to
-    reference the original transaction)
+  Raises `ArgumentError` if given an `:idempotency_key`: Teya documents no
+  `Idempotency-Key` header for this endpoint, so none is sent.
 
   ## Examples
 

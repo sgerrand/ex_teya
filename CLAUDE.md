@@ -57,8 +57,7 @@ lib/teya/
                         path, else top-level); session_url/2 takes a token
                         and its host from one Auth.session/1 reply and joins
                         the host to the path (the one place that happens);
-                        adds Bearer header, auto-generates Idempotency-Key
-                        on POST/PATCH; every path is a plain string or
+                        adds Bearer header; every path is a plain string or
                         {template, values}, such as {"/v1/tokens/:id", id:
                         token_id}, and path/1 encodes each value (never
                         interpolate a value into a path: a test in
@@ -66,16 +65,20 @@ lib/teya/
                         streams check their path in the caller, before any
                         task starts, and join the host in the task);
                         idempotent_post/2 for a POST whose spec documents
-                        Idempotency-Key, retried when :retry_idempotent_posts
-                        is set; post_without_idempotency_key/2 for a POST
-                        whose spec does not document the key (DCC offers)
+                        Idempotency-Key: the only call that sends the key
+                        (the caller's or a made-up one), retried when
+                        :retry_idempotent_posts is set; request/3 and
+                        request_with_token/4 send none, and a write
+                        (not a GET) raises ArgumentError when given a
+                        non-nil :idempotency_key
   http.ex             — shared by every module that makes a request:
                         new_request/3 builds each one (the user agent, the
                         caller's defaults, that kind's options with their
                         fallback to :req_options, of which only the options
                         that say how a request is sent are kept (@configurable),
-                        then options config cannot change, and Req's body
-                        decoding off), and base_url/0 and
+                        then options config cannot change, Req's body
+                        decoding off, and any idempotency-key header from
+                        config dropped), and base_url/0 and
                         token_url/0 (:base_url/:token_url, else the
                         :environment's URLs; the only place they are
                         written out). urls/0 reads both in one pass;

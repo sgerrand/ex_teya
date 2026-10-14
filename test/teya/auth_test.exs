@@ -130,6 +130,17 @@ defmodule Teya.AuthTest do
       assert {:ok, "own_token"} = Teya.Auth.token()
     end
 
+    test "sends no idempotency key set in configured headers", %{auth_pid: auth_pid} do
+      TestEnv.add(:auth_req_options, headers: [{"idempotency-key", "from-config"}])
+
+      stub_auth(auth_pid, fn conn ->
+        assert Plug.Conn.get_req_header(conn, "idempotency-key") == []
+        Req.Test.json(conn, %{"access_token" => "keyless_token", "expires_in" => 3600})
+      end)
+
+      assert {:ok, "keyless_token"} = Teya.Auth.token()
+    end
+
     test "does not follow a redirect from the token endpoint", %{auth_pid: auth_pid} do
       TestEnv.add(:auth_req_options, redirect: true)
       test_pid = self()

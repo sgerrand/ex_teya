@@ -74,7 +74,8 @@ defmodule Teya.POSLink.PaymentTest do
       stub_api(fn conn ->
         assert conn.method == "PATCH"
         assert conn.request_path == "/poslink/v2/payment-requests/#{payment_id}"
-        assert Plug.Conn.get_req_header(conn, "idempotency-key") != []
+        # Its spec documents no Idempotency-Key, so none is sent.
+        assert Plug.Conn.get_req_header(conn, "idempotency-key") == []
 
         json_response(conn, 200, %{
           "payment_request_id" => payment_id,

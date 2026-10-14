@@ -17,6 +17,9 @@ defmodule Teya.Token do
   `store_id` is required — tokens are scoped to a store and only the owning store
   may delete them. Returns `:ok` on success (HTTP 204).
 
+  Raises `ArgumentError` if given an `:idempotency_key`: Teya documents no
+  `Idempotency-Key` header for this endpoint, so none is sent.
+
   ## Examples
 
       :ok = Teya.Token.delete(token_id, store_id)

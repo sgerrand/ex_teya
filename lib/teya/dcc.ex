@@ -63,6 +63,9 @@ defmodule Teya.DCC do
   - `cardholder_currency` — the card's currency
   - `cardholder_amount` — amount in the card currency's minor units
 
+  Raises `ArgumentError` if given an `:idempotency_key`: Teya documents no
+  `Idempotency-Key` header for this endpoint, so none is sent.
+
   ## Examples
 
       case Teya.DCC.quote(%{
@@ -92,6 +95,6 @@ defmodule Teya.DCC do
   """
   @spec quote(map(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def quote(params, opts \\ []) do
-    Client.post_without_idempotency_key("/fx/v1/dcc/offers", Keyword.put(opts, :body, params))
+    Client.request(:post, "/fx/v1/dcc/offers", Keyword.put(opts, :body, params))
   end
 end

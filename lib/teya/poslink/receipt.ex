@@ -47,9 +47,8 @@ defmodule Teya.POSLink.Receipt do
 
   - `merchant_reference` — caller-supplied reference (max 60 chars)
 
-  ## Options
-
-  - `:idempotency_key` — override the auto-generated idempotency key
+  Raises `ArgumentError` if given an `:idempotency_key`: Teya documents no
+  `Idempotency-Key` header for this endpoint, so none is sent.
 
   ## Examples
 

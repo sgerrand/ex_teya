@@ -561,15 +561,29 @@ send:
 
 ### Idempotency Keys
 
-POST and PATCH requests automatically include a random `Idempotency-Key` header. Supply your own to safely retry a request:
+A request whose Teya spec documents the `Idempotency-Key` header carries
+one: a random key, or your own, as text or an integer. An empty key raises
+`ArgumentError`. Supply your own to safely retry a request:
 
 ```elixir
 Teya.Checkout.create_session(params, idempotency_key: order_id)
 ```
 
-DCC offers (`Teya.DCC.quote/2`) are the exception: Teya documents no
-`Idempotency-Key` for them, so none is sent, and a repeated call creates a
-new quote.
+Those requests are the POSTs listed under [Retries](#retries). Every other
+request carries no `Idempotency-Key`, since Teya does not document it there.
+Every other write also raises `ArgumentError` if given an `:idempotency_key`,
+so you learn it is not sent; reads ignore it. Those writes include:
+
+- `Teya.Receipt.create/3`, `Teya.Reversal.create/2` and
+  `Teya.POSLink.Receipt.create/2`
+- `Teya.PayByLink.update/3` and `Teya.POSLink.Payment.cancel/2`
+- `Teya.POSLink.Store.put_config/4` and `Teya.Token.delete/3`
+- `Teya.DCC.quote/2`, where a repeated call creates a new quote
+- `Teya.POSLink.Epos.register/2`
+
+Repeating one of them can act twice, except `Teya.POSLink.Epos.register/2`:
+Teya makes registration idempotent by its partner, `store_id` and
+`epos_external_id`, so registering again returns the same credentials.
 
 ### Retries
 
@@ -723,9 +737,11 @@ Only options that say how a request is sent are taken from there:
 `:max_redirects`, and `:plug` and `:adapter` for tests. Every other option is
 ignored. What a request is — where it goes, its query and body, and the
 credentials it carries — comes from the call alone, and replies are decoded
-by the library, so JSON keys are always strings. API calls carry their own
-`Idempotency-Key`, since one key shared by every request would make each POST
-look like a retry of the first. Token requests are always sent as a form,
+by the library, so JSON keys are always strings. An `Idempotency-Key` header
+there is dropped too, from every request, token requests and streams
+included: the calls listed under [Retries](#retries) carry their own, and one
+key shared by every request would make each look like a retry of the first.
+Token requests are always sent as a form,
 whatever content type is set, with no `authorization` header, and never
 follow a redirect, so the client secret cannot be sent on to another host.
 

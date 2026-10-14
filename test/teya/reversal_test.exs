@@ -6,7 +6,8 @@ defmodule Teya.ReversalTest do
       stub_api(fn conn ->
         assert conn.method == "POST"
         assert conn.request_path == "/v2/reversals"
-        assert Plug.Conn.get_req_header(conn, "idempotency-key") != []
+        # Its spec documents no Idempotency-Key, so none is sent.
+        assert Plug.Conn.get_req_header(conn, "idempotency-key") == []
 
         json_response(conn, 200, %{
           "status" => "SUCCESS",

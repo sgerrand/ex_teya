@@ -1,5 +1,19 @@
 # Changelog
 
+## [2.0.0](https://github.com/sgerrand/ex_teya/compare/v1.0.0...v2.0.0) (2026-10-15)
+
+
+### ⚠ BREAKING CHANGES
+
+* **client:** Receipt.create/3, Reversal.create/2, POSLink.Receipt.create/2, PayByLink.update/3, POSLink.Payment.cancel/2, POSLink.Epos.register/2 and DCC.quote/2 no longer send an Idempotency-Key, which Teya's specs do not document for them, and raise ArgumentError when given :idempotency_key.
+
+### Bug Fixes
+
+* **client:** send Idempotency-Key only where Teya documents it ([#66](https://github.com/sgerrand/ex_teya/issues/66)) ([bb1c521](https://github.com/sgerrand/ex_teya/commit/bb1c521da67bac7cc314231a8b669fadae6fc6f3))
+* **deps:** bump req from 0.7.4 to 0.7.5 ([#68](https://github.com/sgerrand/ex_teya/issues/68)) ([7b277fb](https://github.com/sgerrand/ex_teya/commit/7b277fbb645aa43ed258b1ec29e56b19432b2302))
+* **deps:** bump req_server_sent_events from 0.2.3 to 0.2.4 ([#61](https://github.com/sgerrand/ex_teya/issues/61)) ([b080a3d](https://github.com/sgerrand/ex_teya/commit/b080a3dbe2eaec95ddcc5615e09d293b68384f2a))
+* **http:** take only transport options from config ([#63](https://github.com/sgerrand/ex_teya/issues/63)) ([8a21a16](https://github.com/sgerrand/ex_teya/commit/8a21a16a223204696ecbea9e5e386f7cc7e62ee1))
+
 ## [1.0.0](https://github.com/sgerrand/ex_teya/compare/v0.4.3...v1.0.0) (2026-09-28)
 
 

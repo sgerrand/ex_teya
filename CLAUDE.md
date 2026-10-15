@@ -55,7 +55,10 @@ lib/teya/
   client.ex           — HTTP layer: target/2 builds the path and picks a set
                         of credentials (Auth.set_for/2: :credentials option,
                         else :poslink or :online by path, else top-level),
-                        in the caller, for requests and streams alike;
+                        in the caller, for every request with an auth
+                        process's token and every stream
+                        (request_with_token/4, for ePOS registration, has no
+                        set and builds its path with path/1 alone);
                         session_url/2 takes a token
                         and its host from one Auth.session/1 reply and joins
                         the host to the path (the one place that happens);

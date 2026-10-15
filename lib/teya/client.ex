@@ -217,10 +217,12 @@ defmodule Teya.Client do
   @doc false
   # Builds `path` (text or a template) and picks the set of credentials a
   # request to it uses: the one named in `opts`, else the one for its API.
-  # Every request and stream starts here, in the calling process, so a bad
-  # id or an unknown set raises where the mistake was made, before anything
-  # is asked of an auth process or any task starts. The path is built first,
-  # so a bad id raises before an unknown set.
+  # Every request with an auth process's token, and every stream, starts
+  # here, in the calling process, so a bad id or an unknown set raises where
+  # the mistake was made, before anything is asked of an auth process or any
+  # task starts. The path is built first, so a bad id raises before an
+  # unknown set. request_with_token/4 carries a token no set holds, so it
+  # builds its path with path/1 alone.
   def target(path, opts) do
     built_path = path(path)
     {built_path, Auth.set_for(opts, api(built_path))}

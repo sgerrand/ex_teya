@@ -52,9 +52,14 @@ lib/teya/
                         its status and none of its bytes
   auth.ex             — GenServer: token cache and proactive refresh; fetches
                         run in tasks, and waiting callers share one fetch
-  client.ex           — HTTP layer: picks a set of credentials (Auth.set_for/2:
-                        :credentials option, else :poslink or :online by
-                        path, else top-level); session_url/2 takes a token
+  client.ex           — HTTP layer: target/2 builds the path and picks a set
+                        of credentials (Auth.set_for/2: :credentials option,
+                        else :poslink or :online by path, else top-level),
+                        in the caller, for every request with an auth
+                        process's token and every stream
+                        (request_with_token/4, for ePOS registration, has no
+                        set and builds its path with path/1 alone);
+                        session_url/2 takes a token
                         and its host from one Auth.session/1 reply and joins
                         the host to the path (the one place that happens);
                         adds Bearer header; every path is a plain string or
@@ -62,7 +67,7 @@ lib/teya/
                         token_id}, and path/1 encodes each value (never
                         interpolate a value into a path: a test in
                         path_segment_test.exs fails the build if lib/ does;
-                        streams check their path in the caller, before any
+                        streams call target/2 in the caller, before any
                         task starts, and join the host in the task);
                         idempotent_post/2 for a POST whose spec documents
                         Idempotency-Key: the only call that sends the key
@@ -95,8 +100,8 @@ lib/teya/
   sse.ex              — SSE helpers: subscribe/5 starts a task that sends each
                         event to a process, with the task's ref;
                         first/4 reads the first event of a given name in a
-                        task and returns it; both pick the :poslink set and
-                        check the path in the caller; frames are decoded by
+                        task and returns it; both call Client.target/2 in
+                        the caller; frames are decoded by
                         the req_server_sent_events plugin
   checkout.ex         — POST/GET /v2/checkout/sessions
   transaction.ex      — POST /v3/transactions/online, GET /v2/transactions/online/{id}

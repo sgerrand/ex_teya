@@ -187,9 +187,9 @@ only for its own module. Registration describes `refunds` as "for refund
 operations", but the refund endpoint itself names no scope.
 
 The specification names no scope for receipt requests
-(`Teya.POSLink.Receipt.create/2`, `Teya.POSLink.Receipt.subscribe_status/2`)
-or store settings (`Teya.POSLink.Store.terminal_configs/3`,
-`Teya.POSLink.Store.put_config/4`). If these calls answer 401 or 403 with the
+(`Teya.POSLink.Receipt.create/2`, `Teya.POSLink.Receipt.subscribe_status/2`),
+store settings (`Teya.POSLink.Store.terminal_configs/3`,
+`Teya.POSLink.Store.put_config/4`) or tabs (`Teya.POSLink.Tab`). If these calls answer 401 or 403 with the
 scopes registration gave you, ask Teya which they need.
 `Teya.POSLink.Epos.register/2` takes a signed-in user's token rather than
 scopes.
@@ -550,6 +550,60 @@ receive do
 end
 ```
 
+#### Pay at Table
+
+A tab is a table's bill. The ePOS keeps it, and a terminal shows it and
+takes payment for it. Open a tab when the table sits down, and keep its
+total up to date:
+
+```elixir
+{:ok, %{"tab_id" => tab_id}} =
+  Teya.POSLink.Tab.create(%{
+    "store_id"           => store_id,
+    "tab_name"           => "Table 4",
+    "merchant_reference" => "table-4-1830",
+    "currency_code"      => "GBP"
+  })
+
+{:ok, _tab} =
+  Teya.POSLink.Tab.update(tab_id, %{
+    "total_amount" => %{"amount" => 4250, "currency" => "GBP"}
+  })
+```
+
+When a terminal asks to show the bill, send it. If the ePOS cannot, say why,
+so the terminal can tell the operator:
+
+```elixir
+{:ok, _} =
+  Teya.POSLink.Tab.send_bill(tab_id, %{
+    "terminal_id"  => terminal_id,
+    "total_amount" => %{"amount" => 4250, "currency" => "GBP"}
+  })
+
+{:ok, _} =
+  Teya.POSLink.Tab.report_error(tab_id, %{
+    "terminal_id" => terminal_id,
+    "error_code"  => "BILL_ALREADY_SETTLED",
+    "message"     => "This bill has been paid at the till."
+  })
+```
+
+When a terminal asks to take a payment, create a payment request linked to
+the tab, for all of it (`"FULL"`) or part (`"SPLIT"`):
+
+```elixir
+{:ok, %{"payment_request_id" => id}} =
+  Teya.POSLink.Payment.create(Map.merge(params, %{
+    "tab_id"       => tab_id,
+    "payment_type" => "SPLIT"
+  }))
+```
+
+List a store's open tabs with `Teya.POSLink.Tab.list/2`, and close a tab
+with `Teya.POSLink.Tab.close/2` once it is settled. A tab that is still
+`"PAYING"` cannot be closed, and closing one twice is an error.
+
 #### Receipt text
 
 A successful payment or refund has a plain-text receipt, ready to print or
@@ -578,6 +632,8 @@ so you learn it is not sent; reads ignore it. Those writes include:
   `Teya.POSLink.Receipt.create/2`
 - `Teya.PayByLink.update/3` and `Teya.POSLink.Payment.cancel/2`
 - `Teya.POSLink.Store.put_config/4` and `Teya.Token.delete/3`
+- `Teya.POSLink.Tab.update/3`, `Teya.POSLink.Tab.close/2`,
+  `Teya.POSLink.Tab.send_bill/3` and `Teya.POSLink.Tab.report_error/3`
 - `Teya.DCC.quote/2`, where a repeated call creates a new quote
 - `Teya.POSLink.Epos.register/2`
 
@@ -610,6 +666,7 @@ That covers only POSTs whose Teya spec documents the key:
 - `Teya.CardPresent.create/2`
 - `Teya.POSLink.Payment.create/2`
 - `Teya.POSLink.Refund.create/2`
+- `Teya.POSLink.Tab.create/2`
 
 They are retried for the same reasons as GET requests. Every retry sends
 the same key as the first attempt, your own if you gave one, and the current

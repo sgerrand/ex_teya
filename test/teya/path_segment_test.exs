@@ -8,7 +8,7 @@ defmodule Teya.PathSegmentTest do
   import Teya.POSLink.SubscribeCase, only: [stub_sse: 1]
 
   alias Teya.{Capture, Checkout, PayByLink, Receipt, Token, Transaction}
-  alias Teya.POSLink.{Payment, Store}
+  alias Teya.POSLink.{Payment, Store, Tab}
   alias Teya.POSLink.Receipt, as: POSLinkReceipt
 
   @id "a/b?c#d e"
@@ -32,7 +32,12 @@ defmodule Teya.PathSegmentTest do
       {"/poslink/v1/stores/s-1/terminals/#{@encoded}/configs",
        &Store.terminal_configs("s-1", &1)},
       {"/poslink/v1/stores/#{@encoded}/configs/KEY", &Store.put_config(&1, "KEY", "on")},
-      {"/poslink/v1/stores/s-1/configs/#{@encoded}", &Store.put_config("s-1", &1, "on")}
+      {"/poslink/v1/stores/s-1/configs/#{@encoded}", &Store.put_config("s-1", &1, "on")},
+      {"/poslink/v1/tabs/#{@encoded}", &Tab.get(&1)},
+      {"/poslink/v1/tabs/#{@encoded}", &Tab.update(&1, %{})},
+      {"/poslink/v1/tabs/#{@encoded}", &Tab.close(&1)},
+      {"/poslink/v1/tabs/#{@encoded}/bill", &Tab.send_bill(&1, %{})},
+      {"/poslink/v1/tabs/#{@encoded}/errors", &Tab.report_error(&1, %{})}
     ]
   end
 

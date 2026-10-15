@@ -32,7 +32,8 @@ defmodule Teya.RetryTest do
       &Moto.create(&1),
       &CardPresent.create(&1),
       &POSLink.Payment.create(&1),
-      &POSLink.Refund.create(&1)
+      &POSLink.Refund.create(&1),
+      &POSLink.Tab.create(&1)
     ]
   end
 
@@ -46,6 +47,10 @@ defmodule Teya.RetryTest do
       &PayByLink.update("link-1", &1),
       fn _params -> POSLink.Payment.cancel("pr-1") end,
       fn _params -> POSLink.Store.put_config("s-1", "KEY", "on") end,
+      &POSLink.Tab.update("tab-1", &1),
+      fn _params -> POSLink.Tab.close("tab-1") end,
+      &POSLink.Tab.send_bill("tab-1", &1),
+      &POSLink.Tab.report_error("tab-1", &1),
       fn _params -> Token.delete("tok-1", "s-1") end,
       &DCC.quote(&1),
       &POSLink.Epos.register(&1, user_token: "user-jwt")

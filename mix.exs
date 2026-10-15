@@ -93,7 +93,8 @@ defmodule Teya.MixProject do
           Teya.POSLink.Payment,
           Teya.POSLink.Refund,
           Teya.POSLink.Receipt,
-          Teya.POSLink.Store
+          Teya.POSLink.Store,
+          Teya.POSLink.Tab
         ]
       ]
     ]

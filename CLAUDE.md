@@ -127,6 +127,10 @@ lib/teya/
     refund.ex         — POST /poslink/v2/refunds
     receipt.ex        — POST /poslink/v1/receipt-requests
                         subscribe_status/2: spawns a Task to stream SSE printer status events
+    tab.ex            — Pay at Table, the ePOS side: POST /poslink/v1/tabs
+                        (idempotent_post/2), GET /poslink/v1/tabs,
+                        GET/PATCH/DELETE /poslink/v1/tabs/{id},
+                        POST /poslink/v1/tabs/{id}/bill and /errors
 ```
 
 ### POSLink streaming (Approach 2: task + message-passing)

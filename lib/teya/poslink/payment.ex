@@ -51,7 +51,7 @@ defmodule Teya.POSLink.Payment do
 
   - `epos_instance_id` — identifier of the ePOS instance making the request
   - `basket_transaction_id` — identifier of the basket in the ePOS
-  - `tab_id` — Pay at Table tab to settle; requires `payment_type`
+  - `tab_id` — the `Teya.POSLink.Tab` to pay; requires `payment_type`
   - `payment_type` — `"FULL"` or `"SPLIT"`
   - `payment_method` — `"CARD"` or `"CASH"`
 

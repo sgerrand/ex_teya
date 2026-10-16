@@ -103,6 +103,7 @@ defmodule Teya do
   | `Teya.POSLink.Payment` | Create payment requests and stream status events |
   | `Teya.POSLink.Refund` | Refund a POSLink payment |
   | `Teya.POSLink.Receipt` | Print receipts and stream printer status |
+  | `Teya.POSLink.Tab` | Keep tabs for Pay at Table |
   | `Teya.POSLink.Store` | List stores and terminals |
 
   ## Error handling

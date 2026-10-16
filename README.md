@@ -189,8 +189,9 @@ operations", but the refund endpoint itself names no scope.
 The specification names no scope for receipt requests
 (`Teya.POSLink.Receipt.create/2`, `Teya.POSLink.Receipt.subscribe_status/2`),
 store settings (`Teya.POSLink.Store.terminal_configs/3`,
-`Teya.POSLink.Store.put_config/4`) or tabs (`Teya.POSLink.Tab`). If these calls answer 401 or 403 with the
-scopes registration gave you, ask Teya which they need.
+`Teya.POSLink.Store.put_config/4`) or tabs (`Teya.POSLink.Tab`). If these
+calls answer 401 or 403 with the scopes registration gave you, ask Teya
+which they need.
 `Teya.POSLink.Epos.register/2` takes a signed-in user's token rather than
 scopes.
 
@@ -590,19 +591,26 @@ so the terminal can tell the operator:
 ```
 
 When a terminal asks to take a payment, create a payment request linked to
-the tab, for all of it (`"FULL"`) or part (`"SPLIT"`):
+the tab, for all of it (`"FULL"`) or part (`"SPLIT"`). It takes the usual
+payment request fields, plus `tab_id` and `payment_type`:
 
 ```elixir
 {:ok, %{"payment_request_id" => id}} =
-  Teya.POSLink.Payment.create(Map.merge(params, %{
-    "tab_id"       => tab_id,
-    "payment_type" => "SPLIT"
-  }))
+  Teya.POSLink.Payment.create(%{
+    "store_id"           => store_id,
+    "terminal_id"        => terminal_id,
+    "requested_amount"   => %{"amount" => 2000, "currency" => "GBP"},
+    "transaction_type"   => "SALE",
+    "merchant_reference" => "table-4-1830-split-1",
+    "tab_id"             => tab_id,
+    "payment_type"       => "SPLIT"
+  })
 ```
 
-List a store's open tabs with `Teya.POSLink.Tab.list/2`, and close a tab
-with `Teya.POSLink.Tab.close/2` once it is settled. A tab that is still
-`"PAYING"` cannot be closed, and closing one twice is an error.
+List a store's active tabs (`"OPEN"`, `"PAYING"` and `"PAUSED"`) with
+`Teya.POSLink.Tab.list/2`, and close a tab with `Teya.POSLink.Tab.close/2`
+once it is settled. A tab that is still `"PAYING"` cannot be closed, and
+closing one twice is an error.
 
 #### Receipt text
 

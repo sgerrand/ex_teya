@@ -110,6 +110,14 @@ defmodule Teya.POSLink.TabTest do
       assert {:ok, %{"tabs" => []}} = Tab.list("store-uuid-1", params: nil)
     end
 
+    test "raises for a missing store id, before any request" do
+      stub_api(fn _conn -> flunk("no request should be sent") end)
+
+      for store_id <- [nil, ""] do
+        assert_raise ArgumentError, ~r/needs a store id/, fn -> Tab.list(store_id) end
+      end
+    end
+
     test "raises for a store_id in :params, before any request" do
       stub_api(fn _conn -> flunk("no request should be sent") end)
 

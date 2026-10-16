@@ -46,9 +46,16 @@ defmodule Teya.POSLink.Tab do
   - the store already has a tab with this `merchant_reference`
 
   The second can mean an earlier call made the tab but its answer was lost,
-  and the call was made again with a new key. Look the tab up with
-  `list(store_id, params: [merchant_reference: reference])` before you make
-  a new one.
+  and the call was made again with a new key. Look the tab up by its
+  reference before you make a new one. Name every status, so a tab that is
+  already completed or closed is found too:
+
+      Teya.POSLink.Tab.list(store_id,
+        params: [
+          merchant_reference: reference,
+          status: ["OPEN", "PAYING", "PAUSED", "COMPLETED", "CLOSED"]
+        ]
+      )
 
   ## Required params
 
@@ -93,9 +100,10 @@ defmodule Teya.POSLink.Tab do
   With no `status`, only active tabs are listed: `"OPEN"`, `"PAYING"` and
   `"PAUSED"`. Ask for `"COMPLETED"` or `"CLOSED"` by name to include them.
 
-  Raises `ArgumentError` if `:params` holds a `store_id`, since the store is
-  the first argument, or an empty list, such as `status: []`, which would
-  ask for nothing. Leave `status` out to get Teya's default.
+  Raises `ArgumentError`, before any request, if `store_id` is `nil` or
+  empty, if `:params` holds a `store_id`, since the store is the first
+  argument, or if `:params` holds an empty list, such as `status: []`, which
+  would ask for nothing. Leave `status` out to get Teya's default.
 
   ## Query params (passed as `:params`)
 
@@ -113,7 +121,13 @@ defmodule Teya.POSLink.Tab do
         Teya.POSLink.Tab.list(store_id, params: [status: ["COMPLETED", "CLOSED"], limit: 100])
   """
   @spec list(String.t(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
-  def list(store_id, opts \\ []) do
+  def list(store_id, opts \\ [])
+
+  def list(store_id, _opts) when store_id in [nil, ""] do
+    raise ArgumentError, "Tab.list/2 needs a store id, got: #{inspect(store_id)}"
+  end
+
+  def list(store_id, opts) do
     params = [{:store_id, store_id} | query(Keyword.get(opts, :params))]
     Client.request(:get, "/poslink/v1/tabs", Keyword.put(opts, :params, params))
   end

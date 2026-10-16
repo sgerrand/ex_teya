@@ -54,9 +54,9 @@ defmodule Teya.POSLink.TabTest do
       assert {:ok, _tab} = Tab.create(@params, idempotency_key: "table-4-1830")
     end
 
-    test "returns Teya.Error when the key was used with another body" do
+    test "returns Teya.Error when the store already has a tab with the reference" do
       stub_api(fn conn ->
-        error_response(conn, 409, "CONFLICT", "idempotency key reused")
+        error_response(conn, 409, "CONFLICT", "Tab with merchant_reference already exists")
       end)
 
       assert {:error, %Error{status: 409, code: "CONFLICT"}} = Tab.create(@params)
@@ -99,6 +99,33 @@ defmodule Teya.POSLink.TabTest do
 
       assert {:ok, _} =
                Tab.list("store-uuid-1", params: %{merchant_reference: "table-4-1830"})
+    end
+
+    test "takes params: nil as no params" do
+      stub_api(fn conn ->
+        assert conn.query_string == "store_id=store-uuid-1"
+        json_response(conn, 200, %{"tabs" => [], "paging" => %{}})
+      end)
+
+      assert {:ok, %{"tabs" => []}} = Tab.list("store-uuid-1", params: nil)
+    end
+
+    test "raises for a store_id in :params, before any request" do
+      stub_api(fn _conn -> flunk("no request should be sent") end)
+
+      for params <- [[store_id: "store-uuid-2"], %{"store_id" => "store-uuid-2"}] do
+        assert_raise ArgumentError, ~r/store as its first argument/, fn ->
+          Tab.list("store-uuid-1", params: params)
+        end
+      end
+    end
+
+    test "raises for an empty list, before any request" do
+      stub_api(fn _conn -> flunk("no request should be sent") end)
+
+      assert_raise ArgumentError, ~r/:status in :params is an empty list/, fn ->
+        Tab.list("store-uuid-1", params: [status: []])
+      end
     end
   end
 

@@ -36,10 +36,19 @@ defmodule Teya.POSLink.Tab do
 
   The request carries an `Idempotency-Key`, as Teya's specification
   requires: your own, or one made up. Sending the same key and body again
-  returns the same tab, and the same key with a different body answers 409.
-  Teya keeps keys for at least 24 hours, per store. With
-  `:retry_idempotent_posts` set, the request is retried as described in the
-  README.
+  returns the same tab. Teya keeps keys for at least 24 hours, per store.
+  With `:retry_idempotent_posts` set, the request is retried as described in
+  the README.
+
+  Teya answers 409 in two cases:
+
+  - the same key was sent with a different body
+  - the store already has a tab with this `merchant_reference`
+
+  The second can mean an earlier call made the tab but its answer was lost,
+  and the call was made again with a new key. Look the tab up with
+  `list(store_id, params: [merchant_reference: reference])` before you make
+  a new one.
 
   ## Required params
 
@@ -84,6 +93,10 @@ defmodule Teya.POSLink.Tab do
   With no `status`, only active tabs are listed: `"OPEN"`, `"PAYING"` and
   `"PAUSED"`. Ask for `"COMPLETED"` or `"CLOSED"` by name to include them.
 
+  Raises `ArgumentError` if `:params` holds a `store_id`, since the store is
+  the first argument, or an empty list, such as `status: []`, which would
+  ask for nothing. Leave `status` out to get Teya's default.
+
   ## Query params (passed as `:params`)
 
   - `status` — a status, or a list of them, such as `["OPEN", "PAUSED"]`
@@ -101,16 +114,30 @@ defmodule Teya.POSLink.Tab do
   """
   @spec list(String.t(), keyword()) :: {:ok, map()} | {:error, Teya.Error.t()}
   def list(store_id, opts \\ []) do
-    params = [{:store_id, store_id} | repeated(Keyword.get(opts, :params, []))]
+    params = [{:store_id, store_id} | query(Keyword.get(opts, :params))]
     Client.request(:get, "/poslink/v1/tabs", Keyword.put(opts, :params, params))
   end
 
   # A list value, such as several statuses, is sent as the key repeated,
   # as the specification asks: status=OPEN&status=PAUSED.
-  defp repeated(params) do
+  defp query(nil), do: []
+
+  defp query(params) do
     Enum.flat_map(params, fn
-      {key, values} when is_list(values) -> for value <- values, do: {key, value}
-      pair -> [pair]
+      {key, _value} when key in [:store_id, "store_id"] ->
+        raise ArgumentError,
+              "Tab.list/2 takes the store as its first argument, not as store_id in :params"
+
+      {key, []} ->
+        raise ArgumentError,
+              "#{inspect(key)} in :params is an empty list, which asks for nothing; " <>
+                "leave it out to get Teya's default"
+
+      {key, values} when is_list(values) ->
+        for value <- values, do: {key, value}
+
+      pair ->
+        [pair]
     end)
   end
 
